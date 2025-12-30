@@ -35,6 +35,125 @@ export interface Context {
   algorithm: string;
 }
 
+// 5-Layer Context Model Types
+export type Sensitivity = "critical" | "high" | "medium" | "low";
+export type DataCategory = "personal_identifier" | "financial" | "health" | "authentication" | "business_confidential" | "general";
+export type Adversary = "opportunistic_attacker" | "organized_crime" | "nation_state" | "insider_threat" | "quantum_computer";
+export type AccessFrequency = "high" | "medium" | "low" | "rare";
+
+export interface DataIdentity {
+  category: DataCategory;
+  subcategory?: string | null;
+  sensitivity: Sensitivity;
+  pii: boolean;
+  phi: boolean;
+  pci: boolean;
+  notification_required: boolean;
+  examples: string[];
+}
+
+export interface RetentionPolicy {
+  minimum_days?: number | null;
+  maximum_days?: number | null;
+  deletion_method: "crypto_shred" | "secure_delete" | "standard";
+}
+
+export interface DataResidency {
+  allowed_regions: string[];
+  prohibited_regions: string[];
+}
+
+export interface RegulatoryMapping {
+  frameworks: string[];
+  data_residency?: DataResidency | null;
+  retention?: RetentionPolicy | null;
+  cross_border_allowed: boolean;
+}
+
+export interface ThreatModel {
+  adversaries: Adversary[];
+  attack_vectors: string[];
+  protection_lifetime_years: number;
+  quantum_resistant_required?: boolean;
+}
+
+export interface AccessPatterns {
+  frequency: AccessFrequency;
+  operations_per_second?: number | null;
+  latency_requirement_ms?: number | null;
+  batch_operations: boolean;
+  search_required: boolean;
+}
+
+export interface ContextConfig {
+  data_identity: DataIdentity;
+  regulatory: RegulatoryMapping;
+  threat_model: ThreatModel;
+  access_patterns: AccessPatterns;
+}
+
+export interface DerivedRequirements {
+  minimum_security_bits: number;
+  quantum_resistant: boolean;
+  key_rotation_days: number;
+  resolved_algorithm: string;
+  audit_level: "full" | "detailed" | "standard" | "minimal";
+  hardware_acceleration: boolean;
+  rationale: string[];
+}
+
+export interface ContextFullResponse {
+  name: string;
+  display_name: string;
+  description: string;
+  config: ContextConfig | null;
+  derived: DerivedRequirements | null;
+  data_examples: string[] | null;
+  compliance_tags: string[] | null;
+  algorithm: string;
+  sensitivity?: string;
+  quantum_resistant?: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
+// Algorithm Types
+export interface AlgorithmInfo {
+  name: string;
+  family: string;
+  variant: string | null;
+  aliases: string[];
+  type: string;
+  use_cases: string[];
+  security_bits: number;
+  key_sizes: number[];
+  quantum_resistant: boolean;
+  status: string;
+  replacement: string | null;
+  standards: string[];
+  hardware_acceleration: boolean;
+}
+
+export interface AlgorithmDetail extends AlgorithmInfo {
+  block_size: number | null;
+  output_size: number | null;
+  quantum_security_bits: number | null;
+  deprecated_date: string | null;
+  vulnerabilities: string[];
+  compliance_frameworks: string[];
+  relative_speed: string;
+  memory_usage: string;
+  implementation_notes: string[];
+  common_mistakes: string[];
+}
+
+export interface AlgorithmTypeInfo {
+  value: string;
+  label: string;
+  description: string;
+  count: number;
+}
+
 export interface Identity {
   id: string;
   type: "developer" | "service";
@@ -208,6 +327,35 @@ export const api = {
   // Contexts
   listContexts: () => fetchApi("/api/contexts") as Promise<Context[]>,
 
+  // Algorithms
+  listAlgorithms: (params?: {
+    type?: string;
+    quantum_resistant?: boolean;
+    status?: string;
+    min_security_bits?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.type) query.set("type", params.type);
+    if (params?.quantum_resistant !== undefined)
+      query.set("quantum_resistant", String(params.quantum_resistant));
+    if (params?.status) query.set("status", params.status);
+    if (params?.min_security_bits)
+      query.set("min_security_bits", String(params.min_security_bits));
+    return fetchApi(`/api/algorithms?${query}`) as Promise<AlgorithmInfo[]>;
+  },
+  getAlgorithmTypes: () =>
+    fetchApi("/api/algorithms/types") as Promise<AlgorithmTypeInfo[]>,
+  getRecommendedAlgorithms: (type?: string) => {
+    const query = type ? `?type=${type}` : "";
+    return fetchApi(`/api/algorithms/recommended${query}`) as Promise<AlgorithmInfo[]>;
+  },
+  getQuantumResistantAlgorithms: () =>
+    fetchApi("/api/algorithms/quantum-resistant") as Promise<AlgorithmInfo[]>,
+  getDeprecatedAlgorithms: () =>
+    fetchApi("/api/algorithms/deprecated") as Promise<AlgorithmInfo[]>,
+  getAlgorithm: (name: string) =>
+    fetchApi(`/api/algorithms/${encodeURIComponent(name)}`) as Promise<AlgorithmDetail>,
+
   // Identities
   listIdentities: () => fetchApi("/api/identities") as Promise<Identity[]>,
   createIdentity: (data: {
@@ -316,6 +464,35 @@ export const api = {
     fetchApi("/api/admin/contexts") as Promise<AdminContextStats[]>,
   rotateContextKey: (contextName: string) =>
     fetchApi(`/api/admin/contexts/${contextName}/rotate-key`, { method: "POST" }),
+
+  // Context CRUD (5-layer model)
+  getContextDetail: (name: string) =>
+    fetchApi(`/api/contexts/${name}`) as Promise<ContextFullResponse>,
+
+  createContext: (data: {
+    name: string;
+    display_name: string;
+    description: string;
+    config: ContextConfig;
+  }) =>
+    fetchApi("/api/contexts", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<ContextFullResponse>,
+
+  updateContext: (name: string, data: {
+    name: string;
+    display_name: string;
+    description: string;
+    config: ContextConfig;
+  }) =>
+    fetchApi(`/api/contexts/${name}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }) as Promise<ContextFullResponse>,
+
+  resolveContextAlgorithm: (name: string) =>
+    fetchApi(`/api/contexts/${name}/resolve`) as Promise<DerivedRequirements>,
 
   // Admin - Analytics
   getOperationTrends: (days: number = 30) =>

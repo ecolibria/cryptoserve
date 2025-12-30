@@ -19,6 +19,7 @@ from app.api import (
 )
 from app.api.sdk import router as sdk_router
 from app.api.admin import router as admin_router
+from app.api.algorithms import router as algorithms_router
 from app.models import Context
 from app.schemas.context import (
     ContextConfig,
@@ -316,6 +317,7 @@ app.include_router(crypto_router)
 app.include_router(audit_router)
 app.include_router(policies_router)
 app.include_router(sdk_router)
+app.include_router(algorithms_router)
 app.include_router(admin_router)
 
 
