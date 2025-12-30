@@ -18,12 +18,16 @@ import {
   Clock,
   Globe,
   FileWarning,
+  TrendingUp,
+  BarChart3,
+  Database,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AdminLayout } from "@/components/admin-layout";
+import { StatCard } from "@/components/ui/stat-card";
 import {
   api,
   AdminContextStats,
@@ -39,6 +43,18 @@ import {
   AccessFrequency,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  PieChart,
+  Pie,
+} from "recharts";
 
 // Default values for new context
 const defaultDataIdentity: DataIdentity = {
@@ -113,6 +129,9 @@ const frequencyLabels: Record<AccessFrequency, string> = {
 };
 
 const frameworkOptions = ["GDPR", "CCPA", "PCI-DSS", "HIPAA", "SOX", "SOC2"];
+
+// Chart colors
+const CHART_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899"];
 
 export default function AdminContextsPage() {
   const [contexts, setContexts] = useState<AdminContextStats[]>([]);
@@ -293,6 +312,30 @@ export default function AdminContextsPage() {
       : [...current, adversary];
     updateThreatModel({ adversaries: updated });
   };
+
+  // Calculate metrics
+  const totalOperations = contexts.reduce((sum, c) => sum + c.operation_count, 0);
+  const totalIdentities = contexts.reduce((sum, c) => sum + c.identity_count, 0);
+  const overdueKeys = contexts.filter((c) => getRotationStatus(c.last_key_rotation).status === "overdue").length;
+  const dueSoonKeys = contexts.filter((c) => getRotationStatus(c.last_key_rotation).status === "due-soon").length;
+  const healthyKeys = contexts.filter((c) => getRotationStatus(c.last_key_rotation).status === "healthy").length;
+
+  // Chart data - Operations by context
+  const operationsChartData = contexts
+    .map((c) => ({
+      name: c.display_name.length > 12 ? c.display_name.substring(0, 12) + "..." : c.display_name,
+      fullName: c.display_name,
+      operations: c.operation_count,
+    }))
+    .sort((a, b) => b.operations - a.operations)
+    .slice(0, 6);
+
+  // Key rotation status data for pie chart
+  const rotationStatusData = [
+    { name: "Healthy", value: healthyKeys, color: "#22c55e" },
+    { name: "Due Soon", value: dueSoonKeys, color: "#f59e0b" },
+    { name: "Overdue", value: overdueKeys, color: "#ef4444" },
+  ].filter((d) => d.value > 0);
 
   // Render step content
   const renderStepContent = () => {
@@ -559,158 +602,277 @@ export default function AdminContextsPage() {
   return (
     <AdminLayout
       title="Context Management"
-      subtitle={`${contexts.length} encryption contexts configured`}
+      subtitle="Encryption contexts define data protection policies"
       onRefresh={loadContexts}
-    >
-      {/* Create Context Button */}
-      <div className="mb-6">
+      actions={
         <Button onClick={openCreateModal}>
           <Plus className="h-4 w-4 mr-2" />
           Create Context
         </Button>
+      }
+    >
+      {/* Summary Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard
+          title="Total Contexts"
+          value={contexts.length.toString()}
+          subtitle="Encryption contexts"
+          icon={<Lock className="h-5 w-5 text-blue-500" />}
+        />
+        <StatCard
+          title="Total Operations"
+          value={totalOperations.toLocaleString()}
+          subtitle="All-time operations"
+          icon={<Activity className="h-5 w-5 text-green-500" />}
+          trend={{ value: 12, isPositive: true }}
+        />
+        <StatCard
+          title="Identities"
+          value={totalIdentities.toString()}
+          subtitle="Active identities"
+          icon={<Users className="h-5 w-5 text-purple-500" />}
+        />
+        <StatCard
+          title="Key Health"
+          value={`${healthyKeys}/${contexts.length}`}
+          subtitle={overdueKeys > 0 ? `${overdueKeys} overdue` : "All healthy"}
+          icon={<Key className="h-5 w-5 text-amber-500" />}
+          trend={overdueKeys > 0 ? { value: overdueKeys, isPositive: false } : undefined}
+        />
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        {/* Operations by Context */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-blue-500" />
+              Operations by Context
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-56">
+              {operationsChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={operationsChartData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={true} vertical={false} />
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 11 }}
+                      stroke="#94a3b8"
+                      tickLine={false}
+                      tickFormatter={(v) => v.toLocaleString()}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      tick={{ fontSize: 11 }}
+                      stroke="#94a3b8"
+                      tickLine={false}
+                      axisLine={false}
+                      width={100}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#1e293b",
+                        border: "none",
+                        borderRadius: "8px",
+                        color: "#f8fafc",
+                      }}
+                      formatter={(value: number, name: any, props: any) => [
+                        value.toLocaleString(),
+                        props.payload.fullName,
+                      ]}
+                    />
+                    <Bar dataKey="operations" radius={[0, 4, 4, 0]}>
+                      {operationsChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full text-slate-500">
+                  No operation data available
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Key Rotation Status */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Key className="h-5 w-5 text-amber-500" />
+              Key Rotation Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-40">
+              {rotationStatusData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={rotationStatusData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={35}
+                      outerRadius={55}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {rotationStatusData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#1e293b",
+                        border: "none",
+                        borderRadius: "8px",
+                        color: "#f8fafc",
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full text-slate-500">
+                  No contexts configured
+                </div>
+              )}
+            </div>
+            <div className="flex justify-center gap-4 mt-2">
+              {rotationStatusData.map((item) => (
+                <div key={item.name} className="flex items-center gap-1.5 text-xs">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="text-slate-600">{item.name} ({item.value})</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Contexts Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {contexts.map((context) => {
-          const rotationStatus = getRotationStatus(context.last_key_rotation);
-          const daysSince = getDaysSinceRotation(context.last_key_rotation);
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Database className="h-5 w-5 text-blue-500" />
+            All Contexts
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {contexts.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {contexts.map((context) => {
+                const rotationStatus = getRotationStatus(context.last_key_rotation);
+                const daysSince = getDaysSinceRotation(context.last_key_rotation);
 
-          return (
-            <Card key={context.name} className="overflow-hidden">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                      <Lock className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">{context.display_name}</CardTitle>
-                      <p className="text-xs text-slate-500 font-mono">{context.name}</p>
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => openEditModal(context.name)}
+                return (
+                  <div
+                    key={context.name}
+                    className="p-4 border rounded-lg hover:shadow-md transition-shadow bg-white"
                   >
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Description */}
-                <p className="text-sm text-slate-600">{context.description}</p>
-
-                {/* Compliance Tags */}
-                {context.compliance_tags && context.compliance_tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {context.compliance_tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700"
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-9 w-9 rounded-lg bg-blue-100 flex items-center justify-center">
+                          <Lock className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <div>
+                          <div className="font-medium text-slate-900">{context.display_name}</div>
+                          <div className="text-xs text-slate-500 font-mono">{context.name}</div>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEditModal(context.name)}
+                        className="h-8 w-8 p-0"
                       >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Algorithm */}
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-500">Algorithm</span>
-                  <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">
-                    {context.algorithm}
-                  </span>
-                </div>
-
-                {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 pt-2 border-t">
-                  <div className="flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-slate-400" />
-                    <div>
-                      <p className="text-lg font-semibold">{context.operation_count.toLocaleString()}</p>
-                      <p className="text-xs text-slate-500">Operations</p>
+                        <Edit className="h-4 w-4" />
+                      </Button>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-slate-400" />
-                    <div>
-                      <p className="text-lg font-semibold">{context.identity_count}</p>
-                      <p className="text-xs text-slate-500">Identities</p>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Key Info */}
-                <div className="pt-3 border-t space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-500">Key Version</span>
-                    <span className="text-sm font-medium">v{context.key_version}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-500">Last Rotation</span>
-                    <div className="flex items-center gap-2">
-                      {rotationStatus.status === "overdue" && (
-                        <AlertTriangle className="h-4 w-4 text-red-500" />
-                      )}
-                      {rotationStatus.status === "due-soon" && (
-                        <AlertTriangle className="h-4 w-4 text-amber-500" />
-                      )}
-                      {rotationStatus.status === "healthy" && (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      )}
-                      <span className={cn(
-                        "text-sm font-medium",
-                        rotationStatus.status === "overdue" && "text-red-600",
-                        rotationStatus.status === "due-soon" && "text-amber-600",
-                        rotationStatus.status === "healthy" && "text-green-600"
-                      )}>
-                        {daysSince !== null ? `${daysSince} days ago` : "Never"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="pt-3 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => handleRotateKey(context.name)}
-                    disabled={rotating === context.name}
-                  >
-                    {rotating === context.name ? (
-                      <>
-                        <span className="animate-spin h-4 w-4 border-2 border-slate-600 border-t-transparent rounded-full mr-2" />
-                        Rotating...
-                      </>
-                    ) : (
-                      <>
-                        <RotateCw className="h-4 w-4 mr-2" />
-                        Rotate Key
-                      </>
+                    {/* Compliance Tags */}
+                    {context.compliance_tags && context.compliance_tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        {context.compliance_tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-700"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
                     )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
 
-      {contexts.length === 0 && (
-        <div className="text-center py-12">
-          <Shield className="h-12 w-12 text-slate-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-slate-900 mb-2">No contexts configured</h3>
-          <p className="text-slate-500 mb-4">Encryption contexts define data types and their security policies.</p>
-          <Button onClick={openCreateModal}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Your First Context
-          </Button>
-        </div>
-      )}
+                    {/* Stats Row */}
+                    <div className="flex items-center gap-4 text-xs text-slate-600 mb-3">
+                      <div className="flex items-center gap-1">
+                        <Activity className="h-3.5 w-3.5" />
+                        {context.operation_count.toLocaleString()} ops
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5" />
+                        {context.identity_count} identities
+                      </div>
+                    </div>
+
+                    {/* Key Rotation Status */}
+                    <div className="flex items-center justify-between pt-3 border-t">
+                      <div className="flex items-center gap-2 text-xs">
+                        {rotationStatus.status === "overdue" && (
+                          <AlertTriangle className="h-4 w-4 text-red-500" />
+                        )}
+                        {rotationStatus.status === "due-soon" && (
+                          <AlertTriangle className="h-4 w-4 text-amber-500" />
+                        )}
+                        {rotationStatus.status === "healthy" && (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        )}
+                        <span className={cn(
+                          rotationStatus.status === "overdue" && "text-red-600",
+                          rotationStatus.status === "due-soon" && "text-amber-600",
+                          rotationStatus.status === "healthy" && "text-green-600"
+                        )}>
+                          {daysSince !== null ? `${daysSince}d ago` : "Never rotated"}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRotateKey(context.name)}
+                        disabled={rotating === context.name}
+                        className="h-7 text-xs"
+                      >
+                        {rotating === context.name ? (
+                          <span className="animate-spin h-3 w-3 border-2 border-slate-600 border-t-transparent rounded-full" />
+                        ) : (
+                          <RotateCw className="h-3 w-3 mr-1" />
+                        )}
+                        {rotating === context.name ? "..." : "Rotate"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <Shield className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-slate-900 mb-2">No contexts configured</h3>
+              <p className="text-slate-500 mb-4">Encryption contexts define data types and their security policies.</p>
+              <Button onClick={openCreateModal}>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Your First Context
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Create/Edit Modal */}
       {showModal && (
