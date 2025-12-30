@@ -1,8 +1,9 @@
 """Policy API routes.
 
-Provides read-only access to policies and policy evaluation.
+Provides policy management and evaluation.
 """
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,6 +16,8 @@ from app.models import User, Policy
 from app.schemas.policy import (
     PolicyListResponse,
     PolicyResponse,
+    PolicyCreate,
+    PolicyUpdate,
     EvaluationRequest,
     EvaluationResponse,
     PolicyEvaluationResult,
@@ -235,3 +238,166 @@ async def evaluate_policies(
         info_violations=infos,
         results=eval_results,
     )
+
+
+# =============================================================================
+# Admin Helper
+# =============================================================================
+
+async def require_admin(
+    user: Annotated[User, Depends(get_current_user)]
+) -> User:
+    """Verify user has admin privileges."""
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
+# =============================================================================
+# Policy CRUD (Admin Only)
+# =============================================================================
+
+@router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
+async def create_policy(
+    data: PolicyCreate,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create a new custom policy (admin only)."""
+    # Check for duplicate name
+    existing = await db.execute(select(Policy).where(Policy.name == data.name))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Policy with name '{data.name}' already exists",
+        )
+
+    # Validate rule syntax by trying to parse it
+    try:
+        engine = PolicyEngine()
+        test_policy = EnginePolicy(
+            name=data.name,
+            description=data.description,
+            rule=data.rule,
+            severity=EnginePolicySeverity(data.severity.value),
+            message=data.message,
+            enabled=True,
+            contexts=[],
+            operations=[],
+        )
+        engine.add_policy(test_policy)
+        # Try to evaluate to check syntax
+        test_context = EvaluationContext(
+            algorithm={"name": "AES-256-GCM", "key_bits": 256, "quantum_resistant": False},
+            context={"name": "test", "sensitivity": "medium"},
+            identity={"team": "test"},
+            operation="encrypt",
+        )
+        engine.evaluate(test_context, raise_on_block=False)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid rule syntax: {str(e)}",
+        )
+
+    # Create policy
+    policy = Policy(
+        name=data.name,
+        description=data.description,
+        rule=data.rule,
+        severity=data.severity.value,
+        message=data.message,
+        enabled=data.enabled,
+        contexts=data.contexts,
+        operations=data.operations,
+        policy_metadata=data.policy_metadata,
+        created_by=admin.github_username,
+        created_at=datetime.utcnow(),
+    )
+    db.add(policy)
+    await db.commit()
+    await db.refresh(policy)
+    return policy
+
+
+@router.put("/{name}", response_model=PolicyResponse)
+async def update_policy(
+    name: str,
+    data: PolicyUpdate,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Update an existing policy (admin only)."""
+    result = await db.execute(select(Policy).where(Policy.name == name))
+    policy = result.scalar_one_or_none()
+
+    if not policy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Policy not found: {name}",
+        )
+
+    # Update fields if provided
+    if data.description is not None:
+        policy.description = data.description
+    if data.rule is not None:
+        # Validate rule syntax
+        try:
+            engine = PolicyEngine()
+            test_policy = EnginePolicy(
+                name=name,
+                description="",
+                rule=data.rule,
+                severity=EnginePolicySeverity.WARN,
+                message="test",
+                enabled=True,
+                contexts=[],
+                operations=[],
+            )
+            engine.add_policy(test_policy)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid rule syntax: {str(e)}",
+            )
+        policy.rule = data.rule
+    if data.severity is not None:
+        policy.severity = data.severity.value
+    if data.message is not None:
+        policy.message = data.message
+    if data.enabled is not None:
+        policy.enabled = data.enabled
+    if data.contexts is not None:
+        policy.contexts = data.contexts
+    if data.operations is not None:
+        policy.operations = data.operations
+    if data.policy_metadata is not None:
+        policy.policy_metadata = data.policy_metadata
+
+    policy.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(policy)
+    return policy
+
+
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_policy(
+    name: str,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete a custom policy (admin only)."""
+    result = await db.execute(select(Policy).where(Policy.name == name))
+    policy = result.scalar_one_or_none()
+
+    if not policy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Policy not found: {name}",
+        )
+
+    await db.delete(policy)
+    await db.commit()

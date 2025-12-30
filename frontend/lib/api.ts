@@ -340,4 +340,43 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }) as Promise<PolicyEvaluationResponse>,
+
+  // Policy CRUD (Admin only)
+  createPolicy: (data: {
+    name: string;
+    description: string;
+    rule: string;
+    severity: "block" | "warn" | "info";
+    message?: string;
+    enabled?: boolean;
+    contexts?: string[];
+  }) =>
+    fetchApi("/api/policies", {
+      method: "POST",
+      body: JSON.stringify({
+        ...data,
+        message: data.message || data.description,
+        enabled: data.enabled ?? true,
+        contexts: data.contexts || [],
+        operations: [],
+      }),
+    }) as Promise<Policy>,
+
+  updatePolicy: (name: string, data: {
+    description?: string;
+    rule?: string;
+    severity?: "block" | "warn" | "info";
+    message?: string;
+    enabled?: boolean;
+    contexts?: string[];
+  }) =>
+    fetchApi(`/api/policies/${name}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }) as Promise<Policy>,
+
+  deletePolicy: (name: string) =>
+    fetchApi(`/api/policies/${name}`, {
+      method: "DELETE",
+    }),
 };

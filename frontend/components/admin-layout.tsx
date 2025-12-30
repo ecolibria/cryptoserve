@@ -16,6 +16,7 @@ import {
   X,
   ChevronLeft,
   RefreshCw,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -34,6 +35,7 @@ const adminNavItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/identities", label: "Identities", icon: Key },
+  { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
   { href: "/admin/audit", label: "Audit Logs", icon: FileText },
   { href: "/admin/contexts", label: "Contexts", icon: Settings },
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
