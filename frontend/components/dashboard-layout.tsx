@@ -4,16 +4,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
-import { Shield, Key, FileText, LogOut, Menu, X, ShieldCheck } from "lucide-react";
+import { Shield, Key, FileText, LogOut, Menu, X, ShieldCheck, Settings } from "lucide-react";
 import { api, User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-const navigation = [
+const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: Shield },
   { name: "Identities", href: "/identities", icon: Key },
   { name: "Policies", href: "/policies", icon: ShieldCheck },
   { name: "Audit Log", href: "/audit", icon: FileText },
+];
+
+const adminNavigation = [
+  { name: "Admin", href: "/admin", icon: Settings },
 ];
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -40,6 +44,11 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
     }
     window.location.href = "/";
   };
+
+  // Build navigation based on user role
+  const navigation = user?.is_admin
+    ? [...baseNavigation, ...adminNavigation]
+    : baseNavigation;
 
   if (loading) {
     return (

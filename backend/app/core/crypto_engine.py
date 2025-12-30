@@ -332,7 +332,7 @@ class CryptoEngine:
                 "id": identity.id,
                 "name": identity.name,
                 "team": identity.team,
-                "type": identity.identity_type.value if identity.identity_type else None,
+                "type": identity.type.value if identity.type else None,
                 "environment": identity.environment,
             },
             operation=operation,
