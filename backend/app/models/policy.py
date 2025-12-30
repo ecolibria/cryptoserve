@@ -37,6 +37,21 @@ class Policy(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Wizard-created policies use status to track publishing workflow
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="published",
+        nullable=False,
+        comment="draft or published - controls visibility to developers"
+    )
+
+    # Link to the context created by this policy (for wizard-created policies)
+    linked_context: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        comment="Context name created by this policy via wizard"
+    )
+
     # Scope restrictions
     contexts: Mapped[list[str] | None] = mapped_column(
         ARRAY(String),

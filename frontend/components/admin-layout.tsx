@@ -17,6 +17,9 @@ import {
   ChevronLeft,
   RefreshCw,
   ShieldCheck,
+  ShieldAlert,
+  ClipboardCheck,
+  Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -33,12 +36,15 @@ interface AdminLayoutProps {
 
 const adminNavItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
+  { href: "/admin/security", label: "Security", icon: ShieldAlert },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/identities", label: "Identities", icon: Key },
   { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
   { href: "/admin/audit", label: "Audit Logs", icon: FileText },
   { href: "/admin/contexts", label: "Contexts", icon: Settings },
+  { href: "/admin/compliance", label: "Compliance", icon: ClipboardCheck },
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/admin/playground", label: "Playground", icon: Play },
 ];
 
 export function AdminLayout({

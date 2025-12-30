@@ -289,6 +289,53 @@ export interface HealthStatus {
   avg_latency_last_hour: number;
 }
 
+// Security Command Center Types
+export interface SecurityAlert {
+  id: string;
+  severity: "critical" | "warning" | "info";
+  category: "key" | "identity" | "operation" | "compliance";
+  title: string;
+  description: string;
+  affected_count: number;
+  timestamp: string;
+  action_url: string | null;
+  auto_resolvable: boolean;
+}
+
+export interface SecurityMetrics {
+  operations_per_minute: number;
+  encryption_rate: number;
+  success_rate: number;
+  avg_latency_ms: number;
+  active_identities: number;
+  contexts_in_use: number;
+  data_processed_mb: number;
+}
+
+export interface BlastRadiusItem {
+  context_name: string;
+  key_version: number;
+  identities_affected: number;
+  operations_count: number;
+  data_size_bytes: number;
+  teams: string[];
+  last_used: string | null;
+}
+
+export interface PlaygroundRequest {
+  operation: "encrypt" | "decrypt";
+  data: string;
+  context: string;
+}
+
+export interface PlaygroundResponse {
+  success: boolean;
+  result: string | null;
+  algorithm: string;
+  latency_ms: number;
+  error: string | null;
+}
+
 // Premium Feature Types
 export interface RiskScoreFactor {
   name: string;
@@ -559,6 +606,21 @@ export const api = {
   getQuantumReadiness: () => fetchApi("/api/admin/quantum-readiness") as Promise<QuantumReadinessResponse>,
   getComplianceStatus: () => fetchApi("/api/admin/compliance-status") as Promise<ComplianceStatusResponse>,
 
+  // Admin - Security Command Center
+  getSecurityAlerts: () =>
+    fetchApi("/api/admin/security/alerts") as Promise<SecurityAlert[]>,
+  getSecurityMetrics: () =>
+    fetchApi("/api/admin/security/metrics") as Promise<SecurityMetrics>,
+  getBlastRadius: () =>
+    fetchApi("/api/admin/security/blast-radius") as Promise<BlastRadiusItem[]>,
+
+  // Playground
+  playground: (data: PlaygroundRequest) =>
+    fetchApi("/api/admin/playground", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<PlaygroundResponse>,
+
   // Policies
   listPolicies: (params?: { enabled_only?: boolean; severity?: string }) => {
     const query = new URLSearchParams();
@@ -612,4 +674,34 @@ export const api = {
     fetchApi(`/api/policies/${name}`, {
       method: "DELETE",
     }),
+
+  // Policy Wizard (Admin)
+  publishWizardPolicy: (data: {
+    data_type: string;
+    compliance: string[];
+    threat_level: string;
+    access_pattern: string;
+    policy_name: string;
+    context_name: string;
+  }) =>
+    fetchApi("/api/admin/wizard/publish", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<{
+      success: boolean;
+      context_name: string;
+      policy_name: string;
+      algorithm: string;
+      message: string;
+    }>,
+
+  listPublishedPolicies: () =>
+    fetchApi("/api/admin/policies/published") as Promise<{
+      name: string;
+      description: string;
+      linked_context: string | null;
+      created_at: string | null;
+      created_by: string | null;
+      metadata: Record<string, unknown> | null;
+    }[]>,
 };

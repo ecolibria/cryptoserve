@@ -13,7 +13,20 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.auth.jwt import get_current_user
-from app.models import User, Identity, IdentityStatus, Context, AuditLog, Key
+from app.models import User, Identity, IdentityStatus, Context, AuditLog, Key, Policy
+from app.schemas.context import (
+    ContextConfig,
+    DataIdentity,
+    RegulatoryMapping,
+    ThreatModel,
+    AccessPatterns,
+    RetentionPolicy,
+    Sensitivity,
+    DataCategory,
+    Adversary,
+    AccessFrequency,
+)
+from app.core.algorithm_resolver import resolve_algorithm
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -1113,3 +1126,719 @@ async def get_compliance_status(
         export_available=False,  # Always false for OSS
         premium_required=True,
     )
+
+
+# --- Policy Wizard ---
+
+class WizardPublishRequest(BaseModel):
+    """Request to publish a policy from the wizard."""
+    data_type: str  # pii, financial, health, auth, business, internal
+    compliance: list[str]  # gdpr, ccpa, hipaa, pci-dss, sox, soc2, none
+    threat_level: str  # standard, elevated, maximum
+    access_pattern: str  # high-throughput, balanced, batch, rare
+    policy_name: str  # Human-readable name
+    context_name: str  # ID for developers
+
+
+class WizardPublishResponse(BaseModel):
+    """Response from wizard publish."""
+    success: bool
+    context_name: str
+    policy_name: str
+    algorithm: str
+    message: str
+
+
+# Data type to DataCategory mapping
+DATA_TYPE_MAPPING = {
+    "pii": DataCategory.PERSONAL_IDENTIFIER,
+    "financial": DataCategory.FINANCIAL,
+    "health": DataCategory.HEALTH,
+    "auth": DataCategory.AUTHENTICATION,
+    "business": DataCategory.BUSINESS_CONFIDENTIAL,
+    "internal": DataCategory.GENERAL,
+}
+
+# Threat level to adversaries and protection years
+THREAT_LEVEL_MAPPING = {
+    "standard": {
+        "adversaries": [Adversary.OPPORTUNISTIC],
+        "protection_years": 5,
+    },
+    "elevated": {
+        "adversaries": [Adversary.ORGANIZED_CRIME, Adversary.INSIDER],
+        "protection_years": 10,
+    },
+    "maximum": {
+        "adversaries": [Adversary.NATION_STATE, Adversary.QUANTUM],
+        "protection_years": 30,
+    },
+}
+
+# Access pattern to frequency and latency
+ACCESS_PATTERN_MAPPING = {
+    "high-throughput": {
+        "frequency": AccessFrequency.HIGH,
+        "latency_ms": 10,
+        "ops_per_second": 10000,
+    },
+    "balanced": {
+        "frequency": AccessFrequency.MEDIUM,
+        "latency_ms": 50,
+        "ops_per_second": 1000,
+    },
+    "batch": {
+        "frequency": AccessFrequency.LOW,
+        "latency_ms": 500,
+        "ops_per_second": 100,
+        "batch_operations": True,
+    },
+    "rare": {
+        "frequency": AccessFrequency.RARE,
+        "latency_ms": 1000,
+        "ops_per_second": 10,
+    },
+}
+
+# Compliance framework to retention requirements
+COMPLIANCE_RETENTION = {
+    "gdpr": {"maximum_days": 2555, "deletion_method": "crypto_shred"},
+    "ccpa": {"maximum_days": 2555, "deletion_method": "crypto_shred"},
+    "hipaa": {"minimum_days": 2555, "maximum_days": 3650},
+    "pci-dss": {"minimum_days": 365, "maximum_days": 2555},
+    "sox": {"minimum_days": 2555, "maximum_days": 3650},
+    "soc2": {"minimum_days": 365, "maximum_days": 730},
+}
+
+
+def build_context_config_from_wizard(data: WizardPublishRequest) -> ContextConfig:
+    """Build a full ContextConfig from wizard inputs."""
+    # Data identity
+    category = DATA_TYPE_MAPPING.get(data.data_type, DataCategory.GENERAL)
+    sensitivity = Sensitivity.CRITICAL if data.data_type in ["pii", "financial", "health"] else (
+        Sensitivity.HIGH if data.data_type in ["auth", "business"] else Sensitivity.MEDIUM
+    )
+
+    # Determine PII/PHI/PCI flags
+    pii = data.data_type == "pii"
+    phi = data.data_type == "health"
+    pci = data.data_type == "financial"
+    notification_required = pii or phi or pci
+
+    data_identity = DataIdentity(
+        category=category,
+        sensitivity=sensitivity,
+        pii=pii,
+        phi=phi,
+        pci=pci,
+        notification_required=notification_required,
+        examples=[],  # Could be populated based on data_type
+    )
+
+    # Regulatory mapping
+    frameworks = [f.upper() for f in data.compliance if f != "none"]
+
+    # Build retention from strictest compliance requirement
+    retention_config = {}
+    for framework in data.compliance:
+        if framework in COMPLIANCE_RETENTION:
+            reqs = COMPLIANCE_RETENTION[framework]
+            if "minimum_days" in reqs:
+                retention_config["minimum_days"] = max(
+                    retention_config.get("minimum_days", 0),
+                    reqs["minimum_days"]
+                )
+            if "maximum_days" in reqs:
+                retention_config["maximum_days"] = min(
+                    retention_config.get("maximum_days", 99999),
+                    reqs["maximum_days"]
+                )
+            if "deletion_method" in reqs:
+                retention_config["deletion_method"] = reqs["deletion_method"]
+
+    retention = RetentionPolicy(**retention_config) if retention_config else None
+
+    regulatory = RegulatoryMapping(
+        frameworks=frameworks,
+        retention=retention,
+    )
+
+    # Threat model
+    threat_config = THREAT_LEVEL_MAPPING.get(data.threat_level, THREAT_LEVEL_MAPPING["standard"])
+    threat_model = ThreatModel(
+        adversaries=threat_config["adversaries"],
+        protection_lifetime_years=threat_config["protection_years"],
+    )
+
+    # Access patterns
+    access_config = ACCESS_PATTERN_MAPPING.get(data.access_pattern, ACCESS_PATTERN_MAPPING["balanced"])
+    access_patterns = AccessPatterns(
+        frequency=access_config["frequency"],
+        latency_requirement_ms=access_config["latency_ms"],
+        operations_per_second=access_config.get("ops_per_second"),
+        batch_operations=access_config.get("batch_operations", False),
+    )
+
+    return ContextConfig(
+        data_identity=data_identity,
+        regulatory=regulatory,
+        threat_model=threat_model,
+        access_patterns=access_patterns,
+    )
+
+
+@router.post("/wizard/publish", response_model=WizardPublishResponse)
+async def publish_wizard_policy(
+    data: WizardPublishRequest,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Publish a policy from the admin wizard.
+
+    This endpoint:
+    1. Builds a full context configuration from wizard inputs
+    2. Runs the algorithm resolver to determine optimal encryption
+    3. Creates the context in the database
+    4. Creates a linked policy
+    5. Returns success with details
+
+    Developers will immediately see the new context in their dashboard.
+    """
+    # Check if context already exists
+    existing_context = await db.execute(
+        select(Context).where(Context.name == data.context_name)
+    )
+    if existing_context.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Context '{data.context_name}' already exists",
+        )
+
+    # Build context config from wizard inputs
+    config = build_context_config_from_wizard(data)
+
+    # Run algorithm resolver
+    derived = resolve_algorithm(config)
+
+    # Get compliance tags
+    compliance_tags = [f.upper() for f in data.compliance if f != "none"]
+
+    # Create the context
+    context = Context(
+        name=data.context_name,
+        display_name=data.policy_name,
+        description=f"{data.policy_name} - Created via policy wizard",
+        config=config.model_dump(),
+        derived=derived.model_dump(),
+        algorithm=derived.resolved_algorithm,
+        data_examples=[],  # Could be populated based on data_type
+        compliance_tags=compliance_tags,
+    )
+    db.add(context)
+
+    # Create the policy
+    policy_rule = f"context.name == \"{data.context_name}\""
+    policy = Policy(
+        name=f"{data.context_name}-policy",
+        description=f"Auto-generated policy for {data.policy_name}",
+        rule=policy_rule,
+        severity="block",
+        message=f"Policy for {data.policy_name}",
+        enabled=True,
+        status="published",
+        linked_context=data.context_name,
+        contexts=[data.context_name],
+        operations=[],  # Applies to all operations
+        policy_metadata={
+            "wizard_config": {
+                "data_type": data.data_type,
+                "compliance": data.compliance,
+                "threat_level": data.threat_level,
+                "access_pattern": data.access_pattern,
+            }
+        },
+        created_by=admin.github_username,
+    )
+    db.add(policy)
+
+    await db.commit()
+
+    return WizardPublishResponse(
+        success=True,
+        context_name=data.context_name,
+        policy_name=data.policy_name,
+        algorithm=derived.resolved_algorithm,
+        message=f"Successfully created context '{data.context_name}' with {derived.resolved_algorithm} encryption",
+    )
+
+
+@router.get("/policies/published")
+async def list_published_policies(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """List all published policies (visible to developers)."""
+    result = await db.execute(
+        select(Policy).where(Policy.status == "published").order_by(desc(Policy.created_at))
+    )
+    policies = result.scalars().all()
+
+    return [
+        {
+            "name": p.name,
+            "description": p.description,
+            "linked_context": p.linked_context,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "created_by": p.created_by,
+            "metadata": p.policy_metadata,
+        }
+        for p in policies
+    ]
+
+
+# --- Security Command Center ---
+
+class SecurityAlert(BaseModel):
+    """Security alert for the command center."""
+    id: str
+    severity: str  # critical, warning, info
+    category: str  # key, identity, operation, compliance
+    title: str
+    description: str
+    affected_count: int
+    timestamp: datetime
+    action_url: Optional[str] = None
+    auto_resolvable: bool = False
+
+
+class SecurityMetrics(BaseModel):
+    """Real-time security metrics for command center."""
+    operations_per_minute: float
+    encryption_rate: float  # encrypt ops / total ops
+    success_rate: float  # successful / total
+    avg_latency_ms: float
+    active_identities: int
+    contexts_in_use: int
+    data_processed_mb: float
+
+
+class BlastRadiusItem(BaseModel):
+    """Data lineage / blast radius item."""
+    context_name: str
+    key_version: int
+    identities_affected: int
+    operations_count: int
+    data_size_bytes: int
+    teams: list[str]
+    last_used: Optional[datetime]
+
+
+@router.get("/security/alerts", response_model=list[SecurityAlert])
+async def get_security_alerts(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get active security alerts for the command center.
+
+    Analyzes current state and returns actionable alerts.
+    """
+    now = datetime.utcnow()
+    alerts = []
+
+    # Alert 1: Expiring identities
+    week_from_now = now + timedelta(days=7)
+    expiring_identities = await db.scalar(
+        select(func.count(Identity.id)).where(
+            and_(
+                Identity.status == IdentityStatus.ACTIVE,
+                Identity.expires_at > now,
+                Identity.expires_at <= week_from_now
+            )
+        )
+    ) or 0
+
+    if expiring_identities > 0:
+        alerts.append(SecurityAlert(
+            id="expiring-identities",
+            severity="warning" if expiring_identities < 5 else "critical",
+            category="identity",
+            title=f"{expiring_identities} Identities Expiring Soon",
+            description=f"{expiring_identities} identities will expire in the next 7 days. Review and extend or revoke.",
+            affected_count=expiring_identities,
+            timestamp=now,
+            action_url="/admin/identities?status=expiring",
+            auto_resolvable=False,
+        ))
+
+    # Alert 2: High failure rate
+    hour_ago = now - timedelta(hours=1)
+    recent_total = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.timestamp >= hour_ago)
+    ) or 0
+    recent_failed = await db.scalar(
+        select(func.count(AuditLog.id)).where(
+            and_(AuditLog.timestamp >= hour_ago, AuditLog.success == False)
+        )
+    ) or 0
+
+    if recent_total > 10:  # Only alert if meaningful volume
+        failure_rate = (recent_failed / recent_total) * 100 if recent_total > 0 else 0
+        if failure_rate > 10:
+            alerts.append(SecurityAlert(
+                id="high-failure-rate",
+                severity="critical" if failure_rate > 25 else "warning",
+                category="operation",
+                title=f"High Operation Failure Rate ({failure_rate:.1f}%)",
+                description=f"{recent_failed} of {recent_total} operations failed in the last hour.",
+                affected_count=recent_failed,
+                timestamp=now,
+                action_url="/admin/audit?success=false",
+                auto_resolvable=False,
+            ))
+
+    # Alert 3: Keys needing rotation
+    ninety_days_ago = now - timedelta(days=90)
+    old_keys = await db.scalar(
+        select(func.count(Key.id)).where(Key.created_at < ninety_days_ago)
+    ) or 0
+
+    if old_keys > 0:
+        alerts.append(SecurityAlert(
+            id="key-rotation-due",
+            severity="warning",
+            category="key",
+            title=f"{old_keys} Keys Due for Rotation",
+            description="Keys older than 90 days should be rotated for security best practices.",
+            affected_count=old_keys,
+            timestamp=now,
+            action_url="/admin/contexts",
+            auto_resolvable=True,
+        ))
+
+    # Alert 4: Deprecated algorithms in use
+    contexts_result = await db.execute(select(Context))
+    contexts = contexts_result.scalars().all()
+    deprecated_algos = {"DES", "3DES", "RC4", "MD5", "SHA-1"}
+    deprecated_contexts = [c for c in contexts if any(d in c.algorithm for d in deprecated_algos)]
+
+    if deprecated_contexts:
+        alerts.append(SecurityAlert(
+            id="deprecated-algorithms",
+            severity="critical",
+            category="compliance",
+            title=f"{len(deprecated_contexts)} Contexts Using Deprecated Algorithms",
+            description=f"Contexts using deprecated cryptographic algorithms: {', '.join(c.name for c in deprecated_contexts[:3])}",
+            affected_count=len(deprecated_contexts),
+            timestamp=now,
+            action_url="/admin/contexts",
+            auto_resolvable=False,
+        ))
+
+    # Alert 5: No quantum-ready contexts
+    pqc_algos = {"ML-KEM", "Kyber", "Dilithium", "SPHINCS", "Hybrid"}
+    quantum_ready = [c for c in contexts if any(p in c.algorithm for p in pqc_algos)]
+
+    if len(contexts) > 0 and len(quantum_ready) == 0:
+        alerts.append(SecurityAlert(
+            id="no-quantum-readiness",
+            severity="info",
+            category="compliance",
+            title="No Quantum-Ready Contexts",
+            description="Consider migrating critical contexts to post-quantum cryptography.",
+            affected_count=len(contexts),
+            timestamp=now,
+            action_url="/algorithms",
+            auto_resolvable=False,
+        ))
+
+    # Alert 6: Unused identities (not used in 30 days)
+    thirty_days_ago = now - timedelta(days=30)
+    unused_identities = await db.scalar(
+        select(func.count(Identity.id)).where(
+            and_(
+                Identity.status == IdentityStatus.ACTIVE,
+                or_(
+                    Identity.last_used_at.is_(None),
+                    Identity.last_used_at < thirty_days_ago
+                )
+            )
+        )
+    ) or 0
+
+    if unused_identities > 0:
+        alerts.append(SecurityAlert(
+            id="unused-identities",
+            severity="info",
+            category="identity",
+            title=f"{unused_identities} Unused Identities",
+            description="Identities not used in 30+ days. Consider revoking to reduce attack surface.",
+            affected_count=unused_identities,
+            timestamp=now,
+            action_url="/admin/identities?unused=true",
+            auto_resolvable=False,
+        ))
+
+    # Sort by severity
+    severity_order = {"critical": 0, "warning": 1, "info": 2}
+    alerts.sort(key=lambda a: severity_order.get(a.severity, 3))
+
+    return alerts
+
+
+@router.get("/security/metrics", response_model=SecurityMetrics)
+async def get_security_metrics(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get real-time security metrics for the command center."""
+    now = datetime.utcnow()
+    minute_ago = now - timedelta(minutes=1)
+    hour_ago = now - timedelta(hours=1)
+
+    # Operations per minute (last hour average)
+    hour_ops = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.timestamp >= hour_ago)
+    ) or 0
+    ops_per_minute = hour_ops / 60
+
+    # Encryption rate
+    total_ops = await db.scalar(select(func.count(AuditLog.id))) or 0
+    encrypt_ops = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.operation == "encrypt")
+    ) or 0
+    encryption_rate = (encrypt_ops / total_ops * 100) if total_ops > 0 else 0
+
+    # Success rate
+    successful_ops = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.success == True)
+    ) or 0
+    success_rate = (successful_ops / total_ops * 100) if total_ops > 0 else 100
+
+    # Average latency (last hour)
+    avg_latency = await db.scalar(
+        select(func.avg(AuditLog.latency_ms)).where(
+            and_(AuditLog.timestamp >= hour_ago, AuditLog.latency_ms.isnot(None))
+        )
+    ) or 0
+
+    # Active identities
+    active_identities = await db.scalar(
+        select(func.count(Identity.id)).where(
+            and_(
+                Identity.status == IdentityStatus.ACTIVE,
+                Identity.expires_at > now
+            )
+        )
+    ) or 0
+
+    # Contexts in use (have operations in last 24h)
+    day_ago = now - timedelta(days=1)
+    contexts_used_result = await db.execute(
+        select(AuditLog.context).where(AuditLog.timestamp >= day_ago).distinct()
+    )
+    contexts_in_use = len(contexts_used_result.fetchall())
+
+    # Data processed (MB)
+    total_input = await db.scalar(
+        select(func.sum(AuditLog.input_size_bytes)).where(AuditLog.input_size_bytes.isnot(None))
+    ) or 0
+    total_output = await db.scalar(
+        select(func.sum(AuditLog.output_size_bytes)).where(AuditLog.output_size_bytes.isnot(None))
+    ) or 0
+    data_processed_mb = (total_input + total_output) / (1024 * 1024)
+
+    return SecurityMetrics(
+        operations_per_minute=round(ops_per_minute, 2),
+        encryption_rate=round(encryption_rate, 1),
+        success_rate=round(success_rate, 1),
+        avg_latency_ms=round(avg_latency, 2),
+        active_identities=active_identities,
+        contexts_in_use=contexts_in_use,
+        data_processed_mb=round(data_processed_mb, 2),
+    )
+
+
+@router.get("/security/blast-radius", response_model=list[BlastRadiusItem])
+async def get_blast_radius(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    context: Optional[str] = Query(None, description="Filter by specific context"),
+):
+    """
+    Get blast radius / data lineage information.
+
+    Shows which identities used which contexts for what data,
+    helping assess impact of potential key compromises.
+    """
+    # Build query for contexts
+    if context:
+        contexts_result = await db.execute(
+            select(Context).where(Context.name == context)
+        )
+    else:
+        contexts_result = await db.execute(select(Context))
+
+    contexts = contexts_result.scalars().all()
+
+    items = []
+    for ctx in contexts:
+        # Get key info
+        key_result = await db.execute(
+            select(Key).where(Key.context == ctx.name).order_by(desc(Key.version)).limit(1)
+        )
+        latest_key = key_result.scalar_one_or_none()
+
+        # Get operations for this context
+        operations_count = await db.scalar(
+            select(func.count(AuditLog.id)).where(AuditLog.context == ctx.name)
+        ) or 0
+
+        # Get total data size
+        data_size = await db.scalar(
+            select(func.sum(AuditLog.input_size_bytes)).where(
+                and_(AuditLog.context == ctx.name, AuditLog.input_size_bytes.isnot(None))
+            )
+        ) or 0
+
+        # Get identities that used this context
+        identity_result = await db.execute(
+            select(AuditLog.identity_id).where(AuditLog.context == ctx.name).distinct()
+        )
+        identity_ids = [r[0] for r in identity_result.fetchall()]
+        identities_affected = len(identity_ids)
+
+        # Get teams
+        teams_result = await db.execute(
+            select(AuditLog.team).where(
+                and_(AuditLog.context == ctx.name, AuditLog.team.isnot(None))
+            ).distinct()
+        )
+        teams = [r[0] for r in teams_result.fetchall() if r[0]]
+
+        # Get last used
+        last_used_result = await db.execute(
+            select(AuditLog.timestamp).where(AuditLog.context == ctx.name)
+            .order_by(desc(AuditLog.timestamp)).limit(1)
+        )
+        last_used = last_used_result.scalar_one_or_none()
+
+        items.append(BlastRadiusItem(
+            context_name=ctx.name,
+            key_version=latest_key.version if latest_key else 0,
+            identities_affected=identities_affected,
+            operations_count=operations_count,
+            data_size_bytes=data_size,
+            teams=teams,
+            last_used=last_used,
+        ))
+
+    # Sort by data size (largest blast radius first)
+    items.sort(key=lambda x: x.data_size_bytes, reverse=True)
+
+    return items
+
+
+# --- Interactive Playground ---
+
+class PlaygroundRequest(BaseModel):
+    """Request for playground encrypt/decrypt."""
+    operation: str  # encrypt or decrypt
+    data: str  # plaintext for encrypt, ciphertext for decrypt
+    context: str
+
+
+class PlaygroundResponse(BaseModel):
+    """Response from playground."""
+    success: bool
+    result: Optional[str] = None
+    algorithm: str
+    latency_ms: float
+    error: Optional[str] = None
+
+
+@router.post("/playground", response_model=PlaygroundResponse)
+async def playground_operation(
+    request: PlaygroundRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Interactive playground for testing encryption.
+
+    Allows users to test encrypt/decrypt operations without
+    creating an identity or downloading the SDK.
+    """
+    import time
+    import base64
+    from app.core.crypto_service import crypto_service
+
+    start_time = time.time()
+
+    # Verify context exists
+    ctx_result = await db.execute(select(Context).where(Context.name == request.context))
+    context = ctx_result.scalar_one_or_none()
+
+    if not context:
+        return PlaygroundResponse(
+            success=False,
+            algorithm="",
+            latency_ms=0,
+            error=f"Context '{request.context}' not found",
+        )
+
+    try:
+        if request.operation == "encrypt":
+            # Encrypt the plaintext
+            plaintext = request.data.encode("utf-8")
+            ciphertext = await crypto_service.encrypt(
+                db=db,
+                plaintext=plaintext,
+                context_name=request.context,
+            )
+            result = base64.b64encode(ciphertext).decode("ascii")
+
+        elif request.operation == "decrypt":
+            # Decrypt the ciphertext
+            try:
+                ciphertext = base64.b64decode(request.data)
+            except Exception:
+                return PlaygroundResponse(
+                    success=False,
+                    algorithm=context.algorithm,
+                    latency_ms=(time.time() - start_time) * 1000,
+                    error="Invalid base64 ciphertext",
+                )
+
+            plaintext = await crypto_service.decrypt(
+                db=db,
+                ciphertext=ciphertext,
+                context_name=request.context,
+            )
+            result = plaintext.decode("utf-8")
+        else:
+            return PlaygroundResponse(
+                success=False,
+                algorithm="",
+                latency_ms=0,
+                error="Invalid operation. Use 'encrypt' or 'decrypt'",
+            )
+
+        latency_ms = (time.time() - start_time) * 1000
+
+        return PlaygroundResponse(
+            success=True,
+            result=result,
+            algorithm=context.algorithm,
+            latency_ms=round(latency_ms, 2),
+        )
+
+    except Exception as e:
+        latency_ms = (time.time() - start_time) * 1000
+        return PlaygroundResponse(
+            success=False,
+            algorithm=context.algorithm,
+            latency_ms=round(latency_ms, 2),
+            error=str(e),
+        )

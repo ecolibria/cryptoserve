@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   User,
@@ -16,12 +16,14 @@ import {
   Check,
   Copy,
   ExternalLink,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { cn } from "@/lib/utils";
+import { api, Context } from "@/lib/api";
 
 interface DataType {
   id: string;
@@ -40,6 +42,7 @@ interface ContextRecommendation {
   icon: React.ReactNode;
   matchScore: number;
   reasons: string[];
+  isCustom?: boolean;
 }
 
 const DATA_TYPES: DataType[] = [
@@ -194,53 +197,114 @@ const CONTEXT_MAPPING: Record<string, ContextRecommendation> = {
   },
 };
 
-function getRecommendations(selectedTypes: string[]): ContextRecommendation[] {
+// Map data types to contexts (for built-in contexts)
+const TYPE_TO_CONTEXT: Record<string, { context: string; reason: string }[]> = {
+  personal: [{ context: "user-pii", reason: "Best for PII protection with GDPR/CCPA compliance" }],
+  payment: [{ context: "payment-data", reason: "PCI-DSS compliant encryption for card data" }],
+  health: [{ context: "health-data", reason: "HIPAA-compliant PHI protection" }],
+  auth: [
+    { context: "session-tokens", reason: "High-performance encryption for short-lived tokens" },
+    { context: "api-secrets", reason: "Strong protection for long-lived API credentials" },
+  ],
+  secrets: [
+    { context: "api-secrets", reason: "Secure storage for service credentials" },
+    { context: "quantum-ready", reason: "Post-quantum protection for long-term secrets" },
+  ],
+  business: [
+    { context: "business-documents", reason: "SOX/SOC2 compliant for business-sensitive data" },
+  ],
+  logs: [{ context: "internal-logs", reason: "High-throughput encryption for log data with SOC2 compliance" }],
+  backup: [{ context: "backup-data", reason: "Multi-compliance encryption for backup archives" }],
+};
+
+// Keyword-based matching for dynamic contexts
+const TYPE_KEYWORDS: Record<string, string[]> = {
+  personal: ["pii", "personal", "user", "gdpr", "ccpa"],
+  payment: ["payment", "financial", "pci", "card", "billing"],
+  health: ["health", "medical", "hipaa", "phi"],
+  auth: ["auth", "session", "token", "credential"],
+  secrets: ["secret", "key", "api-key", "quantum"],
+  business: ["business", "contract", "document", "sox", "confidential"],
+  logs: ["log", "audit", "metric", "trace"],
+  backup: ["backup", "archive", "disaster", "recovery"],
+};
+
+function getRecommendations(
+  selectedTypes: string[],
+  dynamicContexts: Context[]
+): ContextRecommendation[] {
   const recommendations: ContextRecommendation[] = [];
+  const contextScores: Record<string, { score: number; reasons: string[]; fromApi: boolean }> = {};
 
-  // Map data types to contexts
-  const typeToContext: Record<string, { context: string; reason: string }[]> = {
-    personal: [{ context: "user-pii", reason: "Best for PII protection with GDPR/CCPA compliance" }],
-    payment: [{ context: "payment-data", reason: "PCI-DSS compliant encryption for card data" }],
-    health: [{ context: "health-data", reason: "HIPAA-compliant PHI protection" }],
-    auth: [
-      { context: "session-tokens", reason: "High-performance encryption for short-lived tokens" },
-      { context: "api-secrets", reason: "Strong protection for long-lived API credentials" },
-    ],
-    secrets: [
-      { context: "api-secrets", reason: "Secure storage for service credentials" },
-      { context: "quantum-ready", reason: "Post-quantum protection for long-term secrets" },
-    ],
-    business: [
-      { context: "business-documents", reason: "SOX/SOC2 compliant for business-sensitive data" },
-    ],
-    logs: [{ context: "internal-logs", reason: "High-throughput encryption for log data with SOC2 compliance" }],
-    backup: [{ context: "backup-data", reason: "Multi-compliance encryption for backup archives" }],
-  };
-
-  const contextScores: Record<string, { score: number; reasons: string[] }> = {};
-
+  // Score built-in contexts
   selectedTypes.forEach((type) => {
-    const mappings = typeToContext[type] || [];
+    const mappings = TYPE_TO_CONTEXT[type] || [];
     mappings.forEach(({ context, reason }) => {
       if (!contextScores[context]) {
-        contextScores[context] = { score: 0, reasons: [] };
+        contextScores[context] = { score: 0, reasons: [], fromApi: false };
       }
       contextScores[context].score += 1;
       contextScores[context].reasons.push(reason);
     });
   });
 
+  // Score dynamic contexts from API (including wizard-created ones)
+  dynamicContexts.forEach((ctx) => {
+    // Skip if it's already in built-in contexts
+    if (CONTEXT_MAPPING[ctx.name]) return;
+
+    let matchScore = 0;
+    const reasons: string[] = [];
+    const contextLower = `${ctx.name} ${ctx.display_name} ${ctx.description}`.toLowerCase();
+    const complianceLower = (ctx.compliance_tags || []).join(" ").toLowerCase();
+
+    selectedTypes.forEach((type) => {
+      const keywords = TYPE_KEYWORDS[type] || [];
+      const hasMatch = keywords.some(
+        (kw) => contextLower.includes(kw) || complianceLower.includes(kw)
+      );
+      if (hasMatch) {
+        matchScore += 1;
+        reasons.push(`Matches your ${type} data requirements`);
+      }
+    });
+
+    if (matchScore > 0) {
+      contextScores[ctx.name] = { score: matchScore, reasons, fromApi: true };
+    }
+  });
+
   // Build recommendations sorted by score
   Object.entries(contextScores)
     .sort(([, a], [, b]) => b.score - a.score)
-    .forEach(([contextId, { score, reasons }]) => {
-      const base = CONTEXT_MAPPING[contextId];
-      if (base) {
-        recommendations.push({
-          ...base,
-          matchScore: score,
-          reasons: Array.from(new Set(reasons)),
-        });
+    .forEach(([contextId, { score, reasons, fromApi }]) => {
+      if (fromApi) {
+        // Dynamic context from API
+        const ctx = dynamicContexts.find((c) => c.name === contextId);
+        if (ctx) {
+          recommendations.push({
+            context: ctx.name,
+            displayName: ctx.display_name,
+            description: ctx.description,
+            algorithm: ctx.algorithm,
+            compliance: ctx.compliance_tags || [],
+            icon: <Sparkles className="h-5 w-5" />,
+            matchScore: score,
+            reasons: Array.from(new Set(reasons)),
+            isCustom: true,
+          });
+        }
+      } else {
+        // Built-in context
+        const base = CONTEXT_MAPPING[contextId];
+        if (base) {
+          recommendations.push({
+            ...base,
+            matchScore: score,
+            reasons: Array.from(new Set(reasons)),
+            isCustom: false,
+          });
+        }
       }
     });
 
@@ -253,8 +317,19 @@ export default function ContextSelectorPage() {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedContext, setSelectedContext] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [contexts, setContexts] = useState<Context[]>([]);
+  const [loadingContexts, setLoadingContexts] = useState(true);
 
-  const recommendations = getRecommendations(selectedTypes);
+  // Fetch contexts from API
+  useEffect(() => {
+    api
+      .listContexts()
+      .then(setContexts)
+      .catch(console.error)
+      .finally(() => setLoadingContexts(false));
+  }, []);
+
+  const recommendations = getRecommendations(selectedTypes, contexts);
 
   const toggleType = (typeId: string) => {
     setSelectedTypes((prev) =>
@@ -425,6 +500,12 @@ decrypted = client.decrypt(encrypted)`;
                             Best Match
                           </Badge>
                         )}
+                        {rec.isCustom && (
+                          <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            Custom Policy
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
                         {rec.description}
@@ -471,10 +552,27 @@ decrypted = client.decrypt(encrypted)`;
       )}
 
       {/* Step 3: Integration Guide */}
-      {step === 3 && selectedContext && (
+      {step === 3 && selectedContext && (() => {
+        // Find the selected context details from recommendations or mapping
+        const selectedRec = recommendations.find((r) => r.context === selectedContext) ||
+          CONTEXT_MAPPING[selectedContext];
+        const displayName = selectedRec?.displayName || selectedContext;
+        const algorithm = selectedRec?.algorithm || "AES-256-GCM";
+        const compliance = selectedRec?.compliance || [];
+        const isCustom = (selectedRec as ContextRecommendation)?.isCustom || false;
+
+        return (
         <div className="space-y-6">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-semibold mb-2">Start Using {CONTEXT_MAPPING[selectedContext]?.displayName}</h2>
+            <h2 className="text-2xl font-semibold mb-2">
+              Start Using {displayName}
+              {isCustom && (
+                <Badge className="ml-2 bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  Custom Policy
+                </Badge>
+              )}
+            </h2>
             <p className="text-muted-foreground">
               Create an identity with access to this context and integrate with your code.
             </p>
@@ -497,7 +595,7 @@ decrypted = client.decrypt(encrypted)`;
 
 client = CryptoClient()
 
-# Encrypt using the ${CONTEXT_MAPPING[selectedContext]?.displayName || selectedContext} context
+# Encrypt using the ${displayName} context
 encrypted = client.encrypt(
     data="your sensitive data",
     context="${selectedContext}"
@@ -585,11 +683,11 @@ decrypted = client.decrypt(encrypted)`}
                   </div>
                   <div>
                     <span className="text-muted-foreground">Algorithm:</span>
-                    <span className="ml-2">{CONTEXT_MAPPING[selectedContext]?.algorithm}</span>
+                    <span className="ml-2">{algorithm}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Compliance:</span>
-                    <span className="ml-2">{CONTEXT_MAPPING[selectedContext]?.compliance.join(", ")}</span>
+                    <span className="ml-2">{compliance.join(", ") || "None"}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Security:</span>
@@ -611,7 +709,8 @@ decrypted = client.decrypt(encrypted)`}
             </Button>
           </div>
         </div>
-      )}
+        );
+      })()}
     </DashboardLayout>
   );
 }

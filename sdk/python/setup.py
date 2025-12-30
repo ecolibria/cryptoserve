@@ -7,11 +7,23 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="cryptoserve",
-    version="0.1.0",
+    version="0.2.0",
     packages=find_packages(),
     install_requires=[
         "requests>=2.28.0",
     ],
+    extras_require={
+        "fastapi": [
+            "pydantic>=2.0.0",
+        ],
+        "sqlalchemy": [
+            "sqlalchemy>=2.0.0",
+        ],
+        "all": [
+            "pydantic>=2.0.0",
+            "sqlalchemy>=2.0.0",
+        ],
+    },
     python_requires=">=3.9",
     author="CryptoServe",
     author_email="",
