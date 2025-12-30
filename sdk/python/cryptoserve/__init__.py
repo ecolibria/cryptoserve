@@ -20,13 +20,56 @@ Usage:
 
     # Enable mock mode for local testing (no server needed)
     crypto.enable_mock_mode()
+
+Package Architecture:
+    cryptoserve         - Full SDK (this package)
+    cryptoserve-core    - Pure crypto primitives (no network)
+    cryptoserve-client  - API client only
+    cryptoserve-auto    - Auto-protect for third-party libraries
 """
 
-from cryptoserve.client import CryptoClient
+# Re-export from sub-packages for convenience
+from cryptoserve_client import CryptoClient
+from cryptoserve_client.errors import (
+    CryptoServeError,
+    AuthenticationError,
+    AuthorizationError,
+    ContextNotFoundError,
+)
 from cryptoserve._identity import IDENTITY
 
-__version__ = "0.2.0"
-__all__ = ["crypto", "CryptoClient", "VerifyResult"]
+__version__ = "0.3.0"
+__all__ = [
+    "crypto",
+    "CryptoClient",
+    "VerifyResult",
+    "CryptoServeError",
+    "AuthenticationError",
+    "AuthorizationError",
+    "ContextNotFoundError",
+    "auto_protect",
+]
+
+
+# Lazy import for auto_protect (optional dependency)
+def auto_protect(**kwargs):
+    """
+    Enable auto-protection for third-party libraries.
+
+    Requires: pip install cryptoserve[auto]
+
+    Example:
+        from cryptoserve import auto_protect
+        auto_protect(encryption_key=key)
+    """
+    try:
+        from cryptoserve_auto import protect
+        return protect(**kwargs)
+    except ImportError:
+        raise ImportError(
+            "cryptoserve-auto is not installed. "
+            "Install with: pip install cryptoserve[auto]"
+        )
 
 # Create singleton client
 _client = None

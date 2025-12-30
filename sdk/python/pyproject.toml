@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cryptoserve"
+version = "0.3.0"
+description = "CryptoServe SDK - Zero-config cryptographic operations"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+authors = [
+    {name = "CryptoServe", email = "hello@cryptoserve.dev"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+]
+keywords = ["cryptography", "encryption", "security", "sdk"]
+dependencies = [
+    "cryptoserve-core>=0.1.0",
+    "cryptoserve-client>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cryptoserve/cryptoserve"
+Documentation = "https://docs.cryptoserve.dev"
+Repository = "https://github.com/cryptoserve/cryptoserve"
+
+[project.optional-dependencies]
+fastapi = [
+    "pydantic>=2.0.0",
+]
+sqlalchemy = [
+    "sqlalchemy>=2.0.0",
+]
+auto = [
+    "cryptoserve-auto>=0.1.0",
+]
+all = [
+    "pydantic>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "cryptoserve-auto>=0.1.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+cryptoserve = "cryptoserve.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cryptoserve*"]
+exclude = ["packages*"]
