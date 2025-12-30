@@ -33,7 +33,7 @@ export default function Home() {
             </a>
           ) : (
             <a
-              href={`${API_URL}/auth/github`}
+              href="/auth/github"
               className="inline-flex items-center px-4 py-2 bg-white text-slate-900 rounded-lg font-medium hover:bg-slate-100 transition-colors"
             >
               <Github className="h-5 w-5 mr-2" />
@@ -74,7 +74,7 @@ plaintext = crypto.decrypt(ciphertext, context="user-pii")`}</code>
             </a>
           ) : (
             <a
-              href={`${API_URL}/auth/github`}
+              href="/auth/github"
               className="inline-flex items-center px-6 py-3 bg-blue-500 text-white rounded-lg font-medium text-lg hover:bg-blue-600 transition-colors"
             >
               <Github className="h-5 w-5 mr-2" />
