@@ -213,7 +213,7 @@ print(plaintext)`;
             {/* Data Input */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                {operation === "encrypt" ? "Plaintext Data" : "Ciphertext (Base64)"}
+                {operation === "encrypt" ? "Plaintext Data" : "Encrypted Data"}
               </label>
               <textarea
                 value={inputData}
@@ -224,7 +224,7 @@ print(plaintext)`;
                 placeholder={
                   operation === "encrypt"
                     ? "Enter text to encrypt..."
-                    : "Paste base64-encoded ciphertext..."
+                    : "Paste encrypted data from a previous encryption..."
                 }
                 className="w-full h-40 border rounded-lg py-3 px-4 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
               />
@@ -296,7 +296,7 @@ print(plaintext)`;
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium text-slate-700">
-                        {operation === "encrypt" ? "Ciphertext (Base64)" : "Plaintext"}
+                        {operation === "encrypt" ? "Encrypted Output" : "Decrypted Output"}
                       </label>
                       <button
                         onClick={() => copyToClipboard(result.result!)}
@@ -393,12 +393,12 @@ print(plaintext)`;
         <TipCard
           icon={<Lock className="h-5 w-5 text-green-600" />}
           title="Encryption"
-          description="Enter plaintext, select a context, and encrypt. Output is base64-encoded."
+          description="Enter plaintext, select a context, and encrypt to get an encrypted token."
         />
         <TipCard
           icon={<Unlock className="h-5 w-5 text-blue-600" />}
           title="Decryption"
-          description="Paste ciphertext from encryption, use the same context to decrypt."
+          description="Paste encrypted output from above, use the same context to decrypt."
         />
         <TipCard
           icon={<Shield className="h-5 w-5 text-purple-600" />}
