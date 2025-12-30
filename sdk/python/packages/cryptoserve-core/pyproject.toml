@@ -7,7 +7,7 @@ name = "cryptoserve-core"
 version = "0.1.0"
 description = "CryptoServe Core - Pure cryptographic primitives"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = {text = "AGPL-3.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "CryptoServe", email = "hello@cryptoserve.dev"}
