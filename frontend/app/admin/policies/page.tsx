@@ -70,23 +70,47 @@ export default function AdminPoliciesPage() {
   const [evalPci, setEvalPci] = useState(false);
   const [evalResult, setEvalResult] = useState<PolicyEvaluationResponse | null>(null);
   const [evaluating, setEvaluating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = async () => {
-    try {
-      const [p, dp, c] = await Promise.all([
-        api.listPolicies(),
-        api.getDefaultPolicies(),
-        api.listContexts(),
-      ]);
-      setPolicies(p);
-      setDefaultPolicies(dp);
-      setContexts(c);
-      if (c.length > 0 && !evalContext) setEvalContext(c[0].name);
-    } catch (error) {
-      console.error("Failed to load data:", error);
-    } finally {
-      setLoading(false);
+    setError(null);
+
+    // Load each resource independently so partial failures don't break everything
+    const results = await Promise.allSettled([
+      api.listPolicies(),
+      api.getDefaultPolicies(),
+      api.listContexts(),
+    ]);
+
+    const [policiesResult, defaultPoliciesResult, contextsResult] = results;
+
+    // Handle custom policies
+    if (policiesResult.status === "fulfilled") {
+      setPolicies(policiesResult.value);
+    } else {
+      console.error("Failed to load custom policies:", policiesResult.reason);
     }
+
+    // Handle default policies
+    if (defaultPoliciesResult.status === "fulfilled") {
+      setDefaultPolicies(defaultPoliciesResult.value);
+    } else {
+      console.error("Failed to load default policies:", defaultPoliciesResult.reason);
+      // If default policies fail, it's likely an auth or backend issue
+      setError(`Failed to load policies: ${defaultPoliciesResult.reason?.message || "Backend unavailable"}`);
+    }
+
+    // Handle contexts
+    if (contextsResult.status === "fulfilled") {
+      setContexts(contextsResult.value);
+      if (contextsResult.value.length > 0 && !evalContext) {
+        setEvalContext(contextsResult.value[0].name);
+      }
+    } else {
+      console.error("Failed to load contexts:", contextsResult.reason);
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -228,6 +252,20 @@ export default function AdminPoliciesPage() {
       onRefresh={loadData}
     >
       <div className="space-y-8">
+        {/* Error Banner */}
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <h3 className="font-medium text-red-900">Connection Error</h3>
+              <p className="text-sm text-red-700 mt-1">{error}</p>
+              <p className="text-xs text-red-600 mt-2">
+                Make sure the backend is running on port 8003. Run: <code className="bg-red-100 px-1 rounded">docker compose up -d</code>
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="flex items-center gap-3">
           <Button

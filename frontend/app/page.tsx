@@ -3,13 +3,12 @@
 import { useEffect, useState } from "react";
 import { Shield, Key, Zap, Github, Code } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
-
 export default function Home() {
   const [devMode, setDevMode] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/auth/status`)
+    // Use relative URL - will be proxied to backend via Next.js rewrites
+    fetch("/auth/status")
       .then((res) => res.json())
       .then((data) => setDevMode(data.devMode))
       .catch(() => setDevMode(true)); // Default to dev mode on error
@@ -26,7 +25,7 @@ export default function Home() {
           </div>
           {devMode ? (
             <a
-              href={`${API_URL}/auth/dev-login`}
+              href="/auth/dev-login"
               className="inline-flex items-center px-4 py-2 bg-yellow-500 text-slate-900 rounded-lg font-medium hover:bg-yellow-400 transition-colors"
             >
               <Code className="h-5 w-5 mr-2" />
@@ -67,7 +66,7 @@ plaintext = crypto.decrypt(ciphertext, context="user-pii")`}</code>
 
           {devMode ? (
             <a
-              href={`${API_URL}/auth/dev-login`}
+              href="/auth/dev-login"
               className="inline-flex items-center px-6 py-3 bg-yellow-500 text-slate-900 rounded-lg font-medium text-lg hover:bg-yellow-400 transition-colors"
             >
               <Code className="h-5 w-5 mr-2" />

@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
+// Use relative URLs to leverage Next.js rewrites/proxy for same-origin requests
+// This avoids cross-origin cookie issues with SameSite=lax
+const API_URL = "";
 
 async function fetchApi(endpoint: string, options: RequestInit = {}) {
   const response = await fetch(`${API_URL}${endpoint}`, {
