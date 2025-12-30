@@ -30,8 +30,8 @@ plaintext = crypto.decrypt(ciphertext, context="user-pii")
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/cryptoserve.git
-cd cryptoserve
+git clone https://github.com/keytum/crypto-serve.git
+cd crypto-serve
 
 # Copy environment file
 cp .env.example .env
