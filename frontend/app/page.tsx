@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shield, Key, Zap, Github, Code } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
 
 export default function Home() {
   const [devMode, setDevMode] = useState(false);
