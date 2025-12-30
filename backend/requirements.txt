@@ -21,6 +21,9 @@ email-validator>=2.1.0
 # Utilities
 python-slugify>=8.0.0
 
+# Security
+slowapi>=0.1.9
+
 # SDK building
 setuptools>=69.0.0
 wheel>=0.42.0

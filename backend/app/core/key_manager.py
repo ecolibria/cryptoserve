@@ -22,13 +22,20 @@ class KeyManager:
         self.master_key = settings.cryptoserve_master_key.encode()
 
     def derive_key(self, context: str, version: int = 1) -> bytes:
-        """Derive a key for a context using HKDF."""
+        """Derive a key for a context using HKDF.
+
+        Uses a configurable salt from settings to prevent precomputation attacks.
+        The salt should be unique per deployment.
+        """
         info = f"{context}:{version}".encode()
+
+        # Use configurable salt from settings (unique per deployment)
+        salt = settings.hkdf_salt.encode()
 
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,  # 256 bits for AES-256
-            salt=b"cryptoserve-v1",
+            salt=salt,
             info=info,
         )
 

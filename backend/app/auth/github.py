@@ -1,9 +1,13 @@
 """GitHub OAuth authentication."""
 
+import hashlib
+import hmac
+import secrets
+import time
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, HTTPException, status, Depends, Response
+from fastapi import APIRouter, HTTPException, status, Depends, Response, Request, Cookie
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +17,67 @@ from app.database import get_db
 from app.models import User
 from app.auth.jwt import create_access_token
 
+# Rate limiting (optional - graceful fallback if not installed)
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    limiter = Limiter(key_func=get_remote_address)
+
+    def rate_limit(limit_string):
+        """Rate limit decorator."""
+        return limiter.limit(limit_string)
+except ImportError:
+    limiter = None
+
+    def rate_limit(limit_string):
+        """No-op decorator when rate limiting is not available."""
+        def decorator(func):
+            return func
+        return decorator
+
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# OAuth state token expiration (5 minutes)
+OAUTH_STATE_EXPIRATION = 300
+
+
+def generate_oauth_state() -> str:
+    """Generate a signed OAuth state parameter for CSRF protection."""
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_hex(16)
+    data = f"{timestamp}:{nonce}"
+    signature = hmac.new(
+        settings.oauth_state_secret.encode(),
+        data.encode(),
+        hashlib.sha256
+    ).hexdigest()[:16]
+    return f"{data}:{signature}"
+
+
+def verify_oauth_state(state: str) -> bool:
+    """Verify the OAuth state parameter."""
+    try:
+        parts = state.split(":")
+        if len(parts) != 3:
+            return False
+        timestamp, nonce, signature = parts
+
+        # Check expiration
+        if int(time.time()) - int(timestamp) > OAUTH_STATE_EXPIRATION:
+            return False
+
+        # Verify signature
+        data = f"{timestamp}:{nonce}"
+        expected_signature = hmac.new(
+            settings.oauth_state_secret.encode(),
+            data.encode(),
+            hashlib.sha256
+        ).hexdigest()[:16]
+
+        return hmac.compare_digest(signature, expected_signature)
+    except (ValueError, TypeError):
+        return False
 
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -23,7 +86,8 @@ GITHUB_EMAILS_URL = "https://api.github.com/user/emails"
 
 
 @router.get("/dev-login")
-async def dev_login(db: AsyncSession = Depends(get_db)):
+@rate_limit("5/minute")
+async def dev_login(request: Request, db: AsyncSession = Depends(get_db)):
     """Development mode login - bypasses OAuth for testing."""
     if not settings.dev_mode:
         raise HTTPException(
@@ -67,9 +131,10 @@ async def dev_login(db: AsyncSession = Depends(get_db)):
         key="access_token",
         value=jwt_token,
         httponly=True,
-        secure=False,
+        secure=settings.cookie_secure,
         samesite="lax",
         max_age=settings.jwt_expiration_days * 24 * 60 * 60,
+        domain=settings.cookie_domain,
     )
     return response
 
@@ -84,33 +149,60 @@ async def auth_status():
 
 
 @router.get("/github")
-async def github_login():
-    """Redirect to GitHub OAuth authorization."""
+@rate_limit("10/minute")
+async def github_login(request: Request):
+    """Redirect to GitHub OAuth authorization with CSRF protection."""
     if not settings.github_client_id:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="GitHub OAuth not configured",
         )
 
+    # Generate CSRF state token
+    state = generate_oauth_state()
+
     params = {
         "client_id": settings.github_client_id,
         "redirect_uri": f"{settings.backend_url}/auth/github/callback",
         "scope": "read:user user:email",
+        "state": state,
     }
     query = "&".join(f"{k}={v}" for k, v in params.items())
-    return RedirectResponse(f"{GITHUB_AUTHORIZE_URL}?{query}")
+
+    # Store state in cookie for verification
+    response = RedirectResponse(f"{GITHUB_AUTHORIZE_URL}?{query}")
+    response.set_cookie(
+        key="oauth_state",
+        value=state,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        max_age=OAUTH_STATE_EXPIRATION,
+    )
+    return response
 
 
 @router.get("/github/callback")
+@rate_limit("10/minute")
 async def github_callback(
     code: str,
+    state: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Handle GitHub OAuth callback."""
+    """Handle GitHub OAuth callback with CSRF validation."""
     if not code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing authorization code",
+        )
+
+    # Verify CSRF state parameter
+    stored_state = request.cookies.get("oauth_state")
+    if not stored_state or stored_state != state or not verify_oauth_state(state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired state parameter",
         )
 
     # Exchange code for access token
@@ -213,10 +305,13 @@ async def github_callback(
         key="access_token",
         value=jwt_token,
         httponly=True,
-        secure=False,  # Set to True in production with HTTPS
+        secure=settings.cookie_secure,
         samesite="lax",
         max_age=settings.jwt_expiration_days * 24 * 60 * 60,
+        domain=settings.cookie_domain,
     )
+    # Clear the OAuth state cookie
+    response.delete_cookie("oauth_state")
     return response
 
 
