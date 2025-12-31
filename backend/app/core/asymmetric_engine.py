@@ -36,6 +36,14 @@ class AsymmetricAlgorithm(str, Enum):
     RSA_OAEP_SHA384 = "rsa-oaep-sha384"
 
 
+class KeyExchangeAlgorithm(str, Enum):
+    """Supported key exchange algorithms."""
+    X25519 = "x25519"  # Recommended: Modern, fast
+    ECDH_P256 = "ecdh-p256"  # NIST P-256
+    ECDH_P384 = "ecdh-p384"  # NIST P-384
+    ECDH_P521 = "ecdh-p521"  # NIST P-521
+
+
 @dataclass
 class KeyPair:
     """Asymmetric key pair."""

@@ -61,6 +61,11 @@ class CryptoSeverity(str, Enum):
     INFO = "info"  # Normal/expected
 
 
+class ScannerError(Exception):
+    """Exception raised when binary scanning fails."""
+    pass
+
+
 @dataclass
 class CryptoConstant:
     """A cryptographic constant or pattern."""
