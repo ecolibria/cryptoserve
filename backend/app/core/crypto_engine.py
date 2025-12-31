@@ -85,6 +85,10 @@ class EncryptResult:
 class CipherFactory:
     """Factory for creating cipher instances based on mode."""
 
+    # Message size limits (in bytes)
+    GCM_MAX_SIZE = 64 * 1024 * 1024 * 1024  # 64 GiB
+    CCM_MAX_SIZE = 65536  # 64 KiB per CCM spec
+
     @staticmethod
     def get_key_size(algorithm: str) -> int:
         """Get key size in bytes for an algorithm."""
@@ -93,71 +97,163 @@ class CipherFactory:
         return key_bits // 8
 
     @staticmethod
-    def encrypt_gcm(key: bytes, plaintext: bytes, nonce: bytes) -> bytes:
-        """Encrypt using AES-GCM."""
-        aesgcm = AESGCM(key)
-        return aesgcm.encrypt(nonce, plaintext, None)
+    def derive_enc_mac_keys(master_key: bytes) -> tuple[bytes, bytes]:
+        """Derive separate encryption and MAC keys from master key.
+
+        This prevents related-key attacks when using the same key for
+        both encryption and authentication in CBC/CTR modes.
+
+        Args:
+            master_key: The master key material
+
+        Returns:
+            Tuple of (encryption_key, mac_key)
+        """
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+
+        enc_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=len(master_key),
+            salt=b"crypto-serve-v1",
+            info=b"encryption",
+        ).derive(master_key)
+
+        mac_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,  # HMAC-SHA256 key
+            salt=b"crypto-serve-v1",
+            info=b"authentication",
+        ).derive(master_key)
+
+        return enc_key, mac_key
 
     @staticmethod
-    def decrypt_gcm(key: bytes, ciphertext: bytes, nonce: bytes) -> bytes:
-        """Decrypt using AES-GCM."""
-        aesgcm = AESGCM(key)
-        return aesgcm.decrypt(nonce, ciphertext, None)
+    def compute_key_commitment(key: bytes) -> bytes:
+        """Compute key commitment for multi-key attack prevention.
+
+        This binds the ciphertext to a specific key, preventing
+        "invisible salamanders" style attacks on AES-GCM.
+
+        Args:
+            key: The encryption key
+
+        Returns:
+            32-byte commitment value
+        """
+        return hmac.new(key, b"key-commitment-v1", hashlib.sha256).digest()
 
     @staticmethod
-    def encrypt_ccm(key: bytes, plaintext: bytes, nonce: bytes) -> bytes:
-        """Encrypt using AES-CCM."""
+    def encrypt_gcm(
+        key: bytes,
+        plaintext: bytes,
+        nonce: bytes,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Encrypt using AES-GCM with optional AAD."""
+        if len(plaintext) > CipherFactory.GCM_MAX_SIZE:
+            raise CryptoError(
+                f"Plaintext too large for GCM: {len(plaintext)} bytes "
+                f"(max: {CipherFactory.GCM_MAX_SIZE})"
+            )
+        aesgcm = AESGCM(key)
+        return aesgcm.encrypt(nonce, plaintext, associated_data)
+
+    @staticmethod
+    def decrypt_gcm(
+        key: bytes,
+        ciphertext: bytes,
+        nonce: bytes,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Decrypt using AES-GCM with optional AAD."""
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(nonce, ciphertext, associated_data)
+
+    @staticmethod
+    def encrypt_ccm(
+        key: bytes,
+        plaintext: bytes,
+        nonce: bytes,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Encrypt using AES-CCM with optional AAD."""
+        if len(plaintext) > CipherFactory.CCM_MAX_SIZE:
+            raise CryptoError(
+                f"Plaintext too large for CCM: {len(plaintext)} bytes "
+                f"(max: {CipherFactory.CCM_MAX_SIZE})"
+            )
         # CCM requires 7-13 byte nonce, we use 12
         aesccm = AESCCM(key, tag_length=16)
-        return aesccm.encrypt(nonce[:12], plaintext, None)
+        return aesccm.encrypt(nonce[:12], plaintext, associated_data)
 
     @staticmethod
-    def decrypt_ccm(key: bytes, ciphertext: bytes, nonce: bytes) -> bytes:
-        """Decrypt using AES-CCM."""
+    def decrypt_ccm(
+        key: bytes,
+        ciphertext: bytes,
+        nonce: bytes,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Decrypt using AES-CCM with optional AAD."""
         aesccm = AESCCM(key, tag_length=16)
-        return aesccm.decrypt(nonce[:12], ciphertext, None)
+        return aesccm.decrypt(nonce[:12], ciphertext, associated_data)
 
     @staticmethod
     def encrypt_cbc(key: bytes, plaintext: bytes, iv: bytes) -> bytes:
         """Encrypt using AES-CBC with PKCS7 padding and HMAC.
 
-        Returns: iv + ciphertext + hmac
+        Uses separate derived keys for encryption and authentication
+        to prevent related-key attacks.
+
+        Returns: ciphertext + hmac (IV stored in header)
         """
-        # Pad plaintext to block size
+        # Derive separate keys for encryption and MAC
+        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+
+        # Pad plaintext to block size (PKCS7)
         block_size = 16
         padding_len = block_size - (len(plaintext) % block_size)
         padded = plaintext + bytes([padding_len] * padding_len)
 
-        # Encrypt
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        # Encrypt with derived encryption key
+        cipher = Cipher(algorithms.AES(enc_key), modes.CBC(iv), backend=default_backend())
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(padded) + encryptor.finalize()
 
-        # Add HMAC for authentication
-        mac = hmac.new(key, iv + ciphertext, hashlib.sha256).digest()
+        # Authenticate with derived MAC key (Encrypt-then-MAC)
+        mac = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()
 
         return ciphertext + mac
 
     @staticmethod
     def decrypt_cbc(key: bytes, data: bytes, iv: bytes) -> bytes:
-        """Decrypt AES-CBC with HMAC verification."""
+        """Decrypt AES-CBC with HMAC verification.
+
+        Uses separate derived keys for decryption and authentication.
+        """
+        # Derive separate keys for encryption and MAC
+        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+
         # Split ciphertext and MAC
         ciphertext = data[:-32]
         mac = data[-32:]
 
-        # Verify HMAC
-        expected_mac = hmac.new(key, iv + ciphertext, hashlib.sha256).digest()
+        # Verify HMAC first (before any decryption)
+        expected_mac = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()
         if not hmac.compare_digest(mac, expected_mac):
             raise DecryptionError("HMAC verification failed")
 
-        # Decrypt
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        # Decrypt with derived encryption key
+        cipher = Cipher(algorithms.AES(enc_key), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         padded = decryptor.update(ciphertext) + decryptor.finalize()
 
-        # Remove PKCS7 padding
+        # Remove PKCS7 padding with validation
         padding_len = padded[-1]
         if padding_len > 16 or padding_len == 0:
+            raise DecryptionError("Invalid padding")
+        # Verify all padding bytes are correct
+        if padded[-padding_len:] != bytes([padding_len] * padding_len):
             raise DecryptionError("Invalid padding")
         return padded[:-padding_len]
 
@@ -165,34 +261,46 @@ class CipherFactory:
     def encrypt_ctr(key: bytes, plaintext: bytes, nonce: bytes) -> bytes:
         """Encrypt using AES-CTR with HMAC.
 
+        Uses separate derived keys for encryption and authentication
+        to prevent related-key attacks.
+
         Returns: ciphertext + hmac
         """
+        # Derive separate keys for encryption and MAC
+        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+
         cipher = Cipher(
-            algorithms.AES(key),
+            algorithms.AES(enc_key),
             modes.CTR(nonce + b'\x00' * 4),  # 12-byte nonce + 4-byte counter
             backend=default_backend()
         )
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(plaintext) + encryptor.finalize()
 
-        # Add HMAC for authentication
-        mac = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
+        # Authenticate with derived MAC key (Encrypt-then-MAC)
+        mac = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
 
         return ciphertext + mac
 
     @staticmethod
     def decrypt_ctr(key: bytes, data: bytes, nonce: bytes) -> bytes:
-        """Decrypt AES-CTR with HMAC verification."""
+        """Decrypt AES-CTR with HMAC verification.
+
+        Uses separate derived keys for decryption and authentication.
+        """
+        # Derive separate keys for encryption and MAC
+        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+
         ciphertext = data[:-32]
         mac = data[-32:]
 
-        # Verify HMAC
-        expected_mac = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
+        # Verify HMAC first (before any decryption)
+        expected_mac = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
         if not hmac.compare_digest(mac, expected_mac):
             raise DecryptionError("HMAC verification failed")
 
         cipher = Cipher(
-            algorithms.AES(key),
+            algorithms.AES(enc_key),
             modes.CTR(nonce + b'\x00' * 4),
             backend=default_backend()
         )
@@ -200,22 +308,32 @@ class CipherFactory:
         return decryptor.update(ciphertext) + decryptor.finalize()
 
     @staticmethod
-    def encrypt_chacha20(key: bytes, plaintext: bytes, nonce: bytes) -> bytes:
-        """Encrypt using ChaCha20-Poly1305."""
+    def encrypt_chacha20(
+        key: bytes,
+        plaintext: bytes,
+        nonce: bytes,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Encrypt using ChaCha20-Poly1305 with optional AAD."""
         chacha = ChaCha20Poly1305(key)
-        return chacha.encrypt(nonce[:12], plaintext, None)
+        return chacha.encrypt(nonce[:12], plaintext, associated_data)
 
     @staticmethod
-    def decrypt_chacha20(key: bytes, ciphertext: bytes, nonce: bytes) -> bytes:
-        """Decrypt using ChaCha20-Poly1305."""
+    def decrypt_chacha20(
+        key: bytes,
+        ciphertext: bytes,
+        nonce: bytes,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Decrypt using ChaCha20-Poly1305 with optional AAD."""
         chacha = ChaCha20Poly1305(key)
-        return chacha.decrypt(nonce[:12], ciphertext, None)
+        return chacha.decrypt(nonce[:12], ciphertext, associated_data)
 
 
 class CryptoEngine:
     """Handles encryption and decryption operations with policy enforcement."""
 
-    HEADER_VERSION = 2  # Bumped for new format with mode info
+    HEADER_VERSION = 3  # v3: Added key commitment and AAD support
 
     def __init__(self):
         # Load default policies on startup
@@ -231,6 +349,7 @@ class CryptoEngine:
         user_agent: str | None = None,
         enforce_policies: bool = True,
         algorithm_override: AlgorithmOverride | None = None,
+        associated_data: bytes | None = None,
     ) -> EncryptResult:
         """Encrypt data and return structured result with metadata.
 
@@ -243,6 +362,8 @@ class CryptoEngine:
             user_agent: Request user agent for audit
             enforce_policies: If True, evaluate and enforce policies
             algorithm_override: Optional explicit algorithm selection
+            associated_data: Optional additional authenticated data (AAD)
+                for AEAD modes. This data is authenticated but not encrypted.
 
         Returns:
             EncryptResult with ciphertext and metadata
@@ -252,6 +373,7 @@ class CryptoEngine:
             AuthorizationError: If identity not authorized
             PolicyError: If a blocking policy is violated
             UnsupportedModeError: If requested mode is not supported
+            CryptoError: If plaintext exceeds size limits
         """
         start_time = datetime.utcnow()
         success = False
@@ -300,10 +422,15 @@ class CryptoEngine:
             nonce_size = 16 if mode in [CipherMode.CBC, CipherMode.CTR] else 12
             nonce = os.urandom(nonce_size)
 
-            # Encrypt based on mode
-            ciphertext = self._encrypt_with_mode(key, plaintext, nonce, mode, algorithm)
+            # Compute key commitment for multi-key attack prevention
+            key_commitment = CipherFactory.compute_key_commitment(key)
 
-            # Pack into self-describing format
+            # Encrypt based on mode (with AAD support for AEAD modes)
+            ciphertext = self._encrypt_with_mode(
+                key, plaintext, nonce, mode, algorithm, associated_data
+            )
+
+            # Pack into self-describing format with key commitment
             packed = self._pack_ciphertext(
                 ciphertext=ciphertext,
                 nonce=nonce,
@@ -311,6 +438,8 @@ class CryptoEngine:
                 context=context_name,
                 algorithm=algorithm,
                 mode=mode,
+                key_commitment=key_commitment,
+                has_aad=associated_data is not None,
             )
 
             success = True
@@ -459,31 +588,56 @@ class CryptoEngine:
         nonce: bytes,
         mode: CipherMode,
         algorithm: str,
+        associated_data: bytes | None = None,
     ) -> bytes:
-        """Encrypt plaintext using the specified mode."""
-        # Ensure key is correct size (default 256-bit)
-        if len(key) < 32:
-            # Derive a 256-bit key using HKDF if needed
-            key = key.ljust(32, b'\x00')[:32]
+        """Encrypt plaintext using the specified mode.
+
+        Args:
+            key: Encryption key (must be correct size for algorithm)
+            plaintext: Data to encrypt
+            nonce: Nonce/IV
+            mode: Cipher mode
+            algorithm: Algorithm name
+            associated_data: Optional AAD for AEAD modes
+
+        Returns:
+            Ciphertext (includes auth tag for AEAD modes)
+        """
+        # Key size is validated at derivation - no padding needed
+        # The key_size is passed to key_manager which derives correct size
 
         if "ChaCha20" in algorithm:
-            return CipherFactory.encrypt_chacha20(key, plaintext, nonce)
+            return CipherFactory.encrypt_chacha20(key, plaintext, nonce, associated_data)
 
         if mode == CipherMode.GCM or mode == CipherMode.GCM_SIV:
             # GCM-SIV would use a different library, fallback to GCM for now
-            return CipherFactory.encrypt_gcm(key, plaintext, nonce)
+            return CipherFactory.encrypt_gcm(key, plaintext, nonce, associated_data)
         elif mode == CipherMode.CBC:
+            # CBC doesn't support AAD natively - it uses separate HMAC
+            if associated_data:
+                raise UnsupportedModeError(
+                    "CBC mode does not support AAD. Use GCM or ChaCha20-Poly1305 for AAD."
+                )
             return CipherFactory.encrypt_cbc(key, plaintext, nonce)
         elif mode == CipherMode.CTR:
+            # CTR doesn't support AAD natively - it uses separate HMAC
+            if associated_data:
+                raise UnsupportedModeError(
+                    "CTR mode does not support AAD. Use GCM or ChaCha20-Poly1305 for AAD."
+                )
             return CipherFactory.encrypt_ctr(key, plaintext, nonce)
         elif mode == CipherMode.CCM:
-            return CipherFactory.encrypt_ccm(key, plaintext, nonce)
+            return CipherFactory.encrypt_ccm(key, plaintext, nonce, associated_data)
         elif mode == CipherMode.XTS:
+            # XTS is for disk encryption and doesn't use AAD
+            if associated_data:
+                raise UnsupportedModeError(
+                    "XTS mode does not support AAD. Use GCM for data encryption with AAD."
+                )
             # XTS requires special handling - fallback to GCM for now
-            warnings = ["XTS mode is for disk encryption - using GCM for data encryption"]
-            return CipherFactory.encrypt_gcm(key, plaintext, nonce)
+            return CipherFactory.encrypt_gcm(key, plaintext, nonce, None)
         else:
-            return CipherFactory.encrypt_gcm(key, plaintext, nonce)
+            return CipherFactory.encrypt_gcm(key, plaintext, nonce, associated_data)
 
     def _decrypt_with_mode(
         self,
@@ -492,26 +646,36 @@ class CryptoEngine:
         nonce: bytes,
         mode: CipherMode,
         algorithm: str,
+        associated_data: bytes | None = None,
     ) -> bytes:
-        """Decrypt ciphertext using the specified mode."""
-        if len(key) < 32:
-            key = key.ljust(32, b'\x00')[:32]
+        """Decrypt ciphertext using the specified mode.
 
+        Args:
+            key: Decryption key (must be correct size for algorithm)
+            ciphertext: Data to decrypt
+            nonce: Nonce/IV
+            mode: Cipher mode
+            algorithm: Algorithm name
+            associated_data: Optional AAD for AEAD modes (must match encryption)
+
+        Returns:
+            Decrypted plaintext
+        """
         if "ChaCha20" in algorithm:
-            return CipherFactory.decrypt_chacha20(key, ciphertext, nonce)
+            return CipherFactory.decrypt_chacha20(key, ciphertext, nonce, associated_data)
 
         if mode == CipherMode.GCM or mode == CipherMode.GCM_SIV:
-            return CipherFactory.decrypt_gcm(key, ciphertext, nonce)
+            return CipherFactory.decrypt_gcm(key, ciphertext, nonce, associated_data)
         elif mode == CipherMode.CBC:
             return CipherFactory.decrypt_cbc(key, ciphertext, nonce)
         elif mode == CipherMode.CTR:
             return CipherFactory.decrypt_ctr(key, ciphertext, nonce)
         elif mode == CipherMode.CCM:
-            return CipherFactory.decrypt_ccm(key, ciphertext, nonce)
+            return CipherFactory.decrypt_ccm(key, ciphertext, nonce, associated_data)
         elif mode == CipherMode.XTS:
-            return CipherFactory.decrypt_gcm(key, ciphertext, nonce)
+            return CipherFactory.decrypt_gcm(key, ciphertext, nonce, None)
         else:
-            return CipherFactory.decrypt_gcm(key, ciphertext, nonce)
+            return CipherFactory.decrypt_gcm(key, ciphertext, nonce, associated_data)
 
     async def decrypt(
         self,
@@ -521,8 +685,26 @@ class CryptoEngine:
         identity: Identity,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        associated_data: bytes | None = None,
     ) -> bytes:
-        """Decrypt self-describing ciphertext."""
+        """Decrypt self-describing ciphertext.
+
+        Args:
+            db: Database session
+            packed_ciphertext: Self-describing ciphertext from encrypt()
+            context_name: Expected context name
+            identity: Calling identity
+            ip_address: Request IP for audit
+            user_agent: Request user agent for audit
+            associated_data: Optional AAD (must match what was used during encryption)
+
+        Returns:
+            Decrypted plaintext
+
+        Raises:
+            AuthorizationError: If identity not authorized
+            DecryptionError: If decryption fails or key commitment mismatch
+        """
         start_time = datetime.utcnow()
         success = False
         error_message = None
@@ -544,6 +726,12 @@ class CryptoEngine:
                     f"Context mismatch: expected {context_name}, got {header['ctx']}"
                 )
 
+            # Check if AAD was used during encryption
+            if header.get("aad") and not associated_data:
+                raise DecryptionError(
+                    "Ciphertext was encrypted with AAD but no AAD provided for decryption"
+                )
+
             # Extract key size from algorithm (e.g., "AES-256-GCM" -> 32 bytes)
             algorithm = header.get("alg", "AES-256-GCM")
             key_size_bytes = self._get_key_size_from_algorithm(algorithm)
@@ -553,6 +741,15 @@ class CryptoEngine:
             if not key:
                 raise DecryptionError(f"Key not found: {header['kid']}")
 
+            # Verify key commitment if present (prevents multi-key attacks)
+            if "kc" in header:
+                expected_commitment = CipherFactory.compute_key_commitment(key)
+                stored_commitment = base64.b64decode(header["kc"])
+                if not hmac.compare_digest(expected_commitment, stored_commitment):
+                    raise DecryptionError(
+                        "Key commitment verification failed - possible key mismatch"
+                    )
+
             # Get mode from header
             mode_str = header.get("mode", "gcm")
             try:
@@ -560,9 +757,11 @@ class CryptoEngine:
             except ValueError:
                 mode = CipherMode.GCM
 
-            # Decrypt
+            # Decrypt with AAD if applicable
             nonce = base64.b64decode(header["nonce"])
-            plaintext = self._decrypt_with_mode(key, ciphertext, nonce, mode, algorithm)
+            plaintext = self._decrypt_with_mode(
+                key, ciphertext, nonce, mode, algorithm, associated_data
+            )
 
             success = True
             return plaintext
@@ -601,8 +800,24 @@ class CryptoEngine:
         context: str,
         algorithm: str,
         mode: CipherMode,
+        key_commitment: bytes | None = None,
+        has_aad: bool = False,
     ) -> bytes:
-        """Pack ciphertext with header for self-describing format."""
+        """Pack ciphertext with header for self-describing format.
+
+        Args:
+            ciphertext: The encrypted data
+            nonce: Nonce/IV used for encryption
+            key_id: Key identifier
+            context: Context name
+            algorithm: Algorithm name (e.g., "AES-256-GCM")
+            mode: Cipher mode
+            key_commitment: Optional key commitment value for multi-key attack prevention
+            has_aad: Whether AAD was used (caller must provide same AAD for decryption)
+
+        Returns:
+            Packed ciphertext with self-describing header
+        """
         header = {
             "v": self.HEADER_VERSION,
             "ctx": context,
@@ -611,6 +826,15 @@ class CryptoEngine:
             "mode": mode.value,
             "nonce": base64.b64encode(nonce).decode("ascii"),
         }
+
+        # Add key commitment if provided (v3+ feature)
+        if key_commitment:
+            header["kc"] = base64.b64encode(key_commitment).decode("ascii")
+
+        # Flag if AAD was used (caller must provide same AAD for decryption)
+        if has_aad:
+            header["aad"] = True
+
         header_json = json.dumps(header, separators=(",", ":")).encode()
         header_len = len(header_json).to_bytes(2, "big")
 
@@ -634,8 +858,8 @@ class CryptoEngine:
         except json.JSONDecodeError as e:
             raise DecryptionError(f"Invalid ciphertext header: {e}")
 
-        # Support both v1 and v2 headers
-        if header.get("v") not in [1, self.HEADER_VERSION]:
+        # Support v1, v2, and v3 headers for backward compatibility
+        if header.get("v") not in [1, 2, 3]:
             raise DecryptionError(
                 f"Unsupported ciphertext version: {header.get('v')}"
             )

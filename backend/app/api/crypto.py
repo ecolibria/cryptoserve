@@ -12,9 +12,11 @@ from app.database import get_db
 from app.models import Identity
 from app.core.crypto_engine import (
     crypto_engine,
+    CryptoError,
     ContextNotFoundError,
     AuthorizationError,
     DecryptionError,
+    UnsupportedModeError,
 )
 from app.core.identity_manager import identity_manager
 from app.schemas.context import AlgorithmOverride, CipherMode
@@ -30,6 +32,12 @@ class EncryptRequest(BaseModel):
     algorithm_override: AlgorithmOverride | None = Field(
         default=None,
         description="Optional: Override automatic algorithm selection"
+    )
+    associated_data: str | None = Field(
+        default=None,
+        description="Optional: Additional authenticated data (AAD) - base64 encoded. "
+                    "AAD is authenticated but not encrypted. Supported by AEAD modes "
+                    "(GCM, CCM, ChaCha20-Poly1305). Must provide same AAD for decryption."
     )
 
 
@@ -58,6 +66,11 @@ class DecryptRequest(BaseModel):
     """Decryption request schema."""
     ciphertext: str  # Base64 encoded
     context: str
+    associated_data: str | None = Field(
+        default=None,
+        description="Optional: Additional authenticated data (AAD) - base64 encoded. "
+                    "Must match AAD used during encryption if AAD was used."
+    )
 
 
 class DecryptResponse(BaseModel):
@@ -105,6 +118,17 @@ async def encrypt(
             detail="Invalid base64 plaintext",
         )
 
+    # Parse optional AAD
+    associated_data = None
+    if data.associated_data:
+        try:
+            associated_data = base64.b64decode(data.associated_data)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid base64 associated_data",
+            )
+
     try:
         result = await crypto_engine.encrypt(
             db=db,
@@ -114,6 +138,7 @@ async def encrypt(
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
             algorithm_override=data.algorithm_override,
+            associated_data=associated_data,
         )
     except ContextNotFoundError as e:
         raise HTTPException(
@@ -123,6 +148,11 @@ async def encrypt(
     except AuthorizationError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+    except (CryptoError, UnsupportedModeError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
 
@@ -148,7 +178,11 @@ async def decrypt(
     identity: Annotated[Identity, Depends(get_sdk_identity)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Decrypt data."""
+    """Decrypt data.
+
+    Decrypts the provided ciphertext using the context's key.
+    If the ciphertext was encrypted with AAD, the same AAD must be provided.
+    """
     try:
         ciphertext = base64.b64decode(data.ciphertext)
     except Exception:
@@ -156,6 +190,17 @@ async def decrypt(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid base64 ciphertext",
         )
+
+    # Parse optional AAD
+    associated_data = None
+    if data.associated_data:
+        try:
+            associated_data = base64.b64decode(data.associated_data)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid base64 associated_data",
+            )
 
     try:
         plaintext = await crypto_engine.decrypt(
@@ -165,6 +210,7 @@ async def decrypt(
             identity=identity,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
+            associated_data=associated_data,
         )
     except ContextNotFoundError as e:
         raise HTTPException(
