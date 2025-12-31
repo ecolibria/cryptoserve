@@ -476,7 +476,7 @@ class crypto:
 
         import requests
         response = requests.get(
-            f"{IDENTITY['server_url']}/api/sdk/contexts",
+            f"{IDENTITY['server_url']}/sdk/contexts",
             headers={"Authorization": f"Bearer {IDENTITY['token']}"},
             timeout=5,
         )
