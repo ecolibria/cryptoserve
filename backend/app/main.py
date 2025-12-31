@@ -28,6 +28,15 @@ from app.api import (
     audit_router,
     policies_router,
     signatures_router,
+    hashing_router,
+    passwords_router,
+    jose_router,
+    asymmetric_router,
+    secrets_router,
+    discovery_router,
+    code_analysis_router,
+    certificates_router,
+    dependencies_router,
 )
 from app.api.sdk import router as sdk_router
 from app.api.admin import router as admin_router
@@ -524,6 +533,15 @@ app.include_router(crypto_router)
 app.include_router(audit_router)
 app.include_router(policies_router)
 app.include_router(signatures_router)
+app.include_router(hashing_router)
+app.include_router(passwords_router)
+app.include_router(jose_router)
+app.include_router(asymmetric_router)
+app.include_router(secrets_router)
+app.include_router(discovery_router)
+app.include_router(code_analysis_router)
+app.include_router(certificates_router)
+app.include_router(dependencies_router)
 app.include_router(sdk_router)
 app.include_router(algorithms_router)
 app.include_router(admin_router)

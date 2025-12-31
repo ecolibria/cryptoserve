@@ -283,6 +283,156 @@ export interface TeamUsage {
   identity_count: number;
 }
 
+// Code Analysis Types
+export interface CryptoUsage {
+  algorithm: string;
+  category: string;
+  library: string;
+  line_number: number;
+  context: string;
+  is_weak: boolean;
+  weakness_reason: string | null;
+  quantum_risk: string;
+  recommendation: string | null;
+}
+
+export interface CryptoFinding {
+  severity: string;
+  category: string;
+  message: string;
+  line_number: number | null;
+  algorithm: string | null;
+  recommendation: string;
+}
+
+export interface CBOMResponse {
+  version: string;
+  algorithms: { name: string; category: string; count: number; quantum_risk: string }[];
+  libraries: string[];
+  quantum_summary: { vulnerable: number; safe: number; unknown: number };
+  findings_summary: { critical: number; high: number; medium: number; low: number; info: number };
+}
+
+export interface CodeScanResponse {
+  usages: CryptoUsage[];
+  findings: CryptoFinding[];
+  language: string;
+  lines_scanned: number;
+  cbom: CBOMResponse;
+}
+
+export interface CodeScanQuickResponse {
+  has_crypto: boolean;
+  algorithms: string[];
+  weak_algorithms: string[];
+  quantum_vulnerable: string[];
+  risk_level: string;
+  recommendation: string;
+}
+
+export interface SupportedLanguage {
+  language: string;
+  extensions: string[];
+  ast_supported: boolean;
+}
+
+export interface AlgorithmProperties {
+  category: string;
+  quantum_risk: string;
+  is_weak: boolean;
+  weakness_reason: string | null;
+}
+
+// Dependency Types
+export interface CryptoDependency {
+  name: string;
+  version: string | null;
+  package_type: string;
+  category: string;
+  algorithms: string[];
+  quantum_risk: string;
+  is_deprecated: boolean;
+  deprecation_reason: string | null;
+  recommended_replacement: string | null;
+  description: string | null;
+}
+
+export interface DependencyScanResponse {
+  dependencies: CryptoDependency[];
+  package_type: string;
+  total_packages: number;
+  crypto_packages: number;
+  quantum_vulnerable_count: number;
+  deprecated_count: number;
+  recommendations: string[];
+}
+
+export interface DependencyScanQuickResponse {
+  has_crypto: boolean;
+  crypto_count: number;
+  quantum_vulnerable: boolean;
+  deprecated_present: boolean;
+  risk_level: string;
+  top_algorithms: string[];
+  recommendation: string;
+}
+
+export interface KnownPackage {
+  name: string;
+  category: string;
+  algorithms: string[];
+  quantum_risk: string;
+  is_deprecated: boolean;
+}
+
+export interface SupportedFormatsResponse {
+  formats: { filename: string; ecosystem: string; language: string }[];
+}
+
+// Certificate Types
+export interface CSRResponse {
+  csr_pem: string;
+  private_key_pem: string;
+  public_key_pem: string;
+}
+
+export interface SelfSignedCertResponse {
+  certificate_pem: string;
+  private_key_pem: string;
+}
+
+export interface CertificateInfo {
+  subject: Record<string, string>;
+  issuer: Record<string, string>;
+  serial_number: string;
+  not_before: string;
+  not_after: string;
+  is_expired: boolean;
+  is_self_signed: boolean;
+  is_ca: boolean;
+  version: number;
+  signature_algorithm: string;
+  public_key_algorithm: string;
+  public_key_size: number;
+  key_usage: string[];
+  extended_key_usage: string[];
+  san_domains: string[];
+  san_ips: string[];
+  fingerprints: { sha256: string; sha1: string };
+}
+
+export interface CertificateVerifyResponse {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface ChainVerifyResponse {
+  valid: boolean;
+  errors: string[];
+  chain_length: number;
+}
+
 export interface HealthStatus {
   database: string;
   encryption_service: string;
@@ -706,4 +856,95 @@ export const api = {
       created_by: string | null;
       metadata: Record<string, unknown> | null;
     }[]>,
+
+  // Code Analysis
+  scanCode: (data: { code: string; language?: string; filename?: string }) =>
+    fetchApi("/api/v1/code/scan", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<CodeScanResponse>,
+
+  scanCodeQuick: (data: { code: string; language?: string }) =>
+    fetchApi("/api/v1/code/scan/quick", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<CodeScanQuickResponse>,
+
+  generateCBOM: (data: { code: string; language?: string; filename?: string }) =>
+    fetchApi("/api/v1/code/cbom", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<CBOMResponse>,
+
+  getSupportedLanguages: () =>
+    fetchApi("/api/v1/code/languages") as Promise<SupportedLanguage[]>,
+
+  getDetectableAlgorithms: () =>
+    fetchApi("/api/v1/code/algorithms") as Promise<Record<string, AlgorithmProperties>>,
+
+  // Dependencies
+  scanDependencies: (data: { content: string; filename?: string }) =>
+    fetchApi("/api/v1/dependencies/scan", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<DependencyScanResponse>,
+
+  scanDependenciesQuick: (data: { content: string; filename?: string }) =>
+    fetchApi("/api/v1/dependencies/scan/quick", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<DependencyScanQuickResponse>,
+
+  getKnownPackages: (packageType?: string) => {
+    const query = packageType ? `?package_type=${packageType}` : "";
+    return fetchApi(`/api/v1/dependencies/known-packages${query}`) as Promise<Record<string, KnownPackage[]>>;
+  },
+
+  getSupportedFormats: () =>
+    fetchApi("/api/v1/dependencies/supported-formats") as Promise<SupportedFormatsResponse>,
+
+  // Certificates
+  generateCSR: (data: {
+    subject: { common_name: string; organization?: string; country?: string };
+    key_type?: string;
+    key_size?: number;
+    san_domains?: string[];
+  }) =>
+    fetchApi("/api/v1/certificates/csr/generate", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<CSRResponse>,
+
+  generateSelfSignedCert: (data: {
+    subject: { common_name: string; organization?: string; country?: string };
+    validity_days?: number;
+    is_ca?: boolean;
+    san_domains?: string[];
+  }) =>
+    fetchApi("/api/v1/certificates/self-signed/generate", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<SelfSignedCertResponse>,
+
+  parseCertificate: (data: { certificate: string }) =>
+    fetchApi("/api/v1/certificates/parse", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<CertificateInfo>,
+
+  verifyCertificate: (data: {
+    certificate: string;
+    issuer_certificate?: string;
+    check_expiry?: boolean;
+  }) =>
+    fetchApi("/api/v1/certificates/verify", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<CertificateVerifyResponse>,
+
+  verifyCertificateChain: (data: { certificates: string[]; check_expiry?: boolean }) =>
+    fetchApi("/api/v1/certificates/verify-chain", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<ChainVerifyResponse>,
 };

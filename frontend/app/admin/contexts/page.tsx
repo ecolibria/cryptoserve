@@ -624,7 +624,7 @@ export default function AdminContextsPage() {
           value={totalOperations.toLocaleString()}
           subtitle="All-time operations"
           icon={<Activity className="h-5 w-5 text-green-500" />}
-          trend={{ value: 12, isPositive: true }}
+          trend={{ value: 12, label: "this week" }}
         />
         <StatCard
           title="Identities"
@@ -637,7 +637,7 @@ export default function AdminContextsPage() {
           value={`${healthyKeys}/${contexts.length}`}
           subtitle={overdueKeys > 0 ? `${overdueKeys} overdue` : "All healthy"}
           icon={<Key className="h-5 w-5 text-amber-500" />}
-          trend={overdueKeys > 0 ? { value: overdueKeys, isPositive: false } : undefined}
+          trend={overdueKeys > 0 ? { value: overdueKeys, label: "overdue" } : undefined}
         />
       </div>
 
@@ -680,9 +680,9 @@ export default function AdminContextsPage() {
                         borderRadius: "8px",
                         color: "#f8fafc",
                       }}
-                      formatter={(value: number, name: any, props: any) => [
-                        value.toLocaleString(),
-                        props.payload.fullName,
+                      formatter={(value, name, props) => [
+                        (value ?? 0).toLocaleString(),
+                        props?.payload?.fullName ?? name,
                       ]}
                     />
                     <Bar dataKey="operations" radius={[0, 4, 4, 0]}>

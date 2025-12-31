@@ -309,7 +309,7 @@ export default function CompliancePage() {
             value={compliantCount.toString()}
             subtitle={`of ${totalFrameworks} frameworks`}
             icon={<CheckCircle2 className="h-5 w-5 text-green-500" />}
-            trend={{ value: compliantCount > 0 ? Math.round((compliantCount / totalFrameworks) * 100) : 0, isPositive: true }}
+            trend={{ value: compliantCount > 0 ? Math.round((compliantCount / totalFrameworks) * 100) : 0, label: "% compliant" }}
           />
           <StatCard
             title="Partial"
@@ -322,21 +322,21 @@ export default function CompliancePage() {
             value={nonCompliantCount.toString()}
             subtitle="Immediate action"
             icon={<XCircle className="h-5 w-5 text-red-500" />}
-            trend={nonCompliantCount > 0 ? { value: nonCompliantCount, isPositive: false } : undefined}
+            trend={nonCompliantCount > 0 ? { value: nonCompliantCount, label: "issues" } : undefined}
           />
           <StatCard
             title="Open Issues"
             value={totalIssues.toString()}
             subtitle="Across all frameworks"
             icon={<AlertCircle className="h-5 w-5 text-orange-500" />}
-            trend={totalIssues > 0 ? { value: totalIssues, isPositive: false } : undefined}
+            trend={totalIssues > 0 ? { value: totalIssues, label: "to resolve" } : undefined}
           />
           <StatCard
             title="Avg Coverage"
             value={`${avgCoverage}%`}
             subtitle="Requirement coverage"
             icon={<Target className="h-5 w-5 text-purple-500" />}
-            trend={{ value: avgCoverage >= 80 ? 5 : -3, isPositive: avgCoverage >= 80 }}
+            trend={{ value: avgCoverage >= 80 ? 5 : -3, label: avgCoverage >= 80 ? "good" : "needs work" }}
           />
         </div>
       </div>
@@ -376,7 +376,7 @@ export default function CompliancePage() {
                       borderRadius: "8px",
                       color: "#f8fafc",
                     }}
-                    formatter={(value: number) => [`${value}%`, "Score"]}
+                    formatter={(value) => [`${value ?? 0}%`, "Score"]}
                   />
                   <Line
                     type="monotone"
@@ -429,7 +429,7 @@ export default function CompliancePage() {
                       borderRadius: "8px",
                       color: "#f8fafc",
                     }}
-                    formatter={(value: number) => [`${value}%`, "Coverage"]}
+                    formatter={(value) => [`${value ?? 0}%`, "Coverage"]}
                   />
                   <Bar dataKey="coverage" radius={[0, 4, 4, 0]}>
                     {coverageByFramework.map((entry, index) => (
