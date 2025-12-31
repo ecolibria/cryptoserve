@@ -38,7 +38,7 @@ from cryptoserve_client.errors import (
 )
 from cryptoserve._identity import IDENTITY
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "crypto",
     "CryptoClient",
@@ -49,6 +49,10 @@ __all__ = [
     "ContextNotFoundError",
     "auto_protect",
 ]
+
+# New in 0.4.0: crypto class now exposes hash, mac, sign, verify_signature,
+# hash_password, verify_password, check_password_strength, split_secret,
+# combine_shares, generate_signing_key, generate_mac_key
 
 
 # Lazy import for auto_protect (optional dependency)
@@ -484,3 +488,307 @@ class crypto:
             return response.json()
         else:
             raise CryptoServeError(f"Failed to list contexts: {response.text}")
+
+    # =========================================================================
+    # Advanced Cryptographic Operations
+    # =========================================================================
+
+    @classmethod
+    def hash(cls, data: bytes | str, algorithm: str = "sha256") -> dict:
+        """
+        Compute a cryptographic hash.
+
+        Args:
+            data: Data to hash (bytes or string)
+            algorithm: Hash algorithm (sha256, sha384, sha512, sha3-256,
+                      sha3-512, blake2b, blake2s, blake3)
+
+        Returns:
+            Dict with digest (base64), hex, algorithm, length_bits
+
+        Example:
+            result = crypto.hash(b"hello world", algorithm="sha256")
+            print(result["hex"])  # SHA-256 hash in hex
+        """
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        if _is_mock_mode():
+            import hashlib
+            import base64
+            h = hashlib.sha256(data)
+            return {
+                "digest": base64.b64encode(h.digest()).decode(),
+                "hex": h.hexdigest(),
+                "algorithm": algorithm,
+                "length_bits": 256,
+            }
+
+        return _get_client().hash(data, algorithm)
+
+    @classmethod
+    def mac(cls, data: bytes | str, key: bytes, algorithm: str = "hmac-sha256") -> dict:
+        """
+        Compute a Message Authentication Code.
+
+        Args:
+            data: Data to authenticate (bytes or string)
+            key: Secret key (bytes)
+            algorithm: MAC algorithm (hmac-sha256, hmac-sha512, kmac128, kmac256)
+
+        Returns:
+            Dict with tag (base64), hex, algorithm, length_bits
+
+        Example:
+            key = crypto.generate_mac_key()
+            result = crypto.mac(b"message", key, algorithm="hmac-sha256")
+            print(result["hex"])
+        """
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        if _is_mock_mode():
+            import hmac
+            import hashlib
+            import base64
+            h = hmac.new(key, data, hashlib.sha256)
+            return {
+                "tag": base64.b64encode(h.digest()).decode(),
+                "hex": h.hexdigest(),
+                "algorithm": algorithm,
+                "length_bits": 256,
+            }
+
+        return _get_client().mac(data, key, algorithm)
+
+    @classmethod
+    def generate_mac_key(cls, algorithm: str = "hmac-sha256") -> bytes:
+        """
+        Generate a random key for MAC operations.
+
+        Args:
+            algorithm: MAC algorithm to generate key for
+
+        Returns:
+            Random key bytes (32 bytes for SHA-256 based MACs)
+        """
+        if _is_mock_mode():
+            import os
+            return os.urandom(32)
+
+        return _get_client().generate_mac_key(algorithm)
+
+    @classmethod
+    def hash_password(cls, password: str, algorithm: str = "argon2id") -> str:
+        """
+        Hash a password securely.
+
+        Args:
+            password: Password to hash
+            algorithm: Password hashing algorithm (argon2id, bcrypt, scrypt)
+
+        Returns:
+            Password hash in PHC format
+
+        Example:
+            hash = crypto.hash_password("my-secret-password")
+            # Store hash in database
+        """
+        if _is_mock_mode():
+            import base64
+            import hashlib
+            # Mock: use simple hash (NOT secure, only for testing)
+            h = hashlib.sha256(password.encode()).hexdigest()[:32]
+            return f"$mock$v=1${h}"
+
+        result = _get_client().hash_password(password, algorithm)
+        return result["hash"]
+
+    @classmethod
+    def verify_password(cls, password: str, hash: str) -> bool:
+        """
+        Verify a password against a hash.
+
+        Args:
+            password: Password to verify
+            hash: Password hash from hash_password()
+
+        Returns:
+            True if password matches, False otherwise
+
+        Example:
+            if crypto.verify_password("user-input", stored_hash):
+                print("Password correct!")
+        """
+        if _is_mock_mode():
+            import hashlib
+            h = hashlib.sha256(password.encode()).hexdigest()[:32]
+            return hash == f"$mock$v=1${h}"
+
+        result = _get_client().verify_password(password, hash)
+        return result["valid"]
+
+    @classmethod
+    def check_password_strength(cls, password: str) -> dict:
+        """
+        Check password strength.
+
+        Args:
+            password: Password to analyze
+
+        Returns:
+            Dict with score (0-100), strength, entropy_bits, suggestions
+
+        Example:
+            result = crypto.check_password_strength("password123")
+            print(f"Strength: {result['strength']}")  # "weak"
+            print(result['suggestions'])  # ["Add special characters", ...]
+        """
+        if _is_mock_mode():
+            score = min(len(password) * 8, 100)
+            return {
+                "score": score,
+                "strength": "weak" if score < 40 else "fair" if score < 60 else "good" if score < 80 else "strong",
+                "length": len(password),
+                "entropy_bits": len(password) * 4,
+                "suggestions": [] if score > 60 else ["Use a longer password"],
+            }
+
+        return _get_client().check_password_strength(password)
+
+    @classmethod
+    def split_secret(cls, secret: bytes | str, threshold: int, total_shares: int) -> list[dict]:
+        """
+        Split a secret using Shamir Secret Sharing.
+
+        Any `threshold` shares can reconstruct the secret, but fewer
+        shares reveal nothing about the original secret.
+
+        Args:
+            secret: Secret to split (bytes or string)
+            threshold: Minimum shares needed to reconstruct (2-255)
+            total_shares: Total shares to generate (2-255)
+
+        Returns:
+            List of shares, each with index and value
+
+        Example:
+            shares = crypto.split_secret(b"master-key", threshold=3, total_shares=5)
+            # Distribute shares to 5 custodians
+            # Any 3 can reconstruct the key
+        """
+        if isinstance(secret, str):
+            secret = secret.encode("utf-8")
+
+        if _is_mock_mode():
+            import base64
+            # Mock: just split the secret bytes (NOT real Shamir)
+            return [
+                {"index": i + 1, "value": base64.b64encode(secret).decode()}
+                for i in range(total_shares)
+            ]
+
+        return _get_client().split_secret(secret, threshold, total_shares)
+
+    @classmethod
+    def combine_shares(cls, shares: list[dict]) -> bytes:
+        """
+        Reconstruct a secret from Shamir shares.
+
+        Args:
+            shares: List of shares from split_secret() (at least threshold)
+
+        Returns:
+            Reconstructed secret bytes
+
+        Example:
+            # Collect threshold shares from custodians
+            collected_shares = [shares[0], shares[2], shares[4]]
+            secret = crypto.combine_shares(collected_shares)
+        """
+        if _is_mock_mode():
+            import base64
+            # Mock: all shares have the same value
+            return base64.b64decode(shares[0]["value"])
+
+        return _get_client().combine_shares(shares)
+
+    @classmethod
+    def sign(cls, data: bytes | str, key_id: str) -> bytes:
+        """
+        Sign data with a signing key.
+
+        Args:
+            data: Data to sign (bytes or string)
+            key_id: ID of the signing key
+
+        Returns:
+            Signature bytes
+
+        Example:
+            key = crypto.generate_signing_key()
+            signature = crypto.sign(b"document", key["key_id"])
+        """
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        if _is_mock_mode():
+            import hashlib
+            # Mock signature: hash of data + key_id
+            return hashlib.sha256(data + key_id.encode()).digest()
+
+        return _get_client().sign(data, key_id)
+
+    @classmethod
+    def verify_signature(cls, data: bytes | str, signature: bytes, key_id: str = None, public_key: str = None) -> bool:
+        """
+        Verify a signature.
+
+        Args:
+            data: Original signed data
+            signature: Signature from sign()
+            key_id: ID of signing key (if using server-managed keys)
+            public_key: Public key PEM (if verifying external signature)
+
+        Returns:
+            True if signature is valid, False otherwise
+
+        Example:
+            is_valid = crypto.verify_signature(b"document", signature, key_id=key["key_id"])
+        """
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        if _is_mock_mode():
+            import hashlib
+            expected = hashlib.sha256(data + (key_id or "").encode()).digest()
+            return signature == expected
+
+        return _get_client().verify(data, signature, key_id, public_key)
+
+    @classmethod
+    def generate_signing_key(cls, algorithm: str = "ed25519") -> dict:
+        """
+        Generate a new signing key pair.
+
+        Args:
+            algorithm: Signature algorithm (ed25519, ecdsa-p256)
+
+        Returns:
+            Dict with key_id, algorithm, public_key_jwk, public_key_pem
+
+        Example:
+            key = crypto.generate_signing_key()
+            print(f"Key ID: {key['key_id']}")
+            print(f"Public Key: {key['public_key_pem']}")
+        """
+        if _is_mock_mode():
+            import uuid
+            return {
+                "key_id": str(uuid.uuid4()),
+                "algorithm": algorithm,
+                "public_key_jwk": {"kty": "OKP", "crv": "Ed25519"},
+                "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMOCK\n-----END PUBLIC KEY-----",
+            }
+
+        return _get_client().generate_signing_key(algorithm)

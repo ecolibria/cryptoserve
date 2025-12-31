@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Shield,
   Key,
@@ -21,6 +21,10 @@ import {
   TrendingUp,
   BarChart3,
   Database,
+  HardDrive,
+  ArrowRightLeft,
+  Cpu,
+  Radio,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,6 +65,7 @@ const defaultDataIdentity: DataIdentity = {
   category: "general",
   subcategory: null,
   sensitivity: "medium",
+  usage_context: "at_rest",
   pii: false,
   phi: false,
   pci: false,
@@ -127,6 +132,29 @@ const frequencyLabels: Record<AccessFrequency, string> = {
   low: "Low (10-100 ops/sec)",
   rare: "Rare (<10 ops/sec)",
 };
+
+const usageContextLabels: Record<string, { label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = {
+  at_rest: { label: "At Rest", description: "Data stored on disk, databases, backups", icon: HardDrive },
+  in_transit: { label: "In Transit", description: "Data moving over network, APIs, TLS", icon: ArrowRightLeft },
+  in_use: { label: "In Use", description: "Data being processed in memory", icon: Cpu },
+  streaming: { label: "Streaming", description: "Real-time data streams, logs", icon: Radio },
+};
+
+const algorithmOptions = [
+  { value: "auto", label: "Auto (Recommended)", description: "System chooses based on context" },
+  { value: "AES-128-GCM", label: "AES-128-GCM", description: "128-bit, fast, hardware accelerated" },
+  { value: "AES-256-GCM", label: "AES-256-GCM", description: "256-bit, standard for sensitive data" },
+  { value: "ChaCha20-Poly1305", label: "ChaCha20-Poly1305", description: "256-bit, no hardware needed" },
+  { value: "AES-256-GCM+ML-KEM-768", label: "AES-256 + ML-KEM-768", description: "Post-quantum hybrid" },
+  { value: "AES-256-GCM+ML-KEM-1024", label: "AES-256 + ML-KEM-1024", description: "Maximum quantum resistance" },
+];
+
+const cipherModeOptions = [
+  { value: "gcm", label: "GCM", description: "Galois/Counter Mode - authenticated, parallelizable" },
+  { value: "gcm-siv", label: "GCM-SIV", description: "Nonce-misuse resistant, slightly slower" },
+  { value: "ctr", label: "CTR", description: "Counter mode - no authentication, needs separate MAC" },
+  { value: "cbc", label: "CBC", description: "Legacy mode - avoid for new applications" },
+];
 
 const frameworkOptions = ["GDPR", "CCPA", "PCI-DSS", "HIPAA", "SOX", "SOC2"];
 
@@ -437,6 +465,34 @@ export default function AdminContextsPage() {
                 ))}
               </div>
             </div>
+
+            <div>
+              <Label>Usage Context</Label>
+              <p className="text-xs text-slate-500 mb-2">How will this data be used? Affects algorithm selection.</p>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                {Object.entries(usageContextLabels).map(([value, { label, description, icon: Icon }]) => (
+                  <button
+                    key={value}
+                    onClick={() => updateDataIdentity({ usage_context: value as any })}
+                    className={cn(
+                      "flex items-start gap-2 p-3 rounded-lg border text-left transition-all",
+                      formConfig.data_identity.usage_context === value
+                        ? "bg-blue-50 border-blue-300 ring-1 ring-blue-300"
+                        : "bg-white hover:bg-slate-50 border-slate-200"
+                    )}
+                  >
+                    <Icon className={cn(
+                      "h-5 w-5 mt-0.5",
+                      formConfig.data_identity.usage_context === value ? "text-blue-600" : "text-slate-400"
+                    )} />
+                    <div>
+                      <div className="font-medium text-sm">{label}</div>
+                      <div className="text-xs text-slate-500">{description}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         );
 
@@ -579,6 +635,59 @@ export default function AdminContextsPage() {
                 <Label htmlFor="searchRequired" className="font-normal">
                   Enable encrypted search (searchable encryption)
                 </Label>
+              </div>
+            </div>
+
+            {/* Algorithm Preferences - Expert Options */}
+            <div className="pt-4 border-t border-slate-200">
+              <div className="flex items-center gap-2 mb-3">
+                <Key className="h-4 w-4 text-slate-500" />
+                <Label className="text-slate-700">Algorithm Preferences (Optional)</Label>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">
+                Override the auto-selected algorithm. Leave as Auto for system to choose based on your context settings.
+              </p>
+
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs text-slate-600">Algorithm</Label>
+                  <select
+                    value={(formConfig as any).algorithm_override || "auto"}
+                    onChange={(e) => setFormConfig(prev => ({ ...prev, algorithm_override: e.target.value === "auto" ? undefined : e.target.value }))}
+                    className="w-full px-3 py-2 border rounded-md text-sm mt-1"
+                  >
+                    {algorithmOptions.map(({ value, label, description }) => (
+                      <option key={value} value={value} title={description}>
+                        {label} - {description}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-xs text-slate-600">Cipher Mode</Label>
+                  <select
+                    value={(formConfig as any).cipher_mode || "gcm"}
+                    onChange={(e) => setFormConfig(prev => ({ ...prev, cipher_mode: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded-md text-sm mt-1"
+                  >
+                    {cipherModeOptions.map(({ value, label, description }) => (
+                      <option key={value} value={value}>
+                        {label} - {description}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-lg text-xs">
+                  <div className="font-medium text-slate-700 mb-1">Key Size Information</div>
+                  <ul className="text-slate-600 space-y-1">
+                    <li>• AES-128: 128-bit key, fast, NIST approved</li>
+                    <li>• AES-256: 256-bit key, higher security margin</li>
+                    <li>• ChaCha20: 256-bit, great for mobile/IoT</li>
+                    <li>• ML-KEM hybrids: Post-quantum resistant</li>
+                  </ul>
+                </div>
               </div>
             </div>
           </div>

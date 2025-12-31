@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { cn } from "@/lib/utils";
-import { api, Context } from "@/lib/api";
+import { api, Context, ContextFullResponse, DerivedRequirements } from "@/lib/api";
 
 interface DataType {
   id: string;
@@ -43,6 +43,8 @@ interface ContextRecommendation {
   matchScore: number;
   reasons: string[];
   isCustom?: boolean;
+  quantumResistant?: boolean;
+  sensitivity?: string;
 }
 
 const DATA_TYPES: DataType[] = [
@@ -194,6 +196,8 @@ const CONTEXT_MAPPING: Record<string, ContextRecommendation> = {
     icon: <Shield className="h-5 w-5" />,
     matchScore: 0,
     reasons: [],
+    quantumResistant: true,
+    sensitivity: "critical",
   },
 };
 
@@ -292,6 +296,8 @@ function getRecommendations(
             matchScore: score,
             reasons: Array.from(new Set(reasons)),
             isCustom: true,
+            quantumResistant: ctx.quantum_resistant || false,
+            sensitivity: ctx.sensitivity,
           });
         }
       } else {
@@ -319,6 +325,8 @@ export default function ContextSelectorPage() {
   const [copied, setCopied] = useState(false);
   const [contexts, setContexts] = useState<Context[]>([]);
   const [loadingContexts, setLoadingContexts] = useState(true);
+  const [contextDetails, setContextDetails] = useState<ContextFullResponse | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Fetch contexts from API
   useEffect(() => {
@@ -328,6 +336,20 @@ export default function ContextSelectorPage() {
       .catch(console.error)
       .finally(() => setLoadingContexts(false));
   }, []);
+
+  // Fetch full context details when a context is selected
+  useEffect(() => {
+    if (selectedContext) {
+      setLoadingDetails(true);
+      api
+        .getContextDetail(selectedContext)
+        .then(setContextDetails)
+        .catch(console.error)
+        .finally(() => setLoadingDetails(false));
+    } else {
+      setContextDetails(null);
+    }
+  }, [selectedContext]);
 
   const recommendations = getRecommendations(selectedTypes, contexts);
 
@@ -514,6 +536,20 @@ decrypted = client.decrypt(encrypted)`;
                         <Badge variant="secondary">
                           Algorithm: {rec.algorithm}
                         </Badge>
+                        {rec.quantumResistant && (
+                          <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">
+                            <Shield className="h-3 w-3 mr-1" />
+                            Quantum-Resistant
+                          </Badge>
+                        )}
+                        {rec.sensitivity && (
+                          <Badge variant={
+                            rec.sensitivity === "critical" ? "destructive" :
+                            rec.sensitivity === "high" ? "default" : "secondary"
+                          }>
+                            {rec.sensitivity.toUpperCase()}
+                          </Badge>
+                        )}
                         {rec.compliance.map((c) => (
                           <Badge key={c} variant="outline">
                             {c}
@@ -670,30 +706,147 @@ decrypted = client.decrypt(encrypted)`}
               </CardContent>
             </Card>
 
-            {/* Context Details */}
+            {/* Context Details - 5-Layer Model */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Context Details</CardTitle>
+                <CardDescription>
+                  Full security configuration derived from the 5-layer model
+                </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Context ID:</span>
-                    <span className="ml-2 font-mono">{selectedContext}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Algorithm:</span>
-                    <span className="ml-2">{algorithm}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Compliance:</span>
-                    <span className="ml-2">{compliance.join(", ") || "None"}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Security:</span>
-                    <span className="ml-2">256-bit</span>
-                  </div>
-                </div>
+              <CardContent className="space-y-6">
+                {loadingDetails ? (
+                  <div className="text-center py-4 text-muted-foreground">Loading context details...</div>
+                ) : (
+                  <>
+                    {/* Basic Info */}
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Context ID:</span>
+                        <span className="ml-2 font-mono">{selectedContext}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Algorithm:</span>
+                        <span className="ml-2">{contextDetails?.derived?.resolved_algorithm || algorithm}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Compliance:</span>
+                        <span className="ml-2">{contextDetails?.config?.regulatory?.frameworks?.join(", ") || compliance.join(", ") || "None"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Security Bits:</span>
+                        <span className="ml-2">{contextDetails?.derived?.minimum_security_bits || 256}-bit</span>
+                      </div>
+                    </div>
+
+                    {/* Derived Requirements */}
+                    {contextDetails?.derived && (
+                      <div className="border-t pt-4">
+                        <h4 className="font-medium mb-1 flex items-center gap-2">
+                          <Shield className="h-4 w-4" />
+                          Derived Security Requirements
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Automatically enforced by CryptoServe for this context
+                        </p>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div className="flex items-center gap-2">
+                            <div className={cn(
+                              "w-2 h-2 rounded-full",
+                              contextDetails.derived.quantum_resistant ? "bg-green-500" : "bg-amber-500"
+                            )} />
+                            <span className="text-muted-foreground">Quantum Resistant:</span>
+                            <span>{contextDetails.derived.quantum_resistant ? "Yes" : "No"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Key Rotation:</span>
+                            <span className="ml-2">{contextDetails.derived.key_rotation_days} days</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Audit Level:</span>
+                            <span className="ml-2 capitalize">{contextDetails.derived.audit_level}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className={cn(
+                              "w-2 h-2 rounded-full",
+                              contextDetails.derived.hardware_acceleration ? "bg-green-500" : "bg-slate-300"
+                            )} />
+                            <span className="text-muted-foreground">HW Acceleration:</span>
+                            <span>{contextDetails.derived.hardware_acceleration ? "Enabled" : "Optional"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Data Identity */}
+                    {contextDetails?.config?.data_identity && (
+                      <div className="border-t pt-4">
+                        <h4 className="font-medium mb-3 flex items-center gap-2">
+                          <User className="h-4 w-4" />
+                          Data Classification
+                        </h4>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          <Badge variant={
+                            contextDetails.config.data_identity.sensitivity === "critical" ? "destructive" :
+                            contextDetails.config.data_identity.sensitivity === "high" ? "default" :
+                            contextDetails.config.data_identity.sensitivity === "medium" ? "secondary" : "outline"
+                          }>
+                            {contextDetails.config.data_identity.sensitivity?.toUpperCase()} Sensitivity
+                          </Badge>
+                          {contextDetails.config.data_identity.pii && <Badge variant="outline">PII</Badge>}
+                          {contextDetails.config.data_identity.phi && <Badge variant="outline">PHI</Badge>}
+                          {contextDetails.config.data_identity.pci && <Badge variant="outline">PCI</Badge>}
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Category: {contextDetails.config.data_identity.category?.replace(/_/g, " ")}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Threat Model */}
+                    {contextDetails?.config?.threat_model && (
+                      <div className="border-t pt-4">
+                        <h4 className="font-medium mb-3 flex items-center gap-2">
+                          <Shield className="h-4 w-4" />
+                          Threat Model
+                        </h4>
+                        <div className="text-sm space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            {contextDetails.config.threat_model.adversaries?.map((adv) => (
+                              <Badge key={adv} variant="secondary">
+                                {adv.replace(/_/g, " ")}
+                              </Badge>
+                            ))}
+                          </div>
+                          <p className="text-muted-foreground">
+                            Protection lifetime: {contextDetails.config.threat_model.protection_lifetime_years} years
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Algorithm Rationale */}
+                    {contextDetails?.derived?.rationale && contextDetails.derived.rationale.length > 0 && (
+                      <div className="border-t pt-4">
+                        <h4 className="font-medium mb-2 flex items-center gap-2">
+                          <Sparkles className="h-4 w-4" />
+                          Why We Chose This Algorithm
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-3">
+                          No action needed - CryptoServe handles all cryptographic decisions automatically.
+                        </p>
+                        <ul className="text-sm text-muted-foreground space-y-1">
+                          {contextDetails.derived.rationale.map((reason, idx) => (
+                            <li key={idx} className="flex items-start gap-2">
+                              <Check className="h-3 w-3 mt-1 text-green-500 flex-shrink-0" />
+                              {reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>

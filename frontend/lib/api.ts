@@ -47,6 +47,8 @@ export interface Context {
   data_examples: string[] | null;
   compliance_tags: string[] | null;
   algorithm: string;
+  sensitivity?: Sensitivity;
+  quantum_resistant?: boolean;
 }
 
 // 5-Layer Context Model Types
@@ -55,10 +57,40 @@ export type DataCategory = "personal_identifier" | "financial" | "health" | "aut
 export type Adversary = "opportunistic_attacker" | "organized_crime" | "nation_state" | "insider_threat" | "quantum_computer";
 export type AccessFrequency = "high" | "medium" | "low" | "rare";
 
+// Encryption Context - Where/how the encryption is used
+export type EncryptionUsageContext = "at_rest" | "in_transit" | "in_use" | "streaming" | "disk";
+
+// Cipher modes for symmetric encryption
+export type CipherMode = "gcm" | "gcm-siv" | "cbc" | "ctr" | "ccm" | "xts";
+
+// Standard cryptographic key sizes in bits
+export type KeySize = 128 | 192 | 256 | 2048 | 3072 | 4096 | 384 | 521;
+
+// Algorithm override for advanced users
+export interface AlgorithmOverride {
+  cipher?: string | null;
+  mode?: CipherMode | null;
+  key_bits?: number | null;
+}
+
+// Alternative algorithm suggestion
+export interface AlgorithmAlternative {
+  algorithm: string;
+  reason: string;
+}
+
+// Detailed explanation of algorithm selection
+export interface AlgorithmRationale {
+  summary: string;
+  factors: string[];
+  alternatives: AlgorithmAlternative[];
+}
+
 export interface DataIdentity {
   category: DataCategory;
   subcategory?: string | null;
   sensitivity: Sensitivity;
+  usage_context: EncryptionUsageContext;
   pii: boolean;
   phi: boolean;
   pci: boolean;
@@ -111,9 +143,12 @@ export interface DerivedRequirements {
   quantum_resistant: boolean;
   key_rotation_days: number;
   resolved_algorithm: string;
+  resolved_mode: CipherMode;
+  resolved_key_bits: number;
   audit_level: "full" | "detailed" | "standard" | "minimal";
   hardware_acceleration: boolean;
   rationale: string[];
+  detailed_rationale?: AlgorithmRationale | null;
 }
 
 export interface ContextFullResponse {
@@ -433,6 +468,239 @@ export interface ChainVerifyResponse {
   chain_length: number;
 }
 
+// =============================================================================
+// Cryptographic Operations Types (Hash, MAC, Signatures, Key Exchange, Secrets)
+// =============================================================================
+
+// Hash Algorithms supported
+export type HashAlgorithm = "sha256" | "sha384" | "sha512" | "sha3-256" | "sha3-384" | "sha3-512" | "blake2b" | "blake2s" | "blake3" | "shake128" | "shake256";
+
+// MAC Algorithms supported
+export type MACAlgorithm = "hmac-sha256" | "hmac-sha384" | "hmac-sha512" | "hmac-sha3-256" | "hmac-blake2b" | "kmac128" | "kmac256";
+
+// Signature Algorithms supported
+export type SignatureAlgorithm = "ed25519" | "ed448" | "ecdsa-p256" | "ecdsa-p384" | "ml-dsa-65" | "slh-dsa-128f";
+
+// Signature output formats
+export type SignatureFormat = "raw" | "base64" | "der" | "jws";
+
+// Key Exchange Algorithms
+export type KeyExchangeAlgorithm = "x25519" | "ecdh-p256" | "ecdh-p384" | "ecdh-p521";
+
+// Password Hash Algorithms
+export type PasswordHashAlgorithm = "argon2id" | "argon2i" | "argon2d" | "bcrypt" | "scrypt" | "pbkdf2-sha256";
+
+// Hash Request/Response
+export interface HashRequest {
+  data: string; // base64 encoded
+  algorithm: HashAlgorithm;
+  output_length?: number; // for variable output (SHAKE, BLAKE)
+}
+
+export interface HashResponse {
+  digest: string; // base64
+  hex: string;
+  algorithm: string;
+  length_bits: number;
+}
+
+// MAC Request/Response
+export interface MACRequest {
+  data: string; // base64
+  key: string; // base64
+  algorithm: MACAlgorithm;
+  output_length?: number;
+}
+
+export interface MACResponse {
+  tag: string; // base64
+  hex: string;
+  algorithm: string;
+  length_bits: number;
+}
+
+// Signature Types
+export interface SigningKeyResponse {
+  key_id: string;
+  algorithm: string;
+  public_key_jwk: Record<string, unknown>;
+  public_key_pem: string;
+  created_at: string;
+}
+
+export interface SignRequest {
+  message: string; // base64
+  key_id: string;
+  output_format?: SignatureFormat;
+}
+
+export interface SignResponse {
+  signature: string;
+  algorithm: string;
+  key_id: string;
+  format: string;
+}
+
+export interface VerifyRequest {
+  message: string; // base64
+  signature: string;
+  key_id?: string;
+  public_key?: string;
+  signature_format?: SignatureFormat;
+}
+
+export interface VerifyResponse {
+  valid: boolean;
+  algorithm: string;
+  message?: string;
+}
+
+// Key Exchange Types
+export interface KeyExchangeKeysResponse {
+  private_key: string; // base64
+  public_key: string; // base64
+  algorithm: string;
+}
+
+export interface DeriveSecretRequest {
+  private_key: string; // base64
+  peer_public_key: string; // base64
+  algorithm: KeyExchangeAlgorithm;
+  key_length?: number;
+  info?: string; // base64
+}
+
+export interface DeriveSecretResponse {
+  shared_secret: string; // base64
+  algorithm: string;
+  length_bytes: number;
+}
+
+// Password Hashing Types
+export interface PasswordHashRequest {
+  password: string;
+  algorithm?: PasswordHashAlgorithm;
+}
+
+export interface PasswordHashResponse {
+  hash: string; // PHC format
+  algorithm: string;
+  params: Record<string, unknown>;
+}
+
+export interface PasswordVerifyRequest {
+  password: string;
+  hash: string;
+}
+
+export interface PasswordVerifyResponse {
+  valid: boolean;
+  needs_rehash: boolean;
+  algorithm: string;
+}
+
+export interface PasswordStrengthResponse {
+  score: number; // 0-100
+  strength: "weak" | "fair" | "good" | "strong";
+  length: number;
+  entropy_bits: number;
+  has_uppercase: boolean;
+  has_lowercase: boolean;
+  has_digits: boolean;
+  has_symbols: boolean;
+  suggestions: string[];
+}
+
+// Shamir Secret Sharing Types
+export interface ShamirShare {
+  index: number;
+  value: string; // base64
+}
+
+export interface ShamirSplitRequest {
+  secret: string; // base64
+  threshold: number; // 2-255
+  total_shares: number; // 2-255
+}
+
+export interface ShamirSplitResponse {
+  shares: ShamirShare[];
+  threshold: number;
+  total_shares: number;
+}
+
+export interface ShamirCombineRequest {
+  shares: ShamirShare[];
+}
+
+export interface ShamirCombineResponse {
+  secret: string; // base64
+}
+
+// Lease Management Types
+export interface LeaseGrantRequest {
+  resource_type: string;
+  resource_id: string;
+  identity: string;
+  expiry_seconds: number;
+  permissions: string[];
+}
+
+export interface LeaseResponse {
+  lease_id: string;
+  token: string;
+  expiry: string;
+}
+
+export interface LeaseRenewResponse {
+  new_expiry: string;
+}
+
+// Encryption with Algorithm Details
+export interface EncryptRequest {
+  plaintext: string; // base64
+  context: string;
+  algorithm_override?: {
+    cipher?: string;
+    mode?: CipherMode;
+    key_bits?: number;
+  };
+  associated_data?: string; // base64 AAD
+}
+
+export interface EncryptResponse {
+  ciphertext: string; // base64
+  algorithm: {
+    name: string;
+    mode: CipherMode;
+    key_bits: number;
+    description: string;
+  };
+  warnings: string[];
+}
+
+export interface DecryptRequest {
+  ciphertext: string; // base64
+  context: string;
+  associated_data?: string; // base64 AAD
+}
+
+export interface DecryptResponse {
+  plaintext: string; // base64
+}
+
+// Algorithm Details for UI display
+export interface AlgorithmParameters {
+  nonce_size_bytes: number;
+  tag_size_bytes: number;
+  block_size_bytes: number;
+  min_key_bits: number;
+  max_key_bits: number;
+  supports_aad: boolean;
+  requires_padding: boolean;
+  hardware_accelerated: boolean;
+}
+
 export interface HealthStatus {
   database: string;
   encryption_service: string;
@@ -715,6 +983,50 @@ export const api = {
   rotateContextKey: (contextName: string) =>
     fetchApi(`/api/admin/contexts/${contextName}/rotate-key`, { method: "POST" }),
 
+  // Admin - Key Usage
+  getKeyUsage: (contextName: string) =>
+    fetchApi(`/api/admin/keys/${contextName}/usage`) as Promise<{
+      context: string;
+      active_key_version: number;
+      total_keys: number;
+      keys: {
+        key_id: string;
+        context: string;
+        version: number;
+        status: string;
+        created_at: string;
+        encrypt_count: number;
+        decrypt_count: number;
+        total_operations: number;
+        total_bytes_processed: number;
+        last_used: string | null;
+      }[];
+    }>,
+
+  // Admin - Cryptographic Bill of Materials
+  getCBOM: () =>
+    fetchApi("/api/admin/cbom") as Promise<{
+      generated_at: string;
+      total_contexts: number;
+      total_algorithms: number;
+      quantum_ready_percent: number;
+      algorithms: {
+        algorithm: string;
+        family: string;
+        mode: string;
+        key_bits: number;
+        context_count: number;
+        contexts: string[];
+        quantum_resistant: boolean;
+        deprecated: boolean;
+        standards: string[];
+      }[];
+      by_family: Record<string, number>;
+      by_mode: Record<string, number>;
+      by_security_level: Record<string, number>;
+      recommendations: string[];
+    }>,
+
   // Context CRUD (5-layer model)
   getContextDetail: (name: string) =>
     fetchApi(`/api/contexts/${name}`) as Promise<ContextFullResponse>,
@@ -947,4 +1259,111 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }) as Promise<ChainVerifyResponse>,
+
+  // =============================================================================
+  // Cryptographic Operations API
+  // =============================================================================
+
+  // Hashing
+  hash: (data: { data: string; algorithm: HashAlgorithm; output_length?: number }) =>
+    fetchApi("/api/v1/crypto/hash", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<HashResponse>,
+
+  hashVerify: (data: { data: string; expected_digest: string; algorithm: HashAlgorithm }) =>
+    fetchApi("/api/v1/crypto/hash/verify", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<{ valid: boolean }>,
+
+  // MAC
+  mac: (data: { data: string; key: string; algorithm: MACAlgorithm; output_length?: number }) =>
+    fetchApi("/api/v1/crypto/mac", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<MACResponse>,
+
+  macVerify: (data: { data: string; key: string; expected_tag: string; algorithm: MACAlgorithm }) =>
+    fetchApi("/api/v1/crypto/mac/verify", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<{ valid: boolean }>,
+
+  // Signatures
+  generateSigningKey: (data: { algorithm?: SignatureAlgorithm; context?: string }) =>
+    fetchApi("/api/v1/signatures/generate-key", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<SigningKeyResponse>,
+
+  sign: (data: { message: string; key_id: string; output_format?: SignatureFormat }) =>
+    fetchApi("/api/v1/signatures/sign", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<SignResponse>,
+
+  verifySignature: (data: VerifyRequest) =>
+    fetchApi("/api/v1/signatures/verify", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<VerifyResponse>,
+
+  // Key Exchange
+  generateKeyExchangeKeys: (algorithm: KeyExchangeAlgorithm = "x25519") =>
+    fetchApi("/api/v1/crypto/key-exchange/generate", {
+      method: "POST",
+      body: JSON.stringify({ algorithm }),
+    }) as Promise<KeyExchangeKeysResponse>,
+
+  deriveSharedSecret: (data: DeriveSecretRequest) =>
+    fetchApi("/api/v1/crypto/key-exchange/derive", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<DeriveSecretResponse>,
+
+  // Password Hashing
+  hashPassword: (data: { password: string; algorithm?: PasswordHashAlgorithm }) =>
+    fetchApi("/api/v1/crypto/password/hash", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<PasswordHashResponse>,
+
+  verifyPassword: (data: { password: string; hash: string }) =>
+    fetchApi("/api/v1/crypto/password/verify", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<PasswordVerifyResponse>,
+
+  checkPasswordStrength: (password: string) =>
+    fetchApi("/api/v1/crypto/password/strength", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }) as Promise<PasswordStrengthResponse>,
+
+  // Shamir Secret Sharing
+  splitSecret: (data: { secret: string; threshold: number; total_shares: number }) =>
+    fetchApi("/api/v1/secrets/shamir/split", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<ShamirSplitResponse>,
+
+  combineShares: (shares: ShamirShare[]) =>
+    fetchApi("/api/v1/secrets/shamir/combine", {
+      method: "POST",
+      body: JSON.stringify({ shares }),
+    }) as Promise<ShamirCombineResponse>,
+
+  // Encryption with AAD and Algorithm Override
+  encrypt: (data: EncryptRequest) =>
+    fetchApi("/api/v1/crypto/encrypt", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<EncryptResponse>,
+
+  decrypt: (data: DecryptRequest) =>
+    fetchApi("/api/v1/crypto/decrypt", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<DecryptResponse>,
 };

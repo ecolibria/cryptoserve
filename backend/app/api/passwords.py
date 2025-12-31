@@ -18,7 +18,7 @@ from app.core.password_engine import (
 )
 from app.api.crypto import get_sdk_identity
 
-router = APIRouter(prefix="/v1/crypto/password", tags=["passwords"])
+router = APIRouter(prefix="/api/v1/crypto/password", tags=["passwords"])
 
 # Singleton password engine
 password_engine = PasswordEngine()

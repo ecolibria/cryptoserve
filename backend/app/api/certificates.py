@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
 
-from app.models import Identity
+from app.models import User
 from app.core.certificate_engine import (
     CertificateEngine,
     CertificateError,
@@ -18,9 +18,9 @@ from app.core.certificate_engine import (
     SubjectInfo,
     CertificateType,
 )
-from app.api.crypto import get_sdk_identity
+from app.auth.jwt import get_dashboard_or_sdk_user
 
-router = APIRouter(prefix="/v1/certificates", tags=["certificates"])
+router = APIRouter(prefix="/api/v1/certificates", tags=["certificates"])
 
 # Singleton engine
 certificate_engine = CertificateEngine()
@@ -145,7 +145,7 @@ class ParseCSRRequest(BaseModel):
 @router.post("/csr/generate", response_model=CSRResponse)
 async def generate_csr(
     data: CSRRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Generate a Certificate Signing Request (CSR).
 
@@ -199,7 +199,7 @@ async def generate_csr(
 @router.post("/self-signed/generate", response_model=SelfSignedResponse)
 async def generate_self_signed(
     data: SelfSignedRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Generate a self-signed certificate.
 
@@ -250,7 +250,7 @@ async def generate_self_signed(
 @router.post("/parse", response_model=CertificateInfoResponse)
 async def parse_certificate(
     data: ParseCertificateRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Parse a certificate and extract its information.
 
@@ -308,7 +308,7 @@ async def parse_certificate(
 @router.post("/verify", response_model=ValidationResultResponse)
 async def verify_certificate(
     data: VerifyCertificateRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Verify a certificate.
 
@@ -339,7 +339,7 @@ async def verify_certificate(
 @router.post("/verify-chain", response_model=ValidationResultResponse)
 async def verify_certificate_chain(
     data: VerifyChainRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Verify a certificate chain.
 
@@ -375,7 +375,7 @@ async def verify_certificate_chain(
 @router.post("/csr/parse")
 async def parse_csr(
     data: ParseCSRRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Parse a Certificate Signing Request.
 
@@ -392,13 +392,13 @@ async def parse_csr(
 @router.post("/upload/parse")
 async def parse_uploaded_certificate(
     file: UploadFile = File(...),
-    identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)] = None,
 ):
     """Parse an uploaded certificate file.
 
     Accepts PEM or DER format certificate files.
     """
-    if not identity:
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     content = await file.read()

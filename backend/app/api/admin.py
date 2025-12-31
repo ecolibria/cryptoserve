@@ -7,7 +7,7 @@ import io
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy import select, func, desc, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -613,10 +613,10 @@ async def get_contexts_with_stats(
         ) or 0
 
         # Count identities that have access
-        # This requires checking the allowed_contexts array
+        # Use JSON containment check for TEXT column storing JSON arrays
         identity_count = await db.scalar(
             select(func.count(Identity.id)).where(
-                Identity.allowed_contexts.contains([ctx.name])
+                text("allowed_contexts::jsonb ? :context_name").bindparams(context_name=ctx.name)
             )
         ) or 0
 

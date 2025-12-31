@@ -20,7 +20,7 @@ from app.core.binary_scanner import (
 )
 from app.api.crypto import get_sdk_identity
 
-router = APIRouter(prefix="/v1/discovery", tags=["discovery"])
+router = APIRouter(prefix="/api/v1/discovery", tags=["discovery"])
 
 # Singleton scanner
 binary_scanner = BinaryScanner()

@@ -8,15 +8,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
 
-from app.models import Identity
+from app.models import User
 from app.core.dependency_scanner import (
     DependencyScanner,
     DependencyScannerError,
     PackageType,
 )
-from app.api.crypto import get_sdk_identity
+from app.auth.jwt import get_dashboard_or_sdk_user
 
-router = APIRouter(prefix="/v1/dependencies", tags=["dependencies"])
+router = APIRouter(prefix="/api/v1/dependencies", tags=["dependencies"])
 
 # Singleton scanner
 dependency_scanner = DependencyScanner()
@@ -70,7 +70,7 @@ class QuickDependencyScanResponse(BaseModel):
 @router.post("/scan", response_model=DependencyScanResponse)
 async def scan_dependencies(
     data: DependencyScanRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Scan a package file for cryptographic dependencies.
 
@@ -122,7 +122,7 @@ async def scan_dependencies(
 @router.post("/scan/quick", response_model=QuickDependencyScanResponse)
 async def quick_dependency_scan(
     data: DependencyScanRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Quick scan for crypto dependencies.
 
@@ -170,13 +170,13 @@ async def quick_dependency_scan(
 @router.post("/scan/file")
 async def scan_dependency_file(
     file: UploadFile = File(...),
-    identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)] = None,
 ):
     """Scan an uploaded package file for crypto dependencies.
 
     Accepts: package.json, requirements.txt, go.mod, Cargo.toml
     """
-    if not identity:
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     content = await file.read()
@@ -228,7 +228,7 @@ async def scan_dependency_file(
 @router.get("/known-packages")
 async def list_known_packages(
     package_type: str | None = None,
-    identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)] = None,
 ):
     """List all known cryptographic packages.
 
@@ -237,7 +237,7 @@ async def list_known_packages(
     Args:
         package_type: Filter by type (npm, pypi, go, cargo)
     """
-    if not identity:
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     pt = None
@@ -255,7 +255,7 @@ async def list_known_packages(
 
 @router.get("/supported-formats")
 async def list_supported_formats(
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """List supported package file formats."""
     return {

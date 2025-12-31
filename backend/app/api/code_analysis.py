@@ -9,15 +9,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
 
-from app.models import Identity
+from app.models import User
 from app.core.code_scanner import (
     CodeScanner,
     CodeScannerError,
     Language,
 )
-from app.api.crypto import get_sdk_identity
+from app.auth.jwt import get_dashboard_or_sdk_user
 
-router = APIRouter(prefix="/v1/code", tags=["code-analysis"])
+router = APIRouter(prefix="/api/v1/code", tags=["code-analysis"])
 
 # Singleton scanner
 code_scanner = CodeScanner()
@@ -109,7 +109,7 @@ class QuickAnalysisResponse(BaseModel):
 @router.post("/scan", response_model=CodeScanResponse)
 async def scan_code(
     data: CodeScanRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Scan source code for cryptographic usage.
 
@@ -191,7 +191,7 @@ async def scan_code(
 @router.post("/scan/quick", response_model=QuickAnalysisResponse)
 async def quick_analysis(
     data: QuickAnalysisRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Quick code analysis for crypto detection.
 
@@ -247,14 +247,14 @@ async def quick_analysis(
 @router.post("/scan/file")
 async def scan_file(
     file: UploadFile = File(...),
-    identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)] = None,
 ):
     """Scan an uploaded source file for cryptographic usage.
 
     Accepts any supported source file format.
     Automatically detects language from file extension.
     """
-    if not identity:
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     content = await file.read()
@@ -318,7 +318,7 @@ async def scan_file(
 
 @router.get("/languages")
 async def list_supported_languages(
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """List supported programming languages for code scanning."""
     return code_scanner.get_supported_languages()
@@ -326,7 +326,7 @@ async def list_supported_languages(
 
 @router.get("/algorithms")
 async def list_detectable_algorithms(
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """List all algorithms the scanner can detect.
 
@@ -338,7 +338,7 @@ async def list_detectable_algorithms(
 @router.post("/cbom", response_model=CBOMResponse)
 async def generate_cbom(
     data: CodeScanRequest,
-    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
 ):
     """Generate a Cryptographic Bill of Materials (CBOM).
 

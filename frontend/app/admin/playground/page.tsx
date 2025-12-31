@@ -20,8 +20,9 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AdminLayout } from "@/components/admin-layout";
-import { api, Context, PlaygroundResponse } from "@/lib/api";
+import { api, Context, ContextFullResponse, PlaygroundResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 export default function PlaygroundPage() {
   const [loading, setLoading] = useState(true);
@@ -33,6 +34,8 @@ export default function PlaygroundPage() {
   const [executing, setExecuting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showSdkCode, setShowSdkCode] = useState(false);
+  const [contextDetails, setContextDetails] = useState<ContextFullResponse | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   const loadContexts = useCallback(async () => {
     try {
@@ -51,6 +54,20 @@ export default function PlaygroundPage() {
   useEffect(() => {
     loadContexts();
   }, [loadContexts]);
+
+  // Fetch full context details when selected context changes
+  useEffect(() => {
+    if (selectedContext) {
+      setLoadingDetails(true);
+      api
+        .getContextDetail(selectedContext)
+        .then(setContextDetails)
+        .catch(console.error)
+        .finally(() => setLoadingDetails(false));
+    } else {
+      setContextDetails(null);
+    }
+  }, [selectedContext]);
 
   const executeOperation = async () => {
     if (!inputData.trim() || !selectedContext) return;
@@ -203,10 +220,172 @@ print(plaintext)`;
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400 pointer-events-none" />
               </div>
+              {/* Context Details Panel */}
               {selectedContext && (
-                <p className="text-xs text-slate-500 mt-2">
-                  Algorithm: {contexts.find((c) => c.name === selectedContext)?.algorithm}
-                </p>
+                <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  {loadingDetails ? (
+                    <div className="text-xs text-slate-500">Loading context details...</div>
+                  ) : contextDetails ? (
+                    <div className="space-y-2">
+                      {/* Algorithm with Mode & Key Size */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">Algorithm:</span>
+                        <span className="text-xs font-medium text-slate-900">
+                          {contextDetails.derived?.resolved_algorithm || contextDetails.algorithm}
+                          {contextDetails.derived?.resolved_mode && (
+                            <span className="text-slate-500"> ({contextDetails.derived.resolved_mode.toUpperCase()})</span>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Key Size & Usage Context */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">Key Size:</span>
+                        <span className="text-xs font-medium text-slate-900">
+                          {contextDetails.derived?.resolved_key_bits || 256}-bit
+                        </span>
+                      </div>
+
+                      {/* Cryptographic Parameters - Critical for researchers */}
+                      {(() => {
+                        const mode = contextDetails.derived?.resolved_mode || "gcm";
+                        const algo = contextDetails.derived?.resolved_algorithm || contextDetails.algorithm;
+                        const isChaCha = algo?.toLowerCase().includes("chacha");
+                        // Standard parameters for AEAD modes
+                        const params = {
+                          gcm: { nonce: 12, tag: 16, block: 16, aead: true },
+                          "gcm-siv": { nonce: 12, tag: 16, block: 16, aead: true },
+                          ccm: { nonce: 13, tag: 16, block: 16, aead: true },
+                          cbc: { nonce: 16, tag: 0, block: 16, aead: false },
+                          ctr: { nonce: 16, tag: 0, block: 16, aead: false },
+                          xts: { nonce: 16, tag: 0, block: 16, aead: false },
+                        }[mode] || { nonce: 12, tag: 16, block: 16, aead: true };
+                        // ChaCha20-Poly1305 uses different parameters
+                        if (isChaCha) {
+                          params.nonce = 12;
+                          params.tag = 16;
+                          params.block = 64;
+                        }
+                        return (
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] pt-1 border-t border-slate-200">
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Nonce/IV:</span>
+                              <span className="text-slate-700">{params.nonce} bytes ({params.nonce * 8}-bit)</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Block:</span>
+                              <span className="text-slate-700">{params.block} bytes</span>
+                            </div>
+                            {params.aead && (
+                              <div className="flex justify-between">
+                                <span className="text-slate-500">Auth Tag:</span>
+                                <span className="text-slate-700">{params.tag} bytes ({params.tag * 8}-bit)</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">AEAD:</span>
+                              <span className={params.aead ? "text-green-600" : "text-amber-600"}>
+                                {params.aead ? "Yes" : "No (needs HMAC)"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {contextDetails.config?.data_identity?.usage_context && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Usage:</span>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] px-1.5 py-0",
+                              contextDetails.config.data_identity.usage_context === "at_rest" && "border-blue-300 text-blue-700",
+                              contextDetails.config.data_identity.usage_context === "in_transit" && "border-green-300 text-green-700",
+                              contextDetails.config.data_identity.usage_context === "in_use" && "border-orange-300 text-orange-700",
+                              contextDetails.config.data_identity.usage_context === "streaming" && "border-purple-300 text-purple-700",
+                              contextDetails.config.data_identity.usage_context === "disk" && "border-slate-300 text-slate-700"
+                            )}
+                          >
+                            {contextDetails.config.data_identity.usage_context.replace("_", " ").toUpperCase()}
+                          </Badge>
+                        </div>
+                      )}
+
+                      {/* Badges Row */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {contextDetails.derived?.quantum_resistant && (
+                          <Badge className="text-[10px] px-1.5 py-0 bg-purple-100 text-purple-700 hover:bg-purple-100">
+                            <Shield className="h-2.5 w-2.5 mr-0.5" />
+                            Quantum-Safe
+                          </Badge>
+                        )}
+                        {contextDetails.config?.data_identity?.sensitivity && (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] px-1.5 py-0",
+                              contextDetails.config.data_identity.sensitivity === "critical" && "border-red-300 text-red-700",
+                              contextDetails.config.data_identity.sensitivity === "high" && "border-orange-300 text-orange-700",
+                              contextDetails.config.data_identity.sensitivity === "medium" && "border-yellow-300 text-yellow-700",
+                              contextDetails.config.data_identity.sensitivity === "low" && "border-green-300 text-green-700"
+                            )}
+                          >
+                            {contextDetails.config.data_identity.sensitivity.toUpperCase()}
+                          </Badge>
+                        )}
+                        {contextDetails.config?.data_identity?.pii && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">PII</Badge>
+                        )}
+                        {contextDetails.config?.data_identity?.phi && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">PHI</Badge>
+                        )}
+                        {contextDetails.config?.data_identity?.pci && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">PCI</Badge>
+                        )}
+                      </div>
+
+                      {/* Compliance Frameworks */}
+                      {contextDetails.config?.regulatory?.frameworks && contextDetails.config.regulatory.frameworks.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {contextDetails.config.regulatory.frameworks.map((f) => (
+                            <span key={f} className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded">
+                              {f}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Algorithm Alternatives (if available) */}
+                      {contextDetails.derived?.detailed_rationale?.alternatives && contextDetails.derived.detailed_rationale.alternatives.length > 0 && (
+                        <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-200">
+                          <span className="font-medium">Alternatives: </span>
+                          {contextDetails.derived.detailed_rationale.alternatives.map((alt, i) => (
+                            <span key={alt.algorithm}>
+                              {alt.algorithm}
+                              {i < contextDetails.derived!.detailed_rationale!.alternatives.length - 1 && ", "}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Key metrics */}
+                      <div className="flex items-center gap-3 text-[10px] text-slate-500 pt-1 border-t border-slate-200">
+                        <span>{contextDetails.derived?.minimum_security_bits || 256}-bit security</span>
+                        <span>•</span>
+                        <span>{contextDetails.derived?.key_rotation_days || 90}d rotation</span>
+                        {contextDetails.derived?.audit_level && (
+                          <>
+                            <span>•</span>
+                            <span className="capitalize">{contextDetails.derived.audit_level} audit</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">
+                      Algorithm: {contexts.find((c) => c.name === selectedContext)?.algorithm}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 

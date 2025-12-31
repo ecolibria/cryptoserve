@@ -281,28 +281,64 @@ setup(
         (temp_path / "setup.py").write_text(setup_content)
 
     def _build_wheel(self, temp_path: Path) -> Path:
-        """Build wheel package."""
-        import subprocess
+        """Build wheel package manually (no external tools required)."""
+        import zipfile
+        import sys
 
-        # Run pip wheel
-        result = subprocess.run(
-            ["python", "-m", "pip", "wheel", ".", "--no-deps", "-w", "dist"],
-            cwd=temp_path,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to build wheel: {result.stderr}")
-
-        # Find the wheel file
+        # Create dist directory
         dist_dir = temp_path / "dist"
-        wheels = list(dist_dir.glob("*.whl"))
+        dist_dir.mkdir(exist_ok=True)
 
-        if not wheels:
-            raise RuntimeError("No wheel file generated")
+        # Read version from pyproject.toml
+        pyproject = (temp_path / "pyproject.toml").read_text()
+        version_line = [l for l in pyproject.split("\n") if "version" in l][0]
+        version = version_line.split('"')[1]  # Extract version from 'version = "0.1.0+hash"'
 
-        return wheels[0]
+        # Wheel filename format: {distribution}-{version}-{python tag}-{abi tag}-{platform tag}.whl
+        wheel_name = f"cryptoserve-{version}-py3-none-any.whl"
+        wheel_path = dist_dir / wheel_name
+
+        # Create wheel (it's just a zip file)
+        with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as whl:
+            # Add package files
+            pkg_dir = temp_path / "cryptoserve"
+            for py_file in pkg_dir.glob("*.py"):
+                arcname = f"cryptoserve/{py_file.name}"
+                whl.write(py_file, arcname)
+
+            # Create METADATA
+            metadata = f"""Metadata-Version: 2.1
+Name: cryptoserve
+Version: {version}
+Summary: CryptoServe SDK - Zero-config cryptographic operations
+Requires-Python: >=3.9
+Requires-Dist: requests>=2.28.0
+"""
+            whl.writestr(f"cryptoserve-{version}.dist-info/METADATA", metadata)
+
+            # Create WHEEL
+            wheel_info = """Wheel-Version: 1.0
+Generator: cryptoserve-sdk-generator
+Root-Is-Purelib: true
+Tag: py3-none-any
+"""
+            whl.writestr(f"cryptoserve-{version}.dist-info/WHEEL", wheel_info)
+
+            # Create RECORD (list of files with hashes - simplified)
+            record_lines = [
+                f"cryptoserve/__init__.py,sha256=,",
+                f"cryptoserve/client.py,sha256=,",
+                f"cryptoserve/_identity.py,sha256=,",
+                f"cryptoserve-{version}.dist-info/METADATA,sha256=,",
+                f"cryptoserve-{version}.dist-info/WHEEL,sha256=,",
+                f"cryptoserve-{version}.dist-info/RECORD,,",
+            ]
+            whl.writestr(f"cryptoserve-{version}.dist-info/RECORD", "\n".join(record_lines))
+
+            # Create top_level.txt
+            whl.writestr(f"cryptoserve-{version}.dist-info/top_level.txt", "cryptoserve\n")
+
+        return wheel_path
 
 
 # Singleton instance

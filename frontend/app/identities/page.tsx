@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Copy, Check, Trash2, Download } from "lucide-react";
+import { Plus, Copy, Check, Trash2, Download, Shield, Lock } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import {
   Card,
@@ -291,21 +291,39 @@ plaintext = crypto.decrypt(ciphertext, context="${newIdentity.identity.allowed_c
                           checked={formData.allowed_contexts.includes(ctx.name)}
                           onChange={() => toggleContext(ctx.name)}
                         />
-                        <div>
-                          <p className="font-medium">{ctx.display_name}</p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{ctx.display_name}</p>
+                            {ctx.quantum_resistant && (
+                              <Shield className="h-3.5 w-3.5 text-purple-600" title="Quantum Resistant" />
+                            )}
+                          </div>
                           <p className="text-xs text-slate-500 mt-1">
-                            {ctx.data_examples?.slice(0, 3).join(", ")}
+                            {ctx.description}
                           </p>
-                          <p className="text-xs text-blue-600 mt-1 font-mono">
-                            {ctx.algorithm}
-                          </p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className="text-xs font-mono bg-slate-100 px-1.5 py-0.5 rounded">
+                              {ctx.algorithm}
+                            </span>
+                            {ctx.sensitivity && (
+                              <Badge
+                                variant={
+                                  ctx.sensitivity === "critical" ? "destructive" :
+                                  ctx.sensitivity === "high" ? "default" : "secondary"
+                                }
+                                className="text-xs"
+                              >
+                                {ctx.sensitivity}
+                              </Badge>
+                            )}
+                          </div>
                           {ctx.compliance_tags &&
                             ctx.compliance_tags.length > 0 && (
-                              <div className="flex gap-1 mt-1">
+                              <div className="flex gap-1 mt-1.5 flex-wrap">
                                 {ctx.compliance_tags.map((tag) => (
                                   <Badge
                                     key={tag}
-                                    variant="secondary"
+                                    variant="outline"
                                     className="text-xs"
                                   >
                                     {tag}

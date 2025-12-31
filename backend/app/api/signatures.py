@@ -19,7 +19,7 @@ from app.core.signature_engine import (
 )
 from app.core.identity_manager import identity_manager
 
-router = APIRouter(prefix="/v1/signatures", tags=["signatures"])
+router = APIRouter(prefix="/api/v1/signatures", tags=["signatures"])
 security = HTTPBearer()
 
 

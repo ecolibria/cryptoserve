@@ -21,7 +21,7 @@ from app.core.jose_engine import (
 )
 from app.api.crypto import get_sdk_identity
 
-router = APIRouter(prefix="/v1/jose", tags=["jose"])
+router = APIRouter(prefix="/api/v1/jose", tags=["jose"])
 
 # Singleton JOSE engine
 jose_engine = JOSEEngine()

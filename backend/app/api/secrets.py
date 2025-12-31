@@ -29,7 +29,7 @@ from app.core.lease_engine import (
 )
 from app.api.crypto import get_sdk_identity
 
-router = APIRouter(prefix="/v1/secrets", tags=["secrets"])
+router = APIRouter(prefix="/api/v1/secrets", tags=["secrets"])
 
 # Singleton engines
 secret_sharing_engine = SecretSharingEngine()

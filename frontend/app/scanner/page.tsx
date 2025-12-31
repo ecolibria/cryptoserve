@@ -229,7 +229,7 @@ export default function ScannerPage() {
                   <CardHeader>
                     <CardTitle>Scan Summary</CardTitle>
                     <CardDescription>
-                      {result.lines_scanned} lines scanned ({result.language})
+                      {result.files_scanned} file(s) scanned in {result.scan_time_ms?.toFixed(0) || 0}ms
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -246,7 +246,7 @@ export default function ScannerPage() {
                       </div>
                       <div className="p-4 bg-slate-50 rounded-lg">
                         <p className="text-3xl font-bold text-orange-600">
-                          {result.cbom.quantum_summary.vulnerable}
+                          {(result.cbom.quantum_summary.high_risk_usages || 0) + (result.cbom.quantum_summary.critical_risk_usages || 0)}
                         </p>
                         <p className="text-sm text-slate-600">Quantum Vulnerable</p>
                       </div>
@@ -271,13 +271,13 @@ export default function ScannerPage() {
                               <Badge variant={getSeverityBadge(finding.severity) as "destructive" | "secondary" | "outline"}>
                                 {finding.severity}
                               </Badge>
-                              <span className="font-medium">{finding.category}</span>
+                              <span className="font-medium">{finding.title}</span>
                             </div>
                             {finding.line_number && (
                               <span className="text-sm text-slate-500">Line {finding.line_number}</span>
                             )}
                           </div>
-                          <p className="mt-2 text-sm">{finding.message}</p>
+                          <p className="mt-2 text-sm">{finding.description}</p>
                           <p className="mt-1 text-sm text-blue-600">{finding.recommendation}</p>
                         </div>
                       ))}
@@ -341,8 +341,8 @@ export default function ScannerPage() {
                       <div>
                         <p className="text-sm font-medium mb-2">Libraries</p>
                         <div className="flex flex-wrap gap-2">
-                          {result.cbom.libraries.map((lib) => (
-                            <Badge key={lib} variant="secondary">{lib}</Badge>
+                          {result.cbom.libraries.map((lib: { name: string; usage_count: number; algorithms: string[] }) => (
+                            <Badge key={lib.name} variant="secondary">{lib.name}</Badge>
                           ))}
                         </div>
                       </div>

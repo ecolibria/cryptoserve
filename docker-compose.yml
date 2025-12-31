@@ -41,6 +41,8 @@ services:
       - "3003:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8003
+      # Server-side API URL for Next.js rewrites (container-to-container)
+      API_URL: http://backend:8003
     depends_on:
       - backend
     volumes:
