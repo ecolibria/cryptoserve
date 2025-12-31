@@ -1,6 +1,6 @@
 """Key model for tracking encryption keys."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as SQLEnum
@@ -30,7 +30,7 @@ class Key(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow
+        default=lambda: datetime.now(timezone.utc)
     )
     status: Mapped[KeyStatus] = mapped_column(
         SQLEnum(KeyStatus),

@@ -21,7 +21,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -149,8 +149,8 @@ class MockDataStore:
                 "id": "key-001",
                 "context": "user-pii",
                 "algorithm": "AES-256-GCM",
-                "created_at": datetime.utcnow() - timedelta(days=400),
-                "last_rotated": datetime.utcnow() - timedelta(days=400),
+                "created_at": datetime.now(timezone.utc) - timedelta(days=400),
+                "last_rotated": datetime.now(timezone.utc) - timedelta(days=400),
                 "rotation_days": 365,
                 "data_encrypted_count": 50000,
             },
@@ -158,8 +158,8 @@ class MockDataStore:
                 "id": "key-002",
                 "context": "payments",
                 "algorithm": "AES-256-GCM",
-                "created_at": datetime.utcnow() - timedelta(days=30),
-                "last_rotated": datetime.utcnow() - timedelta(days=30),
+                "created_at": datetime.now(timezone.utc) - timedelta(days=30),
+                "last_rotated": datetime.now(timezone.utc) - timedelta(days=30),
                 "rotation_days": 90,
                 "data_encrypted_count": 10000,
             },
@@ -167,8 +167,8 @@ class MockDataStore:
                 "id": "key-003",
                 "context": "legacy-data",
                 "algorithm": "AES-128-CBC",
-                "created_at": datetime.utcnow() - timedelta(days=800),
-                "last_rotated": datetime.utcnow() - timedelta(days=500),
+                "created_at": datetime.now(timezone.utc) - timedelta(days=800),
+                "last_rotated": datetime.now(timezone.utc) - timedelta(days=500),
                 "rotation_days": 180,
                 "data_encrypted_count": 100000,
             },
@@ -176,8 +176,8 @@ class MockDataStore:
                 "id": "key-004",
                 "context": "archive",
                 "algorithm": "3DES",
-                "created_at": datetime.utcnow() - timedelta(days=1500),
-                "last_rotated": datetime.utcnow() - timedelta(days=1000),
+                "created_at": datetime.now(timezone.utc) - timedelta(days=1500),
+                "last_rotated": datetime.now(timezone.utc) - timedelta(days=1000),
                 "rotation_days": 365,
                 "data_encrypted_count": 25000,
             },
@@ -241,7 +241,7 @@ def assess_key_health(key: dict) -> list[HealthIssue]:
     rotation_days = key["rotation_days"]
 
     # Check if key needs rotation
-    days_since_rotation = (datetime.utcnow() - last_rotated).days
+    days_since_rotation = (datetime.now(timezone.utc) - last_rotated).days
     days_until_due = rotation_days - days_since_rotation
 
     if days_until_due < 0:
@@ -350,7 +350,7 @@ def assess_system_health() -> HealthReport:
     }
 
     return HealthReport(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         overall_status=overall,
         issues=issues,
         stats=stats,
@@ -504,7 +504,7 @@ def cmd_rotate_keys(args) -> int:
     else:
         # Rotate all overdue keys
         keys = _data_store.get_keys()
-        keys = [k for k in keys if (datetime.utcnow() - k["last_rotated"]).days > k["rotation_days"]]
+        keys = [k for k in keys if (datetime.now(timezone.utc) - k["last_rotated"]).days > k["rotation_days"]]
 
     if not keys:
         print(colored("No keys need rotation", Colors.GREEN))
@@ -513,7 +513,7 @@ def cmd_rotate_keys(args) -> int:
     print(f"Keys to rotate: {len(keys)}")
 
     for key in keys:
-        days_since = (datetime.utcnow() - key["last_rotated"]).days
+        days_since = (datetime.now(timezone.utc) - key["last_rotated"]).days
         print(f"\n  {colored(key['id'], Colors.CYAN)}")
         print(f"    Context: {key['context']}")
         print(f"    Algorithm: {key['algorithm']}")
@@ -595,7 +595,7 @@ def cmd_upgrade_quantum(args) -> int:
 
     if args.output:
         plan = {
-            "generated": datetime.utcnow().isoformat(),
+            "generated": datetime.now(timezone.utc).isoformat(),
             "classical_keys": len(classical_keys),
             "quantum_keys": len(quantum_keys),
             "target_algorithm": target_hybrid,

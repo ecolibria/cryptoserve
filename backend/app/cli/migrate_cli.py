@@ -23,7 +23,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -534,7 +534,7 @@ def cmd_plan(args) -> int:
     # Build migration plan
     plan = {
         "version": "1.0",
-        "generated": datetime.utcnow().isoformat(),
+        "generated": datetime.now(timezone.utc).isoformat(),
         "source_directory": str(directory),
         "summary": {
             "total_findings": len(result.findings),
@@ -716,7 +716,7 @@ def generate_html_report(result: ScanResult) -> str:
 <body>
     <div class="container">
         <h1>CryptoServe Migration Report</h1>
-        <p>Directory: {result.directory}<br>Files Scanned: {result.files_scanned}<br>Generated: {datetime.utcnow().isoformat()}</p>
+        <p>Directory: {result.directory}<br>Files Scanned: {result.files_scanned}<br>Generated: {datetime.now(timezone.utc).isoformat()}</p>
 
         <div class="summary">
             <div class="stat critical">

@@ -15,7 +15,7 @@ import base64
 import hmac
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305, AESCCM
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -375,7 +375,7 @@ class CryptoEngine:
             UnsupportedModeError: If requested mode is not supported
             CryptoError: If plaintext exceeds size limits
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         success = False
         error_message = None
         packed = b""
@@ -466,7 +466,7 @@ class CryptoEngine:
         finally:
             # Log to audit
             latency_ms = int(
-                (datetime.utcnow() - start_time).total_seconds() * 1000
+                (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             )
             audit = AuditLog(
                 operation="encrypt",
@@ -705,7 +705,7 @@ class CryptoEngine:
             AuthorizationError: If identity not authorized
             DecryptionError: If decryption fails or key commitment mismatch
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         success = False
         error_message = None
         plaintext = b""
@@ -773,7 +773,7 @@ class CryptoEngine:
         finally:
             # Log to audit
             latency_ms = int(
-                (datetime.utcnow() - start_time).total_seconds() * 1000
+                (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             )
             audit = AuditLog(
                 operation="decrypt",

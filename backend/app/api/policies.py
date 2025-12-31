@@ -3,7 +3,7 @@
 Provides policy management and evaluation.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -315,7 +315,7 @@ async def create_policy(
         operations=data.operations,
         policy_metadata=data.policy_metadata,
         created_by=admin.github_username,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     db.add(policy)
     await db.commit()
@@ -377,7 +377,7 @@ async def update_policy(
     if data.policy_metadata is not None:
         policy.policy_metadata = data.policy_metadata
 
-    policy.updated_at = datetime.utcnow()
+    policy.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(policy)
     return policy

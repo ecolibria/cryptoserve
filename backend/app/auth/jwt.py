@@ -1,6 +1,6 @@
 """JWT token handling for user sessions."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
@@ -19,12 +19,12 @@ security = HTTPBearer(auto_error=False)
 
 def create_access_token(user_id: str, github_username: str) -> str:
     """Create JWT access token for user session."""
-    expires = datetime.utcnow() + timedelta(days=settings.jwt_expiration_days)
+    expires = datetime.now(timezone.utc) + timedelta(days=settings.jwt_expiration_days)
     payload = {
         "sub": user_id,
         "username": github_username,
         "exp": expires,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 

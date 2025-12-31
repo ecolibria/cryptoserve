@@ -3,7 +3,7 @@
 Supports both legacy simple contexts and the new 5-layer context model.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -261,7 +261,7 @@ async def update_context(
     context.algorithm = derived.resolved_algorithm
     context.compliance_tags = data.config.regulatory.frameworks if data.config.regulatory else []
     context.data_examples = data.config.data_identity.examples if data.config.data_identity else []
-    context.updated_at = datetime.utcnow()
+    context.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(context)

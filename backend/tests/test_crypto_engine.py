@@ -1,7 +1,7 @@
 """Tests for the crypto engine."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.crypto_engine import crypto_engine, CryptoError, ContextNotFoundError, AuthorizationError
 from app.core.key_manager import key_manager
@@ -35,7 +35,7 @@ async def test_encrypt_decrypt_roundtrip(db_session, test_user, test_context):
         environment="development",
         allowed_contexts=["test-context"],
         status=IdentityStatus.ACTIVE,
-        expires_at=datetime.utcnow() + timedelta(days=90),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
     )
     db_session.add(identity)
     await db_session.commit()
@@ -75,7 +75,7 @@ async def test_encrypt_unknown_context(db_session, test_user):
         environment="development",
         allowed_contexts=["unknown-context"],
         status=IdentityStatus.ACTIVE,
-        expires_at=datetime.utcnow() + timedelta(days=90),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
     )
     db_session.add(identity)
     await db_session.commit()
@@ -102,7 +102,7 @@ async def test_encrypt_unauthorized_context(db_session, test_user, test_context)
         environment="development",
         allowed_contexts=["other-context"],  # Different context
         status=IdentityStatus.ACTIVE,
-        expires_at=datetime.utcnow() + timedelta(days=90),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
     )
     db_session.add(identity)
     await db_session.commit()
@@ -144,7 +144,7 @@ async def test_different_contexts_different_keys(db_session, test_user):
         environment="development",
         allowed_contexts=["context-1", "context-2"],
         status=IdentityStatus.ACTIVE,
-        expires_at=datetime.utcnow() + timedelta(days=90),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
     )
     db_session.add(identity)
     await db_session.commit()

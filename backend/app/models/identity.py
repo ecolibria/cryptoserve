@@ -1,6 +1,6 @@
 """Identity model for SDK credentials."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum
@@ -51,7 +51,7 @@ class Identity(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow
+        default=lambda: datetime.now(timezone.utc)
     )
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -73,6 +73,6 @@ class Identity(Base):
         """Check if identity is active and not expired."""
         if self.status != IdentityStatus.ACTIVE:
             return False
-        if datetime.utcnow() > self.expires_at.replace(tzinfo=None):
+        if datetime.now(timezone.utc) > self.expires_at.replace(tzinfo=timezone.utc):
             return False
         return True

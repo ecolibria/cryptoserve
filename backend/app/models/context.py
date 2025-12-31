@@ -8,7 +8,7 @@ The Context model now supports the 5-layer configuration:
 5. Derived Requirements - Computed by algorithm resolver
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import String, DateTime, Text
@@ -68,13 +68,13 @@ class Context(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow
+        default=lambda: datetime.now(timezone.utc)
     )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
         default=None,
-        onupdate=datetime.utcnow
+        onupdate=lambda: datetime.now(timezone.utc)
     )
 
     def __repr__(self) -> str:

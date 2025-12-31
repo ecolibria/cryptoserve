@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class KeyProviderType(str, Enum):
@@ -249,7 +249,7 @@ class LocalKeyProvider(KeyProvider):
             version=1,
             algorithm=algorithm,
             key_size_bits=key_size * 8,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             provider=KeyProviderType.LOCAL,
         )
 

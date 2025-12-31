@@ -1,6 +1,6 @@
 """Policy model for cryptographic policy rules."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import String, DateTime, Text, Boolean
@@ -73,12 +73,12 @@ class Policy(Base):
     # Audit fields
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow
+        default=lambda: datetime.now(timezone.utc)
     )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
-        onupdate=datetime.utcnow
+        onupdate=lambda: datetime.now(timezone.utc)
     )
     created_by: Mapped[str | None] = mapped_column(
         String(64),
@@ -137,7 +137,7 @@ class PolicyViolationLog(Base):
 
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         index=True
     )
 

@@ -1,6 +1,6 @@
 """Audit log model for tracking crypto operations."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import String, DateTime, Boolean, Integer, Text
@@ -22,7 +22,7 @@ class AuditLog(Base):
     )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         index=True
     )
     operation: Mapped[str] = mapped_column(String(32), nullable=False)

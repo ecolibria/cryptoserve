@@ -1,6 +1,6 @@
 """Admin API routes for enterprise dashboard."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
 import csv
 import io
@@ -179,7 +179,7 @@ async def get_admin_dashboard(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get aggregate statistics for admin dashboard."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday_start = today_start - timedelta(days=1)
     week_from_now = now + timedelta(days=7)
@@ -971,7 +971,7 @@ async def get_cryptographic_bill_of_materials(
     algorithms.sort(key=lambda a: a.context_count, reverse=True)
 
     return CBOMSummary(
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(timezone.utc),
         total_contexts=total,
         total_algorithms=len(algo_usage),
         quantum_ready_percent=quantum_percent,
@@ -992,7 +992,7 @@ async def get_operation_trends(
     days: int = Query(30, ge=1, le=365),
 ):
     """Get operation trends over time."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
 
     trends = []
@@ -1095,7 +1095,7 @@ async def get_system_health(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get system health status."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     hour_ago = now - timedelta(hours=1)
     week_from_now = now + timedelta(days=7)
 
@@ -1160,7 +1160,7 @@ async def get_risk_score(
     Premium: Shows detailed breakdown by factor
     """
     # Calculate risk factors based on actual data
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Factor 1: Algorithm strength (check for deprecated algorithms)
     contexts_result = await db.execute(select(Context))
@@ -1317,7 +1317,7 @@ async def get_quantum_readiness(
         migration_status = "in_progress"
         # Estimate completion based on remaining contexts
         remaining = classical_contexts
-        estimated_completion = (datetime.utcnow() + timedelta(days=remaining * 30)).strftime("%Y-%m-%d")
+        estimated_completion = (datetime.now(timezone.utc) + timedelta(days=remaining * 30)).strftime("%Y-%m-%d")
 
     return QuantumReadinessResponse(
         readiness_percent=readiness_percent,
@@ -1358,7 +1358,7 @@ async def get_compliance_status(
     has_audit = await db.scalar(select(func.count(AuditLog.id))) > 0
     has_key_rotation = await db.scalar(
         select(func.count(Key.id)).where(
-            Key.created_at >= datetime.utcnow() - timedelta(days=90)
+            Key.created_at >= datetime.now(timezone.utc) - timedelta(days=90)
         )
     ) > 0
 
@@ -1750,7 +1750,7 @@ async def get_security_alerts(
 
     Analyzes current state and returns actionable alerts.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     alerts = []
 
     # Alert 1: Expiring identities
@@ -1899,7 +1899,7 @@ async def get_security_metrics(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get real-time security metrics for the command center."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     minute_ago = now - timedelta(minutes=1)
     hour_ago = now - timedelta(hours=1)
 

@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, HTTPException, status, Depends, Response, Request, Cookie
@@ -106,14 +106,14 @@ async def dev_login(request: Request, db: AsyncSession = Depends(get_db)):
             github_username="devuser",
             email="dev@localhost",
             avatar_url=None,
-            last_login_at=datetime.utcnow(),
+            last_login_at=datetime.now(timezone.utc),
             is_admin=True,  # Dev user is admin in dev mode
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
     else:
-        user.last_login_at = datetime.utcnow()
+        user.last_login_at = datetime.now(timezone.utc)
         # Ensure dev user always has admin in dev mode
         if not user.is_admin:
             user.is_admin = True
@@ -278,7 +278,7 @@ async def github_callback(
         user.github_username = github_user["login"]
         user.email = email
         user.avatar_url = github_user.get("avatar_url")
-        user.last_login_at = datetime.utcnow()
+        user.last_login_at = datetime.now(timezone.utc)
     else:
         # Create new user
         user = User(
@@ -286,7 +286,7 @@ async def github_callback(
             github_username=github_user["login"],
             email=email,
             avatar_url=github_user.get("avatar_url"),
-            last_login_at=datetime.utcnow(),
+            last_login_at=datetime.now(timezone.utc),
         )
         db.add(user)
 
