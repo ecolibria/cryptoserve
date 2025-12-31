@@ -296,6 +296,9 @@ plaintext = crypto.decrypt(ciphertext, context="${newIdentity.identity.allowed_c
                           <p className="text-xs text-slate-500 mt-1">
                             {ctx.data_examples?.slice(0, 3).join(", ")}
                           </p>
+                          <p className="text-xs text-blue-600 mt-1 font-mono">
+                            {ctx.algorithm}
+                          </p>
                           {ctx.compliance_tags &&
                             ctx.compliance_tags.length > 0 && (
                               <div className="flex gap-1 mt-1">

@@ -417,3 +417,70 @@ class crypto:
             "environment": IDENTITY["environment"],
             "allowed_contexts": IDENTITY["allowed_contexts"],
         }
+
+    @classmethod
+    def context_info(cls, context: str) -> dict:
+        """
+        Get detailed information about a crypto context.
+
+        Args:
+            context: Context name (e.g., "user-pii", "payment-data")
+
+        Returns:
+            Dict with algorithm, speed, overhead, quantum_resistant, compliance
+
+        Example:
+            info = crypto.context_info("user-pii")
+            print(info["algorithm"])      # "AES-256-GCM"
+            print(info["speed"])          # "fast"
+            print(info["overhead_bytes"]) # 28
+            print(info["quantum_safe"])   # False
+        """
+        if _is_mock_mode():
+            return {
+                "name": context,
+                "algorithm": "AES-256-GCM",
+                "speed": "fast",
+                "overhead_bytes": 28,  # 12 nonce + 16 tag
+                "quantum_safe": False,
+                "compliance": ["SOC2"],
+            }
+
+        import requests
+        response = requests.get(
+            f"{IDENTITY['server_url']}/sdk/contexts/{context}",
+            headers={"Authorization": f"Bearer {IDENTITY['token']}"},
+            timeout=5,
+        )
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 404:
+            raise ContextNotFoundError(f"Context '{context}' not found")
+        else:
+            raise CryptoServeError(f"Failed to get context info: {response.text}")
+
+    @classmethod
+    def list_contexts(cls) -> list[dict]:
+        """
+        List all contexts available to this identity.
+
+        Returns:
+            List of context info dicts
+
+        Example:
+            for ctx in crypto.list_contexts():
+                print(f"{ctx['name']}: {ctx['algorithm']}")
+        """
+        if _is_mock_mode():
+            return [{"name": c, "algorithm": "AES-256-GCM"} for c in IDENTITY.get("allowed_contexts", ["*"])]
+
+        import requests
+        response = requests.get(
+            f"{IDENTITY['server_url']}/api/sdk/contexts",
+            headers={"Authorization": f"Bearer {IDENTITY['token']}"},
+            timeout=5,
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise CryptoServeError(f"Failed to list contexts: {response.text}")
