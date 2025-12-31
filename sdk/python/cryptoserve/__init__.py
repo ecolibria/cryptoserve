@@ -347,7 +347,6 @@ class crypto:
         if _is_mock_mode():
             # Mock decryption: reverse the mock encoding
             import base64
-            from cryptoserve.client import CryptoServeError
 
             if not ciphertext.startswith(b"MOCK:"):
                 raise CryptoServeError("Invalid mock ciphertext format")

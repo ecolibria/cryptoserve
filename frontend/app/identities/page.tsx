@@ -157,8 +157,8 @@ export default function IdentitiesPage() {
                 <pre className="text-sm bg-slate-100 p-2 rounded overflow-x-auto">
 {`from cryptoserve import crypto
 
-ciphertext = crypto.encrypt(b"data", context="user-pii")
-plaintext = crypto.decrypt(ciphertext, context="user-pii")`}
+ciphertext = crypto.encrypt(b"data", context="${newIdentity.identity.allowed_contexts[0] || "your-context"}")
+plaintext = crypto.decrypt(ciphertext, context="${newIdentity.identity.allowed_contexts[0] || "your-context"}")`}
                 </pre>
               </div>
 
