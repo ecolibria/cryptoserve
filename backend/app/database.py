@@ -24,9 +24,12 @@ class StringList(TypeDecorator):
             return None
         return json.dumps(value)
 
-    def process_result_value(self, value: str | None, dialect) -> list[str] | None:
+    def process_result_value(self, value: str | list | None, dialect) -> list[str] | None:
         if value is None:
             return None
+        # PostgreSQL returns already-parsed lists, SQLite returns strings
+        if isinstance(value, list):
+            return value
         return json.loads(value)
 
 
@@ -44,9 +47,12 @@ class JSONType(TypeDecorator):
             return None
         return json.dumps(value)
 
-    def process_result_value(self, value: str | None, dialect) -> dict[str, Any] | None:
+    def process_result_value(self, value: str | dict | list | None, dialect) -> dict[str, Any] | list | None:
         if value is None:
             return None
+        # PostgreSQL returns already-parsed objects, SQLite returns strings
+        if isinstance(value, (dict, list)):
+            return value
         return json.loads(value)
 
 
