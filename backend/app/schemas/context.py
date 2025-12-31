@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class Sensitivity(str, Enum):
@@ -421,6 +421,8 @@ class ContextUpdate(BaseModel):
 class ContextResponse(BaseModel):
     """Schema for context API responses."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     name: str
     display_name: str
     description: str
@@ -434,6 +436,3 @@ class ContextResponse(BaseModel):
 
     created_at: datetime
     updated_at: datetime | None = None
-
-    class Config:
-        from_attributes = True

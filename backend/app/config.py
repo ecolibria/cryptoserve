@@ -1,7 +1,7 @@
 """Application configuration."""
 
 import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -48,14 +48,12 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 100  # requests per minute
     rate_limit_crypto_ops: int = 500  # crypto operations per minute
 
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+
     @property
     def is_production(self) -> bool:
         """Check if running in production."""
         return self.environment == "production"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 @lru_cache
