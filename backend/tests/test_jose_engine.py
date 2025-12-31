@@ -353,16 +353,22 @@ class TestJWECreationAndDecryption:
     def test_jwe_decrypt_tampered(self, fresh_engine):
         """Test JWE decryption fails with tampered ciphertext."""
         key = os.urandom(32)
-        plaintext = b"test"
+        plaintext = b"test data for tampering test"
 
         result = fresh_engine.create_jwe(
             plaintext, key,
             JWEAlgorithm.DIR, JWEEncryption.A256GCM
         )
 
-        # Tamper with ciphertext
+        # Tamper with ciphertext more aggressively - flip multiple characters
         parts = result.compact.split(".")
-        parts[3] = parts[3][:-1] + "X"
+        ciphertext = parts[3]
+        # Flip characters to ensure tampering is detected
+        if len(ciphertext) > 10:
+            tampered_ct = ciphertext[:5] + "XXXX" + ciphertext[9:]
+        else:
+            tampered_ct = "XXXX" + ciphertext[4:]
+        parts[3] = tampered_ct
         tampered = ".".join(parts)
 
         with pytest.raises(InvalidJWEError):
