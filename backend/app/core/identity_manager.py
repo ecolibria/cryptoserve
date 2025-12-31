@@ -84,7 +84,7 @@ class IdentityManager:
 
         identity_id = self.generate_identity_id(identity_type, name)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         identity = Identity(
             id=identity_id,
             user_id=user.id,
