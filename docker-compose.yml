@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: cryptoserve
       POSTGRES_PASSWORD: localdev
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Use 5433 to avoid conflicts with local PostgreSQL
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
