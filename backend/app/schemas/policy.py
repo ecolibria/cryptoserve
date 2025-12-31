@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PolicySeverity(str, Enum):
@@ -72,6 +72,9 @@ class PolicyUpdate(BaseModel):
 
 class PolicyResponse(BaseModel):
     """Policy response schema."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     description: str | None
@@ -86,12 +89,12 @@ class PolicyResponse(BaseModel):
     updated_at: datetime | None
     created_by: str | None
 
-    class Config:
-        from_attributes = True
-
 
 class PolicyListResponse(BaseModel):
     """Simplified policy for list views."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     name: str
     description: str | None
     severity: str
@@ -99,9 +102,6 @@ class PolicyListResponse(BaseModel):
     contexts: list[str] | None
     operations: list[str] | None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class EvaluationRequest(BaseModel):
@@ -169,6 +169,9 @@ class EvaluationResponse(BaseModel):
 
 class ViolationLogResponse(BaseModel):
     """Policy violation log response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     policy_name: str
     severity: str
@@ -180,9 +183,6 @@ class ViolationLogResponse(BaseModel):
     team: str | None
     rule: str
     timestamp: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ViolationSummary(BaseModel):
