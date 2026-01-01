@@ -251,7 +251,9 @@ async def github_callback(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Handle GitHub OAuth callback with CSRF validation."""
+    """Handle GitHub OAuth callback with CSRF and domain validation."""
+    from app.core.domain_service import domain_service
+
     if not code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -310,44 +312,113 @@ async def github_callback(
 
         github_user = user_response.json()
 
-        # Get primary email
-        email = github_user.get("email")
-        if not email:
-            emails_response = await client.get(
-                GITHUB_EMAILS_URL,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
+        # Get ALL verified emails from GitHub
+        emails_response = await client.get(
+            GITHUB_EMAILS_URL,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+        )
+
+        verified_emails = []
+        primary_email = None
+        email_verified = False
+
+        if emails_response.status_code == 200:
+            emails = emails_response.json()
+            # Collect all verified emails
+            verified_emails = [
+                e["email"] for e in emails
+                if e.get("verified", False)
+            ]
+            # Find primary email
+            primary_email_obj = next(
+                (e for e in emails if e.get("primary")),
+                None
             )
-            if emails_response.status_code == 200:
-                emails = emails_response.json()
-                primary_email = next(
-                    (e for e in emails if e.get("primary")),
-                    None
+            if primary_email_obj:
+                primary_email = primary_email_obj.get("email")
+                email_verified = primary_email_obj.get("verified", False)
+
+        # Fall back to user profile email if no verified emails found
+        if not verified_emails and github_user.get("email"):
+            verified_emails = [github_user["email"]]
+            primary_email = github_user["email"]
+
+    # Check domain authorization
+    allowed_email = None
+    for email in verified_emails:
+        if await domain_service.is_domain_allowed(email, db):
+            allowed_email = email
+            break
+
+    # If no verified email matches allowed domains, check if domain restriction applies
+    if not allowed_email:
+        org_settings = await domain_service.get_org_settings(db)
+        if org_settings.require_domain_match and not org_settings.allow_any_github_user:
+            # Get allowed domains for error message
+            allowed_domains = await domain_service.get_allowed_domains(db)
+            if allowed_domains:
+                # Redirect to frontend with error
+                cli_callback = request.cookies.get("cli_callback")
+                if cli_callback:
+                    # CLI login - return error to CLI
+                    from urllib.parse import urlencode
+                    callback_params = urlencode({
+                        "error": "domain_not_allowed",
+                        "message": "Your email domain is not authorized",
+                    })
+                    response = RedirectResponse(
+                        url=f"{cli_callback}?{callback_params}",
+                        status_code=status.HTTP_302_FOUND,
+                    )
+                    response.delete_cookie("cli_callback")
+                    response.delete_cookie("oauth_state")
+                    return response
+
+                # Web login - redirect to frontend with error
+                response = RedirectResponse(
+                    url=f"{settings.frontend_url}/?error=domain_not_allowed",
+                    status_code=status.HTTP_302_FOUND,
                 )
-                if primary_email:
-                    email = primary_email.get("email")
+                response.delete_cookie("oauth_state")
+                return response
+
+    # Use allowed email if found, otherwise use primary email
+    email = allowed_email or primary_email
+    email_domain = domain_service.extract_domain(email) if email else None
 
     # Find or create user
     github_id = github_user["id"]
     result = await db.execute(select(User).where(User.github_id == github_id))
     user = result.scalar_one_or_none()
 
+    # Determine if user should be admin
+    should_be_admin = await domain_service.should_be_admin(email, db)
+
     if user:
         # Update existing user
         user.github_username = github_user["login"]
         user.email = email
+        user.email_verified = email_verified
+        user.email_domain = email_domain
         user.avatar_url = github_user.get("avatar_url")
         user.last_login_at = datetime.now(timezone.utc)
+        # Don't demote existing admins, but promote if needed
+        if should_be_admin and not user.is_admin:
+            user.is_admin = True
     else:
         # Create new user
         user = User(
             github_id=github_id,
             github_username=github_user["login"],
             email=email,
+            email_verified=email_verified,
+            email_domain=email_domain,
             avatar_url=github_user.get("avatar_url"),
             last_login_at=datetime.now(timezone.utc),
+            is_admin=should_be_admin,
         )
         db.add(user)
 

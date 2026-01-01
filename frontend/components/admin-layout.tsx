@@ -38,13 +38,15 @@ const adminNavItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/security", label: "Security", icon: ShieldAlert },
   { href: "/admin/users", label: "Users", icon: Users },
-  { href: "/admin/identities", label: "Identities", icon: Key },
+  { href: "/admin/applications", label: "Applications", icon: Key },
   { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
   { href: "/admin/audit", label: "Audit Logs", icon: FileText },
   { href: "/admin/contexts", label: "Contexts", icon: Settings },
   { href: "/admin/compliance", label: "Compliance", icon: ClipboardCheck },
+  { href: "/admin/cbom", label: "CBOM Reports", icon: FileText },
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/admin/playground", label: "Playground", icon: Play },
+  { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
 export function AdminLayout({

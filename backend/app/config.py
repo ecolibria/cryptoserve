@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
 
+    # Domain-based access control
+    # Comma-separated list of allowed email domains (e.g., "allstate.com,contractor.allstate.com")
+    allowed_domains: str = ""
+    # Email of the initial admin (becomes admin on first login)
+    admin_email: str = ""
+    # Whether to require email domain verification (set False for open access)
+    require_domain_verification: bool = True
+
     # Security
     cryptoserve_master_key: str = "dev-master-key-change-in-production"
     jwt_secret_key: str = "dev-jwt-secret-change-in-production"

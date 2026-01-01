@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.auth.jwt import get_current_user
-from app.models import User, Identity, IdentityStatus, Context, AuditLog, Key, Policy
+from app.models import User, Identity, IdentityStatus, Context, AuditLog, Key, Policy, OrganizationSettings
 from app.models.crypto_inventory import CryptoInventoryReport, CryptoLibraryUsage, EnforcementAction
 from app.schemas.context import (
     ContextConfig,
@@ -2524,4 +2524,159 @@ async def get_crypto_inventory_trends(
     return {
         "period_days": days,
         "trends": trends,
+    }
+
+
+# =============================================================================
+# Organization Settings & Domain Management
+# =============================================================================
+
+
+class OrganizationSettingsResponse(BaseModel):
+    """Organization settings response."""
+    allowed_domains: list[str]
+    require_domain_match: bool
+    allow_any_github_user: bool
+    organization_name: Optional[str]
+    admin_email: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class OrganizationSettingsUpdate(BaseModel):
+    """Organization settings update request."""
+    require_domain_match: Optional[bool] = None
+    allow_any_github_user: Optional[bool] = None
+    organization_name: Optional[str] = None
+
+
+class AddDomainRequest(BaseModel):
+    """Request to add a new allowed domain."""
+    domain: str
+
+
+@router.get("/settings", response_model=OrganizationSettingsResponse)
+async def get_org_settings(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get organization settings including allowed domains."""
+    from app.core.domain_service import domain_service
+
+    settings = await domain_service.get_org_settings(db)
+
+    return OrganizationSettingsResponse(
+        allowed_domains=settings.allowed_domains or [],
+        require_domain_match=settings.require_domain_match,
+        allow_any_github_user=settings.allow_any_github_user,
+        organization_name=settings.organization_name,
+        admin_email=settings.admin_email,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at,
+    )
+
+
+@router.patch("/settings", response_model=OrganizationSettingsResponse)
+async def update_org_settings(
+    data: OrganizationSettingsUpdate,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Update organization settings."""
+    from app.core.domain_service import domain_service
+
+    settings = await domain_service.update_settings(
+        db,
+        require_domain_match=data.require_domain_match,
+        allow_any_github_user=data.allow_any_github_user,
+        organization_name=data.organization_name,
+    )
+
+    return OrganizationSettingsResponse(
+        allowed_domains=settings.allowed_domains or [],
+        require_domain_match=settings.require_domain_match,
+        allow_any_github_user=settings.allow_any_github_user,
+        organization_name=settings.organization_name,
+        admin_email=settings.admin_email,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at,
+    )
+
+
+@router.get("/settings/domains")
+async def get_allowed_domains(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get list of allowed email domains."""
+    from app.core.domain_service import domain_service
+
+    domains = await domain_service.get_allowed_domains(db)
+    return {"domains": domains}
+
+
+@router.post("/settings/domains")
+async def add_allowed_domain(
+    data: AddDomainRequest,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Add a new allowed email domain."""
+    from app.core.domain_service import domain_service
+
+    try:
+        await domain_service.add_domain(data.domain, db)
+        domains = await domain_service.get_allowed_domains(db)
+        return {"message": f"Domain '{data.domain}' added", "domains": domains}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.delete("/settings/domains/{domain}")
+async def remove_allowed_domain(
+    domain: str,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Remove an allowed email domain."""
+    from app.core.domain_service import domain_service
+
+    await domain_service.remove_domain(domain, db)
+    domains = await domain_service.get_allowed_domains(db)
+    return {"message": f"Domain '{domain}' removed", "domains": domains}
+
+
+@router.post("/users/{user_id}/toggle-admin")
+async def toggle_user_admin(
+    user_id: str,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Toggle admin status for a user."""
+    if user_id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify your own admin status",
+        )
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    user.is_admin = not user.is_admin
+    await db.commit()
+
+    return {
+        "user_id": user.id,
+        "github_username": user.github_username,
+        "is_admin": user.is_admin,
+        "message": f"User {'promoted to' if user.is_admin else 'demoted from'} admin",
     }

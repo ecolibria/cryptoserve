@@ -542,6 +542,57 @@ export interface SupportedFormatsResponse {
   formats: { filename: string; ecosystem: string; language: string }[];
 }
 
+// CBOM Report Types (CLI uploads)
+export interface CBOMReport {
+  id: number;
+  scannedAt: string;
+  scanName: string | null;
+  scanPath: string | null;
+  libraryCount: number;
+  algorithmCount: number;
+  quantumReadinessScore: number;
+  hasPqc: boolean;
+  gitCommit: string | null;
+  gitBranch: string | null;
+  gitRepo: string | null;
+}
+
+export interface CBOMReportDetail {
+  id: number;
+  scannedAt: string;
+  scanName: string | null;
+  scanPath: string | null;
+  scanSource: string;
+  quantumReadinessScore: number;
+  metrics: {
+    libraryCount: number;
+    algorithmCount: number;
+    quantumSafeCount: number;
+    quantumVulnerableCount: number;
+    hasPqc: boolean;
+    deprecatedCount: number;
+  };
+  libraries: {
+    name: string;
+    version?: string;
+    category: string;
+    algorithms?: string[];
+    quantumRisk?: string;
+    isDeprecated?: boolean;
+  }[];
+  algorithms: {
+    name: string;
+    category: string;
+    library?: string;
+  }[];
+  cbomData: Record<string, unknown> | null;
+  git: {
+    commit: string | null;
+    branch: string | null;
+    repo: string | null;
+  };
+}
+
 // PQC Recommendations Types
 export interface SNDLAssessment {
   vulnerable: boolean;
@@ -949,6 +1000,17 @@ export interface ComplianceStatusResponse {
   overall_score: number;
   export_available: boolean;
   premium_required: boolean;
+}
+
+// Organization Settings Types
+export interface OrganizationSettingsResponse {
+  allowed_domains: string[];
+  require_domain_match: boolean;
+  allow_any_github_user: boolean;
+  organization_name: string | null;
+  admin_email: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // Policy Types
@@ -1603,4 +1665,52 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }) as Promise<DecryptResponse>,
+
+  // CBOM Reports (CLI uploads)
+  listCBOMReports: (limit: number = 20) =>
+    fetchApi(`/api/v1/cbom?limit=${limit}`) as Promise<CBOMReport[]>,
+
+  getCBOMReport: (reportId: number) =>
+    fetchApi(`/api/v1/cbom/${reportId}`) as Promise<CBOMReportDetail>,
+
+  // =============================================================================
+  // Organization Settings & Domain Management (Admin)
+  // =============================================================================
+
+  getOrgSettings: () =>
+    fetchApi("/api/admin/settings") as Promise<OrganizationSettingsResponse>,
+
+  updateOrgSettings: (data: {
+    require_domain_match?: boolean;
+    allow_any_github_user?: boolean;
+    organization_name?: string;
+  }) =>
+    fetchApi("/api/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }) as Promise<OrganizationSettingsResponse>,
+
+  getAllowedDomains: () =>
+    fetchApi("/api/admin/settings/domains") as Promise<{ domains: string[] }>,
+
+  addAllowedDomain: (domain: string) =>
+    fetchApi("/api/admin/settings/domains", {
+      method: "POST",
+      body: JSON.stringify({ domain }),
+    }) as Promise<{ message: string; domains: string[] }>,
+
+  removeAllowedDomain: (domain: string) =>
+    fetchApi(`/api/admin/settings/domains/${encodeURIComponent(domain)}`, {
+      method: "DELETE",
+    }) as Promise<{ message: string; domains: string[] }>,
+
+  toggleUserAdmin: (userId: string) =>
+    fetchApi(`/api/admin/users/${userId}/toggle-admin`, {
+      method: "POST",
+    }) as Promise<{
+      user_id: string;
+      github_username: string;
+      is_admin: boolean;
+      message: string;
+    }>,
 };

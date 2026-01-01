@@ -1,6 +1,7 @@
 """Database models."""
 
 from app.models.user import User
+from app.models.organization import OrganizationSettings
 from app.models.identity import Identity, IdentityType, IdentityStatus
 from app.models.application import Application, ApplicationStatus
 from app.models.context import Context
@@ -17,6 +18,7 @@ from app.models.crypto_inventory import (
 
 __all__ = [
     "User",
+    "OrganizationSettings",
     # Legacy Identity (keeping for backward compatibility)
     "Identity",
     "IdentityType",
