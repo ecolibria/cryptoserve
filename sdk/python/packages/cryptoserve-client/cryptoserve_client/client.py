@@ -6,7 +6,10 @@ Every operation has sensible defaults - just call and go.
 """
 
 import base64
-from typing import Any, BinaryIO
+import json
+import threading
+from datetime import datetime, timezone
+from typing import Any, BinaryIO, Optional
 
 import requests
 
@@ -17,6 +20,7 @@ from cryptoserve_client.errors import (
     ContextNotFoundError,
     ServerError,
     RateLimitError,
+    TokenRefreshError,
 )
 
 
@@ -30,12 +34,19 @@ class CryptoClient:
         decrypted = client.decrypt(encrypted, "my-context")
 
     All operations have sensible defaults. Just call and go.
+
+    Supports automatic token refresh when a refresh token is provided.
     """
+
+    # Refresh token if less than 5 minutes remaining
+    REFRESH_THRESHOLD_SECONDS = 300
 
     def __init__(
         self,
         server_url: str,
         token: str,
+        refresh_token: Optional[str] = None,
+        auto_refresh: bool = True,
         timeout: float = 30.0,
         user_agent: str | None = None,
     ):
@@ -44,19 +55,136 @@ class CryptoClient:
 
         Args:
             server_url: CryptoServe server URL
-            token: Your identity token
+            token: Access token for API calls
+            refresh_token: Optional refresh token for auto-refresh
+            auto_refresh: Enable automatic token refresh (default: True)
             timeout: Request timeout (default: 30s)
+            user_agent: Optional custom user agent
         """
         self.server_url = server_url.rstrip("/")
-        self.token = token
+        self._access_token = token
+        self._refresh_token = refresh_token
+        self._auto_refresh = auto_refresh and refresh_token is not None
         self.timeout = timeout
+
+        # Token expiry tracking
+        self._token_expiry: Optional[datetime] = None
+        self._parse_token_expiry(token)
+
+        # Thread safety for token refresh
+        self._refresh_lock = threading.Lock()
 
         self._session = requests.Session()
         self._session.headers.update({
-            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "User-Agent": user_agent or f"cryptoserve-client/{__import__('cryptoserve_client').__version__}",
         })
+        self._update_auth_header()
+
+    # Backward compatibility property
+    @property
+    def token(self) -> str:
+        """Get the current access token."""
+        return self._access_token
+
+    def _update_auth_header(self):
+        """Update the Authorization header with current token."""
+        self._session.headers["Authorization"] = f"Bearer {self._access_token}"
+
+    def _parse_token_expiry(self, token: str) -> None:
+        """Parse token expiry from JWT payload (without verification)."""
+        try:
+            # JWT format: header.payload.signature
+            parts = token.split(".")
+            if len(parts) != 3:
+                return
+
+            # Decode payload (base64url)
+            payload = parts[1]
+            # Add padding if needed
+            padding = 4 - len(payload) % 4
+            if padding != 4:
+                payload += "=" * padding
+
+            decoded = base64.urlsafe_b64decode(payload)
+            claims = json.loads(decoded)
+
+            if "exp" in claims:
+                self._token_expiry = datetime.fromtimestamp(
+                    claims["exp"], tz=timezone.utc
+                )
+        except Exception:
+            # If parsing fails, we'll rely on 401 responses to trigger refresh
+            self._token_expiry = None
+
+    def _should_refresh(self) -> bool:
+        """Check if token needs refresh (expired or expiring soon)."""
+        if not self._auto_refresh or not self._refresh_token:
+            return False
+
+        if self._token_expiry is None:
+            return False
+
+        now = datetime.now(timezone.utc)
+        remaining = (self._token_expiry - now).total_seconds()
+        return remaining < self.REFRESH_THRESHOLD_SECONDS
+
+    def _do_refresh(self) -> None:
+        """Exchange refresh token for new access token."""
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/v1/auth/refresh",
+                json={"refresh_token": self._refresh_token},
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                self._access_token = data["access_token"]
+                self._parse_token_expiry(self._access_token)
+                self._update_auth_header()
+            elif response.status_code == 401:
+                # Refresh token is invalid/expired
+                self._auto_refresh = False
+                raise TokenRefreshError(
+                    "Refresh token is invalid or expired. "
+                    "Please update CRYPTOSERVE_REFRESH_TOKEN."
+                )
+            else:
+                raise TokenRefreshError(
+                    f"Token refresh failed ({response.status_code}): {response.text}"
+                )
+        except requests.RequestException as e:
+            raise TokenRefreshError(f"Token refresh request failed: {e}")
+
+    def _ensure_valid_token(self) -> None:
+        """Refresh token if expired or expiring soon (thread-safe)."""
+        if not self._should_refresh():
+            return
+
+        with self._refresh_lock:
+            # Double-check after acquiring lock
+            if self._should_refresh():
+                self._do_refresh()
+
+    def _try_refresh_and_retry(self) -> bool:
+        """
+        Attempt to refresh token after a 401 response.
+
+        Returns:
+            True if refresh succeeded and request should be retried.
+            False if refresh is not available or failed.
+        """
+        if not self._auto_refresh or not self._refresh_token:
+            return False
+
+        try:
+            with self._refresh_lock:
+                self._do_refresh()
+            return True
+        except TokenRefreshError:
+            return False
 
     # ==========================================================================
     # Core Encryption - The "just works" experience
@@ -963,9 +1091,17 @@ class CryptoClient:
     # ==========================================================================
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
-        """Make authenticated request."""
+        """Make authenticated request with auto-refresh support."""
+        # Auto-refresh token if needed
+        self._ensure_valid_token()
+
         kwargs.setdefault("timeout", self.timeout)
         response = self._session.request(method, f"{self.server_url}{path}", **kwargs)
+
+        # Handle 401 with retry after refresh
+        if response.status_code == 401 and self._try_refresh_and_retry():
+            response = self._session.request(method, f"{self.server_url}{path}", **kwargs)
+
         return self._handle_response(response, path)
 
     def _handle_response(self, response: requests.Response, path: str) -> dict:

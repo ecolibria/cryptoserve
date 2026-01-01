@@ -1,6 +1,8 @@
 """API routes."""
 
 from app.api.identities import router as identities_router
+from app.api.applications import router as applications_router
+from app.api.auth import router as auth_router
 from app.api.contexts import router as contexts_router
 from app.api.crypto import router as crypto_router
 from app.api.users import router as users_router
@@ -16,9 +18,13 @@ from app.api.discovery import router as discovery_router
 from app.api.code_analysis import router as code_analysis_router
 from app.api.certificates import router as certificates_router
 from app.api.dependencies import router as dependencies_router
+from app.api.inventory import router as inventory_router
+from app.api.dashboard import router as dashboard_router
 
 __all__ = [
     "identities_router",
+    "applications_router",
+    "auth_router",
     "contexts_router",
     "crypto_router",
     "users_router",
@@ -34,4 +40,6 @@ __all__ = [
     "code_analysis_router",
     "certificates_router",
     "dependencies_router",
+    "inventory_router",
+    "dashboard_router",
 ]

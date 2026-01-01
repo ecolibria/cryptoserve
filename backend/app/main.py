@@ -22,6 +22,8 @@ from app.database import init_db, close_db, get_session_maker
 from app.auth import github_oauth_router
 from app.api import (
     identities_router,
+    applications_router,
+    auth_router,
     contexts_router,
     crypto_router,
     users_router,
@@ -37,6 +39,8 @@ from app.api import (
     code_analysis_router,
     certificates_router,
     dependencies_router,
+    inventory_router,
+    dashboard_router,
 )
 from app.api.sdk import router as sdk_router
 from app.api.admin import router as admin_router
@@ -528,6 +532,8 @@ app.add_middleware(
 app.include_router(github_oauth_router)
 app.include_router(users_router)
 app.include_router(identities_router)
+app.include_router(applications_router)
+app.include_router(auth_router)
 app.include_router(contexts_router)
 app.include_router(crypto_router)
 app.include_router(audit_router)
@@ -542,6 +548,8 @@ app.include_router(discovery_router)
 app.include_router(code_analysis_router)
 app.include_router(certificates_router)
 app.include_router(dependencies_router)
+app.include_router(inventory_router)
+app.include_router(dashboard_router)
 app.include_router(sdk_router)
 app.include_router(algorithms_router)
 app.include_router(admin_router)

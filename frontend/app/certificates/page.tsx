@@ -358,10 +358,10 @@ export default function CertificatesPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
-                    <div className={`p-3 rounded-lg ${parsedCert.is_expired ? "bg-red-50" : "bg-green-50"}`}>
+                    <div className={`p-3 rounded-lg ${parsedCert.days_until_expiry < 0 ? "bg-red-50" : parsedCert.days_until_expiry < 30 ? "bg-yellow-50" : "bg-green-50"}`}>
                       <p className="text-sm font-medium">Status</p>
-                      <p className={`font-bold ${parsedCert.is_expired ? "text-red-600" : "text-green-600"}`}>
-                        {parsedCert.is_expired ? "Expired" : "Valid"}
+                      <p className={`font-bold ${parsedCert.days_until_expiry < 0 ? "text-red-600" : parsedCert.days_until_expiry < 30 ? "text-yellow-600" : "text-green-600"}`}>
+                        {parsedCert.days_until_expiry < 0 ? "Expired" : parsedCert.days_until_expiry < 30 ? `Expires in ${parsedCert.days_until_expiry} days` : "Valid"}
                       </p>
                     </div>
                     <div className="p-3 rounded-lg bg-slate-50">
@@ -402,15 +402,15 @@ export default function CertificatesPage() {
                     </div>
                     <div>
                       <p className="text-slate-600">Key</p>
-                      <p>{parsedCert.public_key_algorithm} ({parsedCert.public_key_size} bits)</p>
+                      <p>{parsedCert.key_type.toUpperCase()} {parsedCert.key_size ? `(${parsedCert.key_size} bits)` : ""}</p>
                     </div>
                   </div>
 
-                  {parsedCert.san_domains.length > 0 && (
+                  {parsedCert.san.length > 0 && (
                     <div>
                       <p className="text-sm font-medium text-slate-600 mb-1">SANs</p>
                       <div className="flex flex-wrap gap-1">
-                        {parsedCert.san_domains.map((san) => (
+                        {parsedCert.san.map((san) => (
                           <Badge key={san} variant="outline">{san}</Badge>
                         ))}
                       </div>
@@ -420,7 +420,7 @@ export default function CertificatesPage() {
                   <div>
                     <p className="text-sm font-medium text-slate-600 mb-1">Fingerprint (SHA256)</p>
                     <p className="font-mono text-xs break-all bg-slate-50 p-2 rounded">
-                      {parsedCert.fingerprints.sha256}
+                      {parsedCert.fingerprint_sha256}
                     </p>
                   </div>
                 </CardContent>

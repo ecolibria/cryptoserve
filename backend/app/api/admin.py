@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.auth.jwt import get_current_user
 from app.models import User, Identity, IdentityStatus, Context, AuditLog, Key, Policy
+from app.models.crypto_inventory import CryptoInventoryReport, CryptoLibraryUsage, EnforcementAction
 from app.schemas.context import (
     ContextConfig,
     DataIdentity,
@@ -2148,3 +2149,379 @@ async def playground_operation(
             latency_ms=round(latency_ms, 2),
             error=str(e),
         )
+
+
+# =============================================================================
+# Crypto Inventory Admin Endpoints
+# =============================================================================
+
+
+class CryptoInventoryOverview(BaseModel):
+    """Organization-wide crypto inventory overview."""
+    total_apps: int
+    total_scans: int
+    compliant_apps: int
+    blocked_apps: int
+    warned_apps: int
+    avg_quantum_readiness: float
+    has_pqc_apps: int
+    deprecated_library_apps: int
+    libraries_in_use: list[dict]
+    by_team: list[dict]
+    recent_scans: list[dict]
+
+
+class LibraryUsageSummary(BaseModel):
+    """Summary of a library's usage across org."""
+    library_name: str
+    version: str | None
+    category: str
+    quantum_risk: str
+    is_deprecated: bool
+    app_count: int
+    team_count: int
+    first_seen: datetime
+    last_seen: datetime
+
+
+@router.get("/crypto-inventory/overview", response_model=CryptoInventoryOverview)
+async def get_crypto_inventory_overview(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get organization-wide crypto inventory overview.
+
+    Shows:
+    - Total apps scanned and compliance status
+    - Quantum readiness across organization
+    - Libraries in use and their risk levels
+    - Team breakdown
+    - Recent scans
+    """
+    # Get distinct identity IDs (apps)
+    apps_result = await db.execute(
+        select(CryptoInventoryReport.identity_id).distinct()
+    )
+    app_ids = [r[0] for r in apps_result.fetchall()]
+    total_apps = len(app_ids)
+
+    # Total scans
+    total_scans = await db.scalar(select(func.count(CryptoInventoryReport.id))) or 0
+
+    # Compliance breakdown (based on most recent scan per app)
+    compliant_apps = 0
+    blocked_apps = 0
+    warned_apps = 0
+    has_pqc_apps = 0
+    deprecated_apps = 0
+    quantum_scores = []
+
+    for app_id in app_ids:
+        # Get most recent scan for this app
+        latest_result = await db.execute(
+            select(CryptoInventoryReport)
+            .where(CryptoInventoryReport.identity_id == app_id)
+            .order_by(desc(CryptoInventoryReport.scanned_at))
+            .limit(1)
+        )
+        latest = latest_result.scalar_one_or_none()
+        if latest:
+            if latest.action == EnforcementAction.ALLOW:
+                compliant_apps += 1
+            elif latest.action == EnforcementAction.BLOCK:
+                blocked_apps += 1
+            else:
+                warned_apps += 1
+
+            if latest.has_pqc:
+                has_pqc_apps += 1
+            if latest.deprecated_count > 0:
+                deprecated_apps += 1
+
+            quantum_scores.append(latest.quantum_readiness_score)
+
+    avg_quantum_readiness = sum(quantum_scores) / len(quantum_scores) if quantum_scores else 0
+
+    # Libraries in use
+    libs_result = await db.execute(
+        select(CryptoLibraryUsage)
+        .order_by(desc(CryptoLibraryUsage.app_count))
+        .limit(20)
+    )
+    libraries = libs_result.scalars().all()
+
+    libraries_in_use = [
+        {
+            "name": lib.library_name,
+            "version": lib.library_version,
+            "category": lib.category,
+            "quantum_risk": lib.quantum_risk.value,
+            "is_deprecated": lib.is_deprecated,
+            "app_count": lib.app_count,
+        }
+        for lib in libraries
+    ]
+
+    # By team
+    team_stats_result = await db.execute(
+        select(
+            CryptoInventoryReport.team,
+            func.count(func.distinct(CryptoInventoryReport.identity_id)).label("app_count"),
+            func.avg(CryptoInventoryReport.quantum_safe_count).label("avg_safe"),
+            func.avg(CryptoInventoryReport.quantum_vulnerable_count).label("avg_vuln"),
+        )
+        .where(CryptoInventoryReport.team.isnot(None))
+        .group_by(CryptoInventoryReport.team)
+        .order_by(desc("app_count"))
+    )
+    team_stats = team_stats_result.fetchall()
+
+    by_team = [
+        {
+            "team": row[0],
+            "app_count": row[1],
+            "avg_quantum_safe": round(row[2] or 0, 1),
+            "avg_quantum_vulnerable": round(row[3] or 0, 1),
+        }
+        for row in team_stats
+    ]
+
+    # Recent scans
+    recent_result = await db.execute(
+        select(CryptoInventoryReport)
+        .order_by(desc(CryptoInventoryReport.scanned_at))
+        .limit(10)
+    )
+    recent = recent_result.scalars().all()
+
+    recent_scans = [
+        {
+            "id": r.id,
+            "identity_name": r.identity_name,
+            "team": r.team,
+            "action": r.action.value,
+            "scan_source": r.scan_source.value,
+            "scanned_at": r.scanned_at.isoformat(),
+            "quantum_readiness_score": r.quantum_readiness_score,
+            "violation_count": r.violation_count,
+            "warning_count": r.warning_count,
+        }
+        for r in recent
+    ]
+
+    return CryptoInventoryOverview(
+        total_apps=total_apps,
+        total_scans=total_scans,
+        compliant_apps=compliant_apps,
+        blocked_apps=blocked_apps,
+        warned_apps=warned_apps,
+        avg_quantum_readiness=round(avg_quantum_readiness, 1),
+        has_pqc_apps=has_pqc_apps,
+        deprecated_library_apps=deprecated_apps,
+        libraries_in_use=libraries_in_use,
+        by_team=by_team,
+        recent_scans=recent_scans,
+    )
+
+
+@router.get("/crypto-inventory/libraries", response_model=list[LibraryUsageSummary])
+async def get_library_usage(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    deprecated_only: bool = False,
+    quantum_vulnerable_only: bool = False,
+):
+    """
+    Get library usage across organization.
+
+    Filters:
+    - deprecated_only: Only show deprecated libraries
+    - quantum_vulnerable_only: Only show quantum-vulnerable libraries
+    """
+    query = select(CryptoLibraryUsage).order_by(desc(CryptoLibraryUsage.app_count))
+
+    if deprecated_only:
+        query = query.where(CryptoLibraryUsage.is_deprecated == True)
+
+    if quantum_vulnerable_only:
+        from app.models.crypto_inventory import QuantumRisk as DBQuantumRisk
+        query = query.where(
+            CryptoLibraryUsage.quantum_risk.in_([DBQuantumRisk.HIGH, DBQuantumRisk.CRITICAL])
+        )
+
+    result = await db.execute(query)
+    libraries = result.scalars().all()
+
+    return [
+        LibraryUsageSummary(
+            library_name=lib.library_name,
+            version=lib.library_version,
+            category=lib.category,
+            quantum_risk=lib.quantum_risk.value,
+            is_deprecated=lib.is_deprecated,
+            app_count=lib.app_count,
+            team_count=lib.team_count,
+            first_seen=lib.first_seen_at,
+            last_seen=lib.last_seen_at,
+        )
+        for lib in libraries
+    ]
+
+
+@router.get("/crypto-inventory/apps/{identity_id}")
+async def get_app_crypto_details(
+    identity_id: str,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get detailed crypto inventory for a specific app.
+
+    Shows history of scans, libraries detected, violations, and recommendations.
+    """
+    # Get all scans for this app
+    scans_result = await db.execute(
+        select(CryptoInventoryReport)
+        .where(CryptoInventoryReport.identity_id == identity_id)
+        .order_by(desc(CryptoInventoryReport.scanned_at))
+    )
+    scans = scans_result.scalars().all()
+
+    if not scans:
+        raise HTTPException(status_code=404, detail="No inventory data found for this app")
+
+    latest = scans[0]
+
+    return {
+        "identity_id": identity_id,
+        "identity_name": latest.identity_name,
+        "team": latest.team,
+        "department": latest.department,
+        "total_scans": len(scans),
+        "current_status": {
+            "action": latest.action.value,
+            "quantum_readiness_score": latest.quantum_readiness_score,
+            "has_pqc": latest.has_pqc,
+            "library_count": latest.library_count,
+            "violation_count": latest.violation_count,
+            "warning_count": latest.warning_count,
+            "deprecated_count": latest.deprecated_count,
+        },
+        "libraries": latest.libraries,
+        "violations": latest.violations,
+        "warnings": latest.warnings,
+        "scan_history": [
+            {
+                "id": s.id,
+                "scanned_at": s.scanned_at.isoformat(),
+                "scan_source": s.scan_source.value,
+                "action": s.action.value,
+                "quantum_readiness_score": s.quantum_readiness_score,
+                "git_commit": s.git_commit,
+                "git_branch": s.git_branch,
+            }
+            for s in scans[:20]  # Last 20 scans
+        ],
+        "recommendations": _generate_recommendations(latest),
+    }
+
+
+def _generate_recommendations(report: CryptoInventoryReport) -> list[dict]:
+    """Generate PQC migration recommendations based on inventory."""
+    recommendations = []
+
+    # Deprecated libraries
+    if report.deprecated_count > 0:
+        for lib in report.libraries:
+            if lib.get("is_deprecated"):
+                recommendations.append({
+                    "priority": "critical",
+                    "category": "deprecated",
+                    "library": lib.get("name"),
+                    "message": f"Replace deprecated library '{lib.get('name')}'",
+                    "action": "Migrate to a modern, maintained alternative",
+                })
+
+    # Quantum-vulnerable libraries without PQC
+    if report.quantum_vulnerable_count > 0 and not report.has_pqc:
+        recommendations.append({
+            "priority": "high",
+            "category": "quantum",
+            "message": "Add post-quantum cryptography support",
+            "action": "Consider adding liboqs-python or AWS-LC for production PQC",
+        })
+
+        for lib in report.libraries:
+            if lib.get("quantum_risk") in ["high", "critical"]:
+                recommendations.append({
+                    "priority": "medium",
+                    "category": "quantum",
+                    "library": lib.get("name"),
+                    "message": f"Plan migration for '{lib.get('name')}' (quantum-vulnerable)",
+                    "action": "Replace with hybrid or PQC alternative by 2030",
+                })
+
+    # Already has PQC - good!
+    if report.has_pqc:
+        recommendations.append({
+            "priority": "info",
+            "category": "quantum",
+            "message": "Post-quantum cryptography detected",
+            "action": "Continue expanding PQC coverage to all sensitive contexts",
+        })
+
+    return recommendations
+
+
+@router.get("/crypto-inventory/trends")
+async def get_crypto_inventory_trends(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    days: int = Query(30, ge=7, le=365),
+):
+    """
+    Get crypto inventory trends over time.
+
+    Shows how quantum readiness, compliance, and library usage changes.
+    """
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # Daily aggregates
+    trends = []
+    current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    while current_date <= now:
+        next_date = current_date + timedelta(days=1)
+
+        # Get scans for this day
+        day_result = await db.execute(
+            select(CryptoInventoryReport).where(
+                and_(
+                    CryptoInventoryReport.scanned_at >= current_date,
+                    CryptoInventoryReport.scanned_at < next_date
+                )
+            )
+        )
+        day_scans = day_result.scalars().all()
+
+        if day_scans:
+            avg_qr = sum(s.quantum_readiness_score for s in day_scans) / len(day_scans)
+            blocked = sum(1 for s in day_scans if s.action == EnforcementAction.BLOCK)
+            with_pqc = sum(1 for s in day_scans if s.has_pqc)
+
+            trends.append({
+                "date": current_date.strftime("%Y-%m-%d"),
+                "scan_count": len(day_scans),
+                "avg_quantum_readiness": round(avg_qr, 1),
+                "blocked_count": blocked,
+                "with_pqc_count": with_pqc,
+            })
+
+        current_date = next_date
+
+    return {
+        "period_days": days,
+        "trends": trends,
+    }

@@ -1,0 +1,29 @@
+# CryptoServe pre-commit hooks
+# See https://pre-commit.com for more information
+
+- id: cryptoserve-gate
+  name: CryptoServe Crypto Policy Gate
+  description: Check staged files for cryptographic security issues
+  entry: python -m cryptoserve gate --staged
+  language: python
+  types_or: [python, javascript, ts, go, java, kotlin, c, c++, csharp, rust, ruby, php]
+  pass_filenames: false
+  additional_dependencies: ['cryptoserve', 'pyyaml']
+
+- id: cryptoserve-gate-strict
+  name: CryptoServe Crypto Policy Gate (Strict)
+  description: Check staged files with strict policy (blocks quantum-vulnerable)
+  entry: python -m cryptoserve gate --staged --policy strict
+  language: python
+  types_or: [python, javascript, ts, go, java, kotlin, c, c++, csharp, rust, ruby, php]
+  pass_filenames: false
+  additional_dependencies: ['cryptoserve', 'pyyaml']
+
+- id: cryptoserve-gate-warn
+  name: CryptoServe Crypto Policy Gate (Fail on Warnings)
+  description: Check staged files and fail on warnings too
+  entry: python -m cryptoserve gate --staged --fail-on warnings
+  language: python
+  types_or: [python, javascript, ts, go, java, kotlin, c, c++, csharp, rust, ruby, php]
+  pass_filenames: false
+  additional_dependencies: ['cryptoserve', 'pyyaml']

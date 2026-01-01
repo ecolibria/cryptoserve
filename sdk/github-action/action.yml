@@ -1,0 +1,124 @@
+name: 'CryptoServe Policy Gate'
+description: 'Scan code for cryptographic issues and enforce security policies'
+author: 'CryptoServe'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to scan (default: current directory)'
+    required: false
+    default: '.'
+  policy:
+    description: 'Policy preset: strict, standard, or permissive'
+    required: false
+    default: 'standard'
+  fail-on:
+    description: 'What triggers failure: violations or warnings'
+    required: false
+    default: 'violations'
+  format:
+    description: 'Output format: text, json, or sarif'
+    required: false
+    default: 'text'
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  upload-sarif:
+    description: 'Upload SARIF to GitHub Security tab (requires format: sarif)'
+    required: false
+    default: 'true'
+  include-deps:
+    description: 'Scan dependency files (package.json, requirements.txt, etc.)'
+    required: false
+    default: 'false'
+
+outputs:
+  passed:
+    description: 'Whether the gate check passed'
+    value: ${{ steps.gate.outputs.passed }}
+  violations:
+    description: 'Number of violations found'
+    value: ${{ steps.gate.outputs.violations }}
+  warnings:
+    description: 'Number of warnings found'
+    value: ${{ steps.gate.outputs.warnings }}
+  quantum-score:
+    description: 'Quantum readiness score (0-100)'
+    value: ${{ steps.gate.outputs.quantum_score }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install CryptoServe SDK
+      shell: bash
+      run: |
+        pip install --quiet cryptoserve pyyaml
+
+    - name: Run Gate Check
+      id: gate
+      shell: bash
+      run: |
+        set +e  # Don't exit on error
+
+        # Build command
+        CMD="python -m cryptoserve gate ${{ inputs.path }}"
+        CMD="$CMD --policy ${{ inputs.policy }}"
+        CMD="$CMD --fail-on ${{ inputs.fail-on }}"
+        if [ "${{ inputs.include-deps }}" = "true" ]; then
+          CMD="$CMD --include-deps"
+        fi
+
+        if [ "${{ inputs.format }}" = "sarif" ]; then
+          CMD="$CMD --format sarif"
+          OUTPUT=$(eval $CMD)
+          EXIT_CODE=$?
+          echo "$OUTPUT" > cryptoserve-results.sarif
+
+          # Extract summary for outputs
+          VIOLATIONS=$(echo "$OUTPUT" | jq -r '.runs[0].results | map(select(.level == "error")) | length // 0')
+          WARNINGS=$(echo "$OUTPUT" | jq -r '.runs[0].results | map(select(.level == "warning")) | length // 0')
+        else
+          CMD="$CMD --format json"
+          OUTPUT=$(eval $CMD)
+          EXIT_CODE=$?
+
+          # Extract summary for outputs
+          VIOLATIONS=$(echo "$OUTPUT" | jq -r '.summary.violations // 0')
+          WARNINGS=$(echo "$OUTPUT" | jq -r '.summary.warnings // 0')
+          QUANTUM_SCORE=$(echo "$OUTPUT" | jq -r '.quantum_readiness_score // 0')
+        fi
+
+        # Set outputs
+        echo "passed=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+        echo "violations=$VIOLATIONS" >> $GITHUB_OUTPUT
+        echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
+        echo "quantum_score=$QUANTUM_SCORE" >> $GITHUB_OUTPUT
+
+        # Print human-readable output
+        if [ "${{ inputs.format }}" = "text" ]; then
+          TEXT_CMD="python -m cryptoserve gate ${{ inputs.path }} --policy ${{ inputs.policy }} --format text"
+          if [ "${{ inputs.include-deps }}" = "true" ]; then
+            TEXT_CMD="$TEXT_CMD --include-deps"
+          fi
+          eval $TEXT_CMD
+        else
+          echo "$OUTPUT" | jq .
+        fi
+
+        exit $EXIT_CODE
+
+    - name: Upload SARIF to GitHub Security
+      if: inputs.format == 'sarif' && inputs.upload-sarif == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: cryptoserve-results.sarif
+        category: cryptoserve

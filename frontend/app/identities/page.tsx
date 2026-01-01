@@ -295,7 +295,9 @@ plaintext = crypto.decrypt(ciphertext, context="${newIdentity.identity.allowed_c
                           <div className="flex items-center gap-2">
                             <p className="font-medium">{ctx.display_name}</p>
                             {ctx.quantum_resistant && (
-                              <Shield className="h-3.5 w-3.5 text-purple-600" title="Quantum Resistant" />
+                              <span title="Quantum Resistant">
+                                <Shield className="h-3.5 w-3.5 text-purple-600" />
+                              </span>
                             )}
                           </div>
                           <p className="text-xs text-slate-500 mt-1">

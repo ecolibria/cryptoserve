@@ -1,0 +1,102 @@
+# CryptoServe Policy Gate - GitLab CI Template
+#
+# Include this template in your .gitlab-ci.yml:
+#
+#   include:
+#     - remote: 'https://raw.githubusercontent.com/your-org/crypto-serve/main/sdk/gitlab-ci/.gitlab-ci-template.yml'
+#
+# Or copy the job definitions directly.
+
+# Base job template
+.cryptoserve-gate-base:
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet cryptoserve pyyaml
+  variables:
+    CRYPTOSERVE_POLICY: "standard"
+    CRYPTOSERVE_FAIL_ON: "violations"
+    CRYPTOSERVE_PATH: "."
+    CRYPTOSERVE_INCLUDE_DEPS: "false"
+
+# Standard gate check - runs on merge requests
+cryptoserve-gate:
+  extends: .cryptoserve-gate-base
+  stage: test
+  script:
+    - |
+      CMD="python -m cryptoserve gate ${CRYPTOSERVE_PATH}"
+      CMD="$CMD --policy ${CRYPTOSERVE_POLICY}"
+      CMD="$CMD --fail-on ${CRYPTOSERVE_FAIL_ON}"
+      CMD="$CMD --format text"
+      if [ "${CRYPTOSERVE_INCLUDE_DEPS}" = "true" ]; then
+        CMD="$CMD --include-deps"
+      fi
+      eval $CMD
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# JSON output for parsing
+cryptoserve-gate-json:
+  extends: .cryptoserve-gate-base
+  stage: test
+  script:
+    - |
+      CMD="python -m cryptoserve gate ${CRYPTOSERVE_PATH}"
+      CMD="$CMD --policy ${CRYPTOSERVE_POLICY}"
+      CMD="$CMD --fail-on ${CRYPTOSERVE_FAIL_ON}"
+      CMD="$CMD --format json"
+      if [ "${CRYPTOSERVE_INCLUDE_DEPS}" = "true" ]; then
+        CMD="$CMD --include-deps"
+      fi
+      eval $CMD | tee cryptoserve-report.json
+  artifacts:
+    paths:
+      - cryptoserve-report.json
+    reports:
+      codequality: cryptoserve-report.json
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Strict mode - for security-critical repositories
+cryptoserve-gate-strict:
+  extends: .cryptoserve-gate-base
+  stage: test
+  variables:
+    CRYPTOSERVE_POLICY: "strict"
+    CRYPTOSERVE_FAIL_ON: "violations"
+  script:
+    - |
+      CMD="python -m cryptoserve gate ${CRYPTOSERVE_PATH}"
+      CMD="$CMD --policy strict"
+      CMD="$CMD --fail-on violations"
+      CMD="$CMD --format text"
+      if [ "${CRYPTOSERVE_INCLUDE_DEPS}" = "true" ]; then
+        CMD="$CMD --include-deps"
+      fi
+      eval $CMD
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# SAST integration (GitLab Ultimate)
+cryptoserve-sast:
+  extends: .cryptoserve-gate-base
+  stage: test
+  script:
+    - |
+      CMD="python -m cryptoserve gate ${CRYPTOSERVE_PATH}"
+      CMD="$CMD --policy ${CRYPTOSERVE_POLICY}"
+      CMD="$CMD --format sarif"
+      if [ "${CRYPTOSERVE_INCLUDE_DEPS}" = "true" ]; then
+        CMD="$CMD --include-deps"
+      fi
+      eval $CMD | tee gl-sast-report.json
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

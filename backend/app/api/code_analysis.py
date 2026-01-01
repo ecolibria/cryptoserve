@@ -378,3 +378,219 @@ async def generate_cbom(
         quantum_summary=result.cbom.quantum_summary,
         findings_summary=result.cbom.findings_summary,
     )
+
+
+class CBOMExportRequest(BaseModel):
+    """Request for CBOM export in various formats."""
+    code: str = Field(..., description="Source code to analyze")
+    language: str | None = Field(default=None, description="Language hint")
+    filename: str | None = Field(default=None, description="Optional filename")
+    format: str = Field(default="json", description="Export format: json, cyclonedx, spdx")
+    identity_name: str = Field(default="Code Scan", description="Application identity name")
+
+
+class PQCRecommendationRequest(BaseModel):
+    """Request for PQC migration recommendations."""
+    code: str = Field(..., description="Source code to analyze")
+    language: str | None = Field(default=None, description="Language hint")
+    data_profile: str | None = Field(
+        default=None,
+        description="Data sensitivity profile: healthcare, national_security, financial, general, short_lived"
+    )
+
+
+@router.post("/cbom/export")
+async def export_cbom(
+    data: CBOMExportRequest,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
+):
+    """Export CBOM in various formats.
+
+    Supports:
+    - json: Native CBOM format with full crypto details
+    - cyclonedx: CycloneDX 1.5 SBOM format with crypto extensions
+    - spdx: SPDX 2.3 format with CBOM annotations
+
+    These formats are suitable for:
+    - Integration with SBOM tools
+    - Compliance reporting
+    - Security audits
+    """
+    from app.core.cbom import cbom_service
+    from app.core.crypto_inventory import (
+        CryptoInventory,
+        DetectedLibrary,
+        DetectedAlgorithm,
+        InventorySource,
+        QuantumRisk,
+    )
+
+    language = None
+    if data.language:
+        try:
+            language = Language(data.language.lower())
+        except ValueError:
+            pass
+
+    try:
+        result = code_scanner.scan_code(
+            code=data.code,
+            language=language,
+            filename=data.filename,
+        )
+    except CodeScannerError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Convert code scan result to CryptoInventory for CBOM generation
+    libraries = []
+    lib_map = {}
+    for lib_data in result.cbom.libraries:
+        lib_name = lib_data.get("name", "unknown")
+        if lib_name not in lib_map:
+            quantum_risk_str = lib_data.get("quantum_risk", "none")
+            lib_map[lib_name] = DetectedLibrary(
+                name=lib_name,
+                version=lib_data.get("version"),
+                category=lib_data.get("category", "general"),
+                algorithms=lib_data.get("algorithms", []),
+                quantum_risk=QuantumRisk(quantum_risk_str) if quantum_risk_str else QuantumRisk.NONE,
+                source=InventorySource.CODE_SCAN,
+                is_deprecated=lib_data.get("is_deprecated", False),
+            )
+            libraries.append(lib_map[lib_name])
+
+    algorithms = []
+    for usage in result.usages:
+        algorithms.append(DetectedAlgorithm(
+            name=usage.algorithm,
+            category=usage.category,
+            library=usage.library,
+            quantum_risk=usage.quantum_risk,
+            is_weak=usage.is_weak,
+            source=InventorySource.CODE_SCAN,
+            weakness_reason=usage.weakness_reason,
+        ))
+
+    inventory = CryptoInventory(
+        identity_id=f"code-scan-{result.cbom.scan_timestamp}",
+        identity_name=data.identity_name,
+        scan_timestamp=result.cbom.scan_timestamp,
+        libraries=libraries,
+        algorithms=algorithms,
+        secrets_detected=[],
+        quantum_summary=result.cbom.quantum_summary,
+        risk_summary={
+            "deprecated_libraries": sum(1 for lib in libraries if lib.is_deprecated),
+            "weak_algorithms": sum(1 for algo in algorithms if algo.is_weak),
+        },
+        source=InventorySource.CODE_SCAN,
+    )
+
+    # Generate full CBOM
+    cbom = cbom_service.generate_cbom(
+        inventory,
+        scan_source="code_scanner",
+    )
+
+    # Export in requested format
+    if data.format == "cyclonedx":
+        return cbom_service.to_cyclonedx(cbom)
+    elif data.format == "spdx":
+        return cbom_service.to_spdx(cbom)
+    else:
+        return cbom_service.to_json(cbom)
+
+
+@router.post("/recommendations")
+async def get_pqc_recommendations(
+    data: PQCRecommendationRequest,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
+):
+    """Get PQC migration recommendations based on code analysis.
+
+    Returns:
+    - SNDL (Store Now, Decrypt Later) risk assessment
+    - KEM and signature algorithm recommendations
+    - Migration plan with priority steps
+    - Quantum readiness score
+
+    Data profiles affect urgency calculations:
+    - healthcare: 100 year protection (HIPAA records)
+    - national_security: 75 year protection
+    - financial: 25 year protection (PCI-DSS)
+    - general: 10 year protection
+    - short_lived: 1 year protection (session tokens)
+    """
+    from app.core.pqc_recommendations import pqc_recommendation_service
+    from app.core.crypto_inventory import (
+        CryptoInventory,
+        DetectedLibrary,
+        DetectedAlgorithm,
+        InventorySource,
+        QuantumRisk,
+    )
+
+    language = None
+    if data.language:
+        try:
+            language = Language(data.language.lower())
+        except ValueError:
+            pass
+
+    try:
+        result = code_scanner.scan_code(code=data.code, language=language)
+    except CodeScannerError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Convert to CryptoInventory
+    libraries = []
+    lib_map = {}
+    for lib_data in result.cbom.libraries:
+        lib_name = lib_data.get("name", "unknown")
+        if lib_name not in lib_map:
+            quantum_risk_str = lib_data.get("quantum_risk", "none")
+            lib_map[lib_name] = DetectedLibrary(
+                name=lib_name,
+                version=lib_data.get("version"),
+                category=lib_data.get("category", "general"),
+                algorithms=lib_data.get("algorithms", []),
+                quantum_risk=QuantumRisk(quantum_risk_str) if quantum_risk_str else QuantumRisk.NONE,
+                source=InventorySource.CODE_SCAN,
+                is_deprecated=lib_data.get("is_deprecated", False),
+            )
+            libraries.append(lib_map[lib_name])
+
+    algorithms = []
+    for usage in result.usages:
+        algorithms.append(DetectedAlgorithm(
+            name=usage.algorithm,
+            category=usage.category,
+            library=usage.library,
+            quantum_risk=usage.quantum_risk,
+            is_weak=usage.is_weak,
+            source=InventorySource.CODE_SCAN,
+            weakness_reason=usage.weakness_reason,
+        ))
+
+    inventory = CryptoInventory(
+        identity_id="code-scan",
+        identity_name="Code Scan",
+        scan_timestamp=result.cbom.scan_timestamp,
+        libraries=libraries,
+        algorithms=algorithms,
+        secrets_detected=[],
+        quantum_summary=result.cbom.quantum_summary,
+        risk_summary={
+            "deprecated_libraries": sum(1 for lib in libraries if lib.is_deprecated),
+            "weak_algorithms": sum(1 for algo in algorithms if algo.is_weak),
+        },
+        source=InventorySource.CODE_SCAN,
+    )
+
+    # Get recommendations
+    recommendations = pqc_recommendation_service.recommend(
+        inventory,
+        data_profile=data.data_profile,
+    )
+
+    return recommendations.to_dict()

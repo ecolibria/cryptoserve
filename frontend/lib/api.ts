@@ -222,6 +222,66 @@ export interface IdentityCreateResponse {
   sdk_download_url: string;
 }
 
+// New Application model (replaces Identity)
+export interface Application {
+  id: string;
+  name: string;
+  description: string | null;
+  team: string;
+  environment: string;
+  allowed_contexts: string[];
+  status: "active" | "expired" | "revoked";
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+  key_created_at: string;
+  has_refresh_token: boolean;
+  refresh_token_expires_at: string | null;
+}
+
+export interface ApplicationCreateResponse {
+  application: Application;
+  access_token: string;
+  refresh_token: string;
+  setup_instructions: {
+    step1: { title: string; command: string; note: string };
+    step2: { title: string; command: string };
+    step3: { title: string; code: string };
+  };
+}
+
+export interface TokenInfo {
+  access_token_algorithm: string;
+  access_token_lifetime_seconds: number;
+  refresh_token_active: boolean;
+  refresh_token_expires_at: string | null;
+  refresh_token_rotated_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface TokenRotateResponse {
+  refresh_token: string;
+  expires_at: string;
+  message: string;
+}
+
+export interface TokenRefreshResponse {
+  access_token: string;
+  expires_at: string;
+  token_type: string;
+}
+
+export interface TokenVerifyResponse {
+  valid: boolean;
+  error?: string;
+  app_id?: string;
+  app_name?: string;
+  team?: string;
+  environment?: string;
+  contexts?: string[];
+  expires_at?: string;
+}
+
 export interface AuditLog {
   id: string;
   timestamp: string;
@@ -243,6 +303,42 @@ export interface AuditStats {
   failed_operations: number;
   operations_by_context: Record<string, number>;
   operations_by_identity: Record<string, number>;
+}
+
+// Dashboard Metrics Types
+export interface AlgorithmUsage {
+  algorithm: string;
+  count: number;
+  category: string;
+  quantum_safe: boolean;
+}
+
+export interface SecurityPosture {
+  overall_score: number;
+  quantum_readiness: number;
+  deprecated_usage: number;
+  weak_algorithms: number;
+  recommendations: string[];
+}
+
+export interface RecentActivity {
+  total_operations_24h: number;
+  successful_24h: number;
+  failed_24h: number;
+  most_used_context: string | null;
+  most_used_algorithm: string | null;
+}
+
+export interface DashboardMetrics {
+  security_posture: SecurityPosture;
+  recent_activity: RecentActivity;
+  algorithm_distribution: AlgorithmUsage[];
+  quantum_vulnerable_count: number;
+  pqc_ready_count: number;
+  active_identities: number;
+  total_contexts: number;
+  last_scan_date: string | null;
+  warnings: string[];
 }
 
 // Admin Types
@@ -424,6 +520,46 @@ export interface SupportedFormatsResponse {
   formats: { filename: string; ecosystem: string; language: string }[];
 }
 
+// PQC Recommendations Types
+export interface SNDLAssessment {
+  vulnerable: boolean;
+  protection_years_required: number;
+  estimated_quantum_years: number;
+  risk_window_years: number;
+  risk_level: string;
+  explanation: string;
+}
+
+export interface AlgorithmRecommendation {
+  current_algorithm: string;
+  recommended_algorithm: string;
+  fips_standard: string;
+  security_level: string;
+  rationale: string;
+  migration_complexity: string;
+  library_support: string[];
+}
+
+export interface MigrationStep {
+  priority: number;
+  phase: string;
+  action: string;
+  algorithms_affected: string[];
+  estimated_effort: string;
+  dependencies: string[];
+}
+
+export interface PQCRecommendationResponse {
+  sndl_assessment: SNDLAssessment;
+  kem_recommendations: AlgorithmRecommendation[];
+  signature_recommendations: AlgorithmRecommendation[];
+  migration_plan: MigrationStep[];
+  overall_urgency: string;
+  quantum_readiness_score: number;
+  key_findings: string[];
+  next_steps: string[];
+}
+
 // Certificate Types
 export interface CSRResponse {
   csr_pem: string;
@@ -442,18 +578,16 @@ export interface CertificateInfo {
   serial_number: string;
   not_before: string;
   not_after: string;
-  is_expired: boolean;
-  is_self_signed: boolean;
+  days_until_expiry: number;
   is_ca: boolean;
-  version: number;
   signature_algorithm: string;
-  public_key_algorithm: string;
-  public_key_size: number;
+  key_type: string;
+  key_size: number | null;
   key_usage: string[];
   extended_key_usage: string[];
-  san_domains: string[];
-  san_ips: string[];
-  fingerprints: { sha256: string; sha1: string };
+  san: string[];
+  fingerprint_sha256: string;
+  fingerprint_sha1: string;
 }
 
 export interface CertificateVerifyResponse {
@@ -874,7 +1008,7 @@ export const api = {
   getAlgorithm: (name: string) =>
     fetchApi(`/api/algorithms/${encodeURIComponent(name)}`) as Promise<AlgorithmDetail>,
 
-  // Identities
+  // Identities (legacy - kept for backward compatibility)
   listIdentities: () => fetchApi("/api/identities") as Promise<Identity[]>,
   createIdentity: (data: {
     name: string;
@@ -890,6 +1024,61 @@ export const api = {
     }) as Promise<IdentityCreateResponse>,
   revokeIdentity: (id: string) =>
     fetchApi(`/api/identities/${id}`, { method: "DELETE" }),
+
+  // Applications (new - replaces Identities)
+  listApplications: () =>
+    fetchApi("/api/v1/applications") as Promise<Application[]>,
+  createApplication: (data: {
+    name: string;
+    description?: string;
+    team: string;
+    environment: string;
+    allowed_contexts: string[];
+    expires_in_days?: number;
+  }) =>
+    fetchApi("/api/v1/applications", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<ApplicationCreateResponse>,
+  getApplication: (id: string) =>
+    fetchApi(`/api/v1/applications/${id}`) as Promise<Application>,
+  updateApplication: (id: string, data: {
+    name?: string;
+    description?: string;
+    allowed_contexts?: string[];
+  }) =>
+    fetchApi(`/api/v1/applications/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }) as Promise<Application>,
+  deleteApplication: (id: string) =>
+    fetchApi(`/api/v1/applications/${id}`, { method: "DELETE" }),
+
+  // Application Token Management
+  getTokenInfo: (appId: string) =>
+    fetchApi(`/api/v1/applications/${appId}/tokens`) as Promise<TokenInfo>,
+  rotateTokens: (appId: string) =>
+    fetchApi(`/api/v1/applications/${appId}/tokens/rotate`, {
+      method: "POST",
+    }) as Promise<TokenRotateResponse>,
+  revokeTokens: (appId: string) =>
+    fetchApi(`/api/v1/applications/${appId}/tokens/revoke`, {
+      method: "POST",
+    }),
+
+  // Token Refresh (for SDK)
+  refreshAccessToken: (refreshToken: string) =>
+    fetchApi("/api/v1/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }) as Promise<TokenRefreshResponse>,
+
+  // Token Verification (for debugging)
+  verifyToken: (accessToken: string) =>
+    fetchApi("/api/v1/auth/verify", {
+      method: "POST",
+      body: JSON.stringify({ access_token: accessToken }),
+    }) as Promise<TokenVerifyResponse>,
 
   // Audit
   listAuditLogs: (params?: {
@@ -907,6 +1096,10 @@ export const api = {
     return fetchApi(`/api/audit?${query}`) as Promise<AuditLog[]>;
   },
   getAuditStats: () => fetchApi("/api/audit/stats") as Promise<AuditStats>,
+
+  // Dashboard Metrics
+  getDashboardMetrics: () =>
+    fetchApi("/api/v1/dashboard/metrics") as Promise<DashboardMetrics>,
 
   // Auth
   getLoginUrl: () => `${API_URL}/auth/github`,
@@ -1187,6 +1380,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }) as Promise<CBOMResponse>,
+
+  exportCBOM: (data: {
+    code: string;
+    language?: string;
+    filename?: string;
+    format: "json" | "cyclonedx" | "spdx";
+    identity_name?: string;
+  }) =>
+    fetchApi("/api/v1/code/cbom/export", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<Record<string, unknown>>,
+
+  getPQCRecommendations: (data: {
+    code: string;
+    language?: string;
+    data_profile?: "healthcare" | "national_security" | "financial" | "general" | "short_lived";
+  }) =>
+    fetchApi("/api/v1/code/recommendations", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<PQCRecommendationResponse>,
 
   getSupportedLanguages: () =>
     fetchApi("/api/v1/code/languages") as Promise<SupportedLanguage[]>,

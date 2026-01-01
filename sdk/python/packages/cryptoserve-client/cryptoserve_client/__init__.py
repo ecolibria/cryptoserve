@@ -13,6 +13,7 @@ from cryptoserve_client.errors import (
     ContextNotFoundError,
     ServerError,
     RateLimitError,
+    TokenRefreshError,
 )
 
 __version__ = "0.1.0"
@@ -25,6 +26,7 @@ __all__ = [
     "ContextNotFoundError",
     "ServerError",
     "RateLimitError",
+    "TokenRefreshError",
 ]
 
 # Async client available if httpx is installed
