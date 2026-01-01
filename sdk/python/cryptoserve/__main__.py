@@ -2,12 +2,12 @@
 CryptoServe CLI - Run with: python -m cryptoserve
 
 Commands:
-    configure - Configure SDK with token
+    login     - Login to CryptoServe (opens browser)
+    promote   - Check promotion readiness or request promotion
     status    - Show current configuration status
+    configure - Configure SDK with token (for encryption operations)
     verify    - Verify SDK is working correctly
     info      - Show current identity information
-    promote   - Check promotion readiness or request promotion
-                Uses configured app by default; use --app <id> for specific app
     scan      - Scan for crypto libraries and show inventory
     cbom      - Generate Cryptographic Bill of Materials
     pqc       - Get PQC migration recommendations
@@ -16,11 +16,10 @@ Commands:
     wizard    - Interactive context selection wizard
 
 Examples:
-    cryptoserve configure --token <token>     # Set up credentials
-    cryptoserve status                        # Check configuration
-    cryptoserve promote                       # Check promotion readiness
-    cryptoserve promote --app myapp_123       # Check specific app
-    cryptoserve promote --confirm             # Promote if ready
+    cryptoserve login                              # Login via browser
+    cryptoserve promote my-backend-app             # Check promotion readiness
+    cryptoserve promote my-backend-app --confirm   # Promote to production
+    cryptoserve promote my-backend-app --expedite  # Request expedited approval
 """
 
 import os
@@ -31,8 +30,155 @@ import json
 def print_header():
     """Print CLI header."""
     print("\n" + "=" * 60)
-    print("  🔐 CryptoServe CLI")
+    print("  CryptoServe CLI")
     print("=" * 60 + "\n")
+
+
+# Credentials storage location
+def _get_credentials_path():
+    """Get path to stored credentials."""
+    home = os.path.expanduser("~")
+    creds_dir = os.path.join(home, ".cryptoserve")
+    os.makedirs(creds_dir, exist_ok=True)
+    return os.path.join(creds_dir, "credentials.json")
+
+
+def _load_credentials():
+    """Load stored credentials."""
+    path = _get_credentials_path()
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_credentials(creds: dict):
+    """Save credentials."""
+    path = _get_credentials_path()
+    with open(path, "w") as f:
+        json.dump(creds, f, indent=2)
+    os.chmod(path, 0o600)  # Restrict permissions
+
+
+def _get_session_cookie():
+    """Get session cookie for authenticated requests."""
+    creds = _load_credentials()
+    return creds.get("session_cookie")
+
+
+def _get_cli_server_url():
+    """Get server URL for CLI commands."""
+    creds = _load_credentials()
+    return creds.get("server_url", os.getenv("CRYPTOSERVE_SERVER_URL", "http://localhost:8000"))
+
+
+def cmd_login():
+    """Login to CryptoServe via browser."""
+    import webbrowser
+    import http.server
+    import urllib.parse
+    import threading
+    import time
+
+    # Parse arguments
+    server_url = "http://localhost:8000"
+    for i, arg in enumerate(sys.argv[2:], 2):
+        if arg in ["--server", "-s"] and i + 1 < len(sys.argv):
+            server_url = sys.argv[i + 1]
+
+    print("CryptoServe Login")
+    print("=" * 40)
+    print()
+
+    # We'll use a simple callback server to capture the auth
+    callback_port = 9876
+    auth_result = {"success": False, "cookie": None, "user": None}
+
+    class CallbackHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass  # Suppress logging
+
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+
+            if "session" in params:
+                auth_result["success"] = True
+                auth_result["cookie"] = params["session"][0]
+                auth_result["user"] = params.get("user", [""])[0]
+
+                self.send_response(200)
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"""
+                    <html><body style="font-family: system-ui; text-align: center; padding: 50px;">
+                    <h1>Login Successful!</h1>
+                    <p>You can close this window and return to the terminal.</p>
+                    </body></html>
+                """)
+            else:
+                self.send_response(400)
+                self.end_headers()
+
+    # Start callback server
+    try:
+        httpd = http.server.HTTPServer(("127.0.0.1", callback_port), CallbackHandler)
+    except OSError:
+        print(f"Error: Port {callback_port} is in use. Please try again.")
+        return 1
+
+    def run_server():
+        httpd.handle_request()  # Handle single request then stop
+
+    server_thread = threading.Thread(target=run_server)
+    server_thread.start()
+
+    # Open browser with login URL
+    login_url = f"{server_url}/auth/github?cli_callback=http://127.0.0.1:{callback_port}"
+    print(f"Opening browser for authentication...")
+    print(f"If browser doesn't open, visit: {login_url}")
+    print()
+
+    webbrowser.open(login_url)
+
+    # Wait for callback
+    print("Waiting for authentication...")
+    server_thread.join(timeout=120)  # 2 minute timeout
+
+    if auth_result["success"]:
+        # Save credentials
+        creds = _load_credentials()
+        creds["session_cookie"] = auth_result["cookie"]
+        creds["server_url"] = server_url
+        creds["user"] = auth_result["user"]
+        _save_credentials(creds)
+
+        print(f"Logged in as: {auth_result['user']}")
+        print()
+        print("You can now use CLI commands like:")
+        print("  cryptoserve promote my-app")
+        print("  cryptoserve promote my-app --confirm")
+        return 0
+    else:
+        print("Login timed out or was cancelled.")
+        print()
+        print("Alternative: Set session cookie manually:")
+        print("  cryptoserve login --cookie <session_cookie>")
+        return 1
+
+
+def cmd_logout():
+    """Logout from CryptoServe."""
+    path = _get_credentials_path()
+    if os.path.exists(path):
+        os.remove(path)
+        print("Logged out successfully.")
+    else:
+        print("Not logged in.")
+    return 0
 
 
 def cmd_verify():
@@ -606,13 +752,20 @@ def _cmd_certs_verify():
 
 
 def cmd_promote():
-    """Check promotion readiness or request promotion."""
-    from cryptoserve._identity import get_server_url, get_token, IDENTITY
+    """Check promotion readiness or request promotion.
 
-    # Parse arguments
+    Usage:
+        cryptoserve promote <app-name>              # Check promotion readiness
+        cryptoserve promote <app-name> --confirm    # Promote to production
+        cryptoserve promote <app-name> --expedite   # Request expedited approval
+        cryptoserve promote <app-name> --to staging # Promote to specific environment
+
+    Requires login first: cryptoserve login
+    """
+    # Parse arguments - first positional arg is app name
     target_env = "production"
     expedite = False
-    app_id = None
+    app_name = None
     check_only = True  # Default is to check readiness
 
     i = 2
@@ -622,9 +775,6 @@ def cmd_promote():
         if arg in ["--to", "-t"] and i + 1 < len(sys.argv):
             target_env = sys.argv[i + 1]
             i += 2
-        elif arg in ["--app", "-a"] and i + 1 < len(sys.argv):
-            app_id = sys.argv[i + 1]
-            i += 2
         elif arg in ["--expedite", "-e"]:
             expedite = True
             check_only = False
@@ -632,44 +782,92 @@ def cmd_promote():
         elif arg == "--confirm":
             check_only = False
             i += 1
-        elif arg == "status":
-            check_only = True
+        elif arg.startswith("-"):
+            print(f"Unknown option: {arg}")
+            return 1
+        elif app_name is None:
+            # First positional argument is the app name
+            app_name = arg
             i += 1
         else:
             i += 1
 
-    # Get app ID from identity if not specified
-    if not app_id:
-        app_id = IDENTITY.get("identity_id") or IDENTITY.get("app_id")
-
-    if not app_id:
-        print("Error: No application configured.")
-        print("Run 'cryptoserve configure --token <token>' first, or specify --app <app_id>")
+    # Check if app name provided
+    if not app_name:
+        print("Usage: cryptoserve promote <app-name> [options]")
+        print()
+        print("Examples:")
+        print("  cryptoserve promote my-backend-app              # Check readiness")
+        print("  cryptoserve promote my-backend-app --confirm    # Promote if ready")
+        print("  cryptoserve promote my-backend-app --expedite   # Request expedited")
+        print("  cryptoserve promote my-backend-app --to staging # Target environment")
+        print()
+        print("Requires login first: cryptoserve login")
         return 1
 
-    server_url = get_server_url()
-    token = get_token()
+    # Check if logged in (use session-based auth, not SDK token)
+    session_cookie = _get_session_cookie()
+    server_url = _get_cli_server_url()
 
-    if not token:
-        print("Error: Not authenticated. Run 'cryptoserve configure' first.")
+    if not session_cookie:
+        print("Not logged in. Please login first:")
+        print()
+        print("  cryptoserve login")
+        print()
         return 1
 
     import requests
 
     # Check promotion readiness
-    print(f"\nChecking promotion readiness for: {IDENTITY.get('name', app_id)}")
+    print(f"\nChecking promotion readiness for: {app_name}")
     print("=" * 60)
 
+    # Use session cookie for authentication (CLI auth, not SDK auth)
+    cookies = {"session": session_cookie}
+
     try:
+        # Look up app by name first
+        response = requests.get(
+            f"{server_url}/api/v1/applications",
+            params={"name": app_name},
+            cookies=cookies,
+            timeout=30,
+        )
+
+        if response.status_code == 401:
+            print("\nSession expired. Please login again:")
+            print("  cryptoserve login")
+            return 1
+
+        response.raise_for_status()
+        apps = response.json()
+
+        # Find matching app
+        app = None
+        for a in apps:
+            if a.get("name") == app_name or a.get("id") == app_name:
+                app = a
+                break
+
+        if not app:
+            print(f"\nError: Application not found: {app_name}")
+            print("\nYour applications:")
+            for a in apps[:5]:
+                print(f"  - {a.get('name')} ({a.get('environment')})")
+            return 1
+
+        app_id = app["id"]
+
+        # Now get promotion readiness
         response = requests.get(
             f"{server_url}/api/v1/applications/{app_id}/promotion",
             params={"target": target_env},
-            headers={"Authorization": f"Bearer {token}"},
+            cookies=cookies,
             timeout=30,
         )
 
         if response.status_code == 404:
-            print(f"\nError: Application not found: {app_id}")
+            print(f"\nError: Application not found: {app_name}")
             return 1
 
         if response.status_code == 400:
@@ -742,10 +940,10 @@ def cmd_promote():
 
         if check_only:
             print("\nTo promote, run:")
-            print(f"  cryptoserve promote --to {target_env} --confirm")
+            print(f"  cryptoserve promote {app_name} --confirm")
         else:
             # Proceed with promotion
-            return _do_promotion(server_url, token, app_id, target_env)
+            return _do_promotion(server_url, cookies, app_id, target_env)
 
     else:
         # Not ready
@@ -764,7 +962,7 @@ def cmd_promote():
         print("  [2] Request expedited approval (requires justification)")
 
         if expedite:
-            return _request_expedited(server_url, token, app_id)
+            return _request_expedited(server_url, cookies, app_id)
         elif not check_only:
             print("\nThresholds not met. Use --expedite to request expedited approval.")
             return 1
@@ -772,7 +970,7 @@ def cmd_promote():
     return 0
 
 
-def _do_promotion(server_url: str, token: str, app_id: str, target_env: str) -> int:
+def _do_promotion(server_url: str, cookies: dict, app_id: str, target_env: str) -> int:
     """Execute the actual promotion."""
     import requests
 
@@ -782,7 +980,7 @@ def _do_promotion(server_url: str, token: str, app_id: str, target_env: str) -> 
         response = requests.post(
             f"{server_url}/api/v1/applications/{app_id}/promotion",
             json={"target_environment": target_env},
-            headers={"Authorization": f"Bearer {token}"},
+            cookies=cookies,
             timeout=30,
         )
 
@@ -802,7 +1000,7 @@ def _do_promotion(server_url: str, token: str, app_id: str, target_env: str) -> 
         return 1
 
 
-def _request_expedited(server_url: str, token: str, app_id: str) -> int:
+def _request_expedited(server_url: str, cookies: dict, app_id: str) -> int:
     """Request expedited promotion approval."""
     import requests
 
@@ -843,7 +1041,7 @@ def _request_expedited(server_url: str, token: str, app_id: str) -> int:
                 "priority": priority,
                 "justification": justification,
             },
-            headers={"Authorization": f"Bearer {token}"},
+            cookies=cookies,
             timeout=30,
         )
 
@@ -1299,6 +1497,24 @@ def cmd_help():
     print(__doc__)
     print("Usage: python -m cryptoserve <command>\n")
     print("Commands:")
+    print()
+    print("  AUTHENTICATION")
+    print("  login     Login to CryptoServe (opens browser)")
+    print("            Options: --server <url>")
+    print("  logout    Logout and clear stored credentials")
+    print()
+    print("  APP MANAGEMENT (requires login)")
+    print("  promote   Check promotion readiness or request promotion")
+    print("            Usage: cryptoserve promote <app-name> [options]")
+    print("            Options: --to <environment> (default: production)")
+    print("                     --confirm (proceed with promotion)")
+    print("                     --expedite (request expedited approval)")
+    print("            Examples:")
+    print("              cryptoserve promote my-backend-app              # Check readiness")
+    print("              cryptoserve promote my-backend-app --confirm    # Promote if ready")
+    print("              cryptoserve promote my-backend-app --expedite   # Request expedited")
+    print()
+    print("  SDK CONFIGURATION (for encryption operations)")
     print("  configure Configure SDK with token")
     print("            Options: --token <token>")
     print("                     --refresh-token <refresh-token>")
@@ -1306,17 +1522,8 @@ def cmd_help():
     print("  status    Show current configuration status")
     print("  verify    Verify SDK is working correctly")
     print("  info      Show current identity information")
-    print("  promote   Check promotion readiness or request promotion")
-    print("            Uses configured app by default (from CRYPTOSERVE_TOKEN)")
-    print("            Options: --app <app_id> (specify application)")
-    print("                     --to <environment> (default: production)")
-    print("                     --confirm (proceed with promotion)")
-    print("                     --expedite (request expedited approval)")
-    print("            Examples:")
-    print("              cryptoserve promote                  # Check readiness (uses configured app)")
-    print("              cryptoserve promote --app myapp_123  # Check specific app")
-    print("              cryptoserve promote --confirm        # Promote if ready")
-    print("              cryptoserve promote --expedite       # Request expedited approval")
+    print()
+    print("  SECURITY TOOLS")
     print("  scan      Scan for crypto libraries")
     print("  cbom      Generate Cryptographic Bill of Materials")
     print("            Options: --format json|cyclonedx|spdx")
@@ -1329,12 +1536,16 @@ def cmd_help():
     print("                     --fail-on violations|warnings")
     print("                     --staged (scan git staged files only)")
     print("                     --include-deps (scan dependency files)")
+    print()
+    print("  CERTIFICATES")
     print("  certs     Certificate operations")
     print("            Sub-commands:")
     print("              generate-csr   Generate Certificate Signing Request")
     print("              self-signed    Generate self-signed certificate")
     print("              parse          Parse and display certificate info")
     print("              verify         Verify a certificate")
+    print()
+    print("  OTHER")
     print("  wizard    Interactive context selection wizard")
     print("  help      Show this help message")
     return 0
@@ -1349,6 +1560,8 @@ def main():
     command = sys.argv[1].lower()
 
     commands = {
+        "login": cmd_login,
+        "logout": cmd_logout,
         "configure": cmd_configure,
         "status": cmd_status,
         "wizard": cmd_wizard,
