@@ -6,6 +6,7 @@ Commands:
     status    - Show current configuration status
     verify    - Verify SDK is working correctly
     info      - Show current identity information
+    promote   - Check promotion readiness or request promotion
     scan      - Scan for crypto libraries and show inventory
     cbom      - Generate Cryptographic Bill of Materials
     pqc       - Get PQC migration recommendations
@@ -596,6 +597,280 @@ def _cmd_certs_verify():
         return 1
 
 
+def cmd_promote():
+    """Check promotion readiness or request promotion."""
+    from cryptoserve._identity import get_server_url, get_token, IDENTITY
+
+    # Parse arguments
+    target_env = "production"
+    expedite = False
+    app_id = None
+    check_only = True  # Default is to check readiness
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+
+        if arg in ["--to", "-t"] and i + 1 < len(sys.argv):
+            target_env = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--app", "-a"] and i + 1 < len(sys.argv):
+            app_id = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--expedite", "-e"]:
+            expedite = True
+            check_only = False
+            i += 1
+        elif arg == "--confirm":
+            check_only = False
+            i += 1
+        elif arg == "status":
+            check_only = True
+            i += 1
+        else:
+            i += 1
+
+    # Get app ID from identity if not specified
+    if not app_id:
+        app_id = IDENTITY.get("identity_id") or IDENTITY.get("app_id")
+
+    if not app_id:
+        print("Error: No application configured.")
+        print("Run 'cryptoserve configure --token <token>' first, or specify --app <app_id>")
+        return 1
+
+    server_url = get_server_url()
+    token = get_token()
+
+    if not token:
+        print("Error: Not authenticated. Run 'cryptoserve configure' first.")
+        return 1
+
+    import requests
+
+    # Check promotion readiness
+    print(f"\nChecking promotion readiness for: {IDENTITY.get('name', app_id)}")
+    print("=" * 60)
+
+    try:
+        response = requests.get(
+            f"{server_url}/api/v1/applications/{app_id}/promotion",
+            params={"target": target_env},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+
+        if response.status_code == 404:
+            print(f"\nError: Application not found: {app_id}")
+            return 1
+
+        if response.status_code == 400:
+            error = response.json().get("detail", "Unknown error")
+            print(f"\nError: {error}")
+            return 1
+
+        response.raise_for_status()
+        data = response.json()
+
+    except requests.exceptions.ConnectionError:
+        print(f"\nError: Cannot connect to server at {server_url}")
+        return 1
+    except requests.exceptions.RequestException as e:
+        print(f"\nError: {e}")
+        return 1
+
+    # Display readiness for each context
+    print()
+    for ctx in data.get("contexts", []):
+        context_name = ctx["context"]
+        tier = ctx["tier_display"]
+
+        print(f"Context: {context_name} ({tier})")
+
+        # Operations
+        ops_current = ctx["current_operations"]
+        ops_required = ctx["required_operations"]
+        ops_met = ctx["operations_met"]
+        ops_symbol = "✓" if ops_met else "✗"
+        ops_extra = "" if ops_met else f" (need {ops_required - ops_current} more)"
+        print(f"  {ops_symbol} Operations: {ops_current}/{ops_required}{ops_extra}")
+
+        # Time in dev
+        hours_current = ctx["current_hours"]
+        hours_required = ctx["required_hours"]
+        hours_met = ctx["hours_met"]
+        hours_symbol = "✓" if hours_met else "✗"
+        hours_extra = "" if hours_met else f" (need {hours_required - hours_current:.0f} more hours)"
+        print(f"  {hours_symbol} Time in dev: {hours_current:.0f} hours/{hours_required} hours{hours_extra}")
+
+        # Unique days
+        days_current = ctx["current_unique_days"]
+        days_required = ctx["required_days"]
+        days_met = ctx["days_met"]
+        days_symbol = "✓" if days_met else "✗"
+        days_extra = "" if days_met else f" (need {days_required - days_current} more)"
+        print(f"  {days_symbol} Unique days: {days_current}/{days_required}{days_extra}")
+
+        # Admin approval
+        if ctx["requires_approval"]:
+            print(f"  ⏳ Requires admin approval (Tier 3 policy)")
+
+        print()
+
+    # Summary
+    is_ready = data.get("is_ready", False)
+    requires_approval = data.get("requires_approval", False)
+    ready_count = data.get("ready_count", 0)
+    total_count = data.get("total_count", 0)
+
+    print("-" * 60)
+    print(f"Ready: {ready_count}/{total_count} contexts")
+
+    if is_ready:
+        if requires_approval:
+            print("\n✓ Thresholds met. Admin approval required for Tier 3 contexts.")
+        else:
+            print("\n✓ Ready for promotion!")
+
+        if check_only:
+            print("\nTo promote, run:")
+            print(f"  cryptoserve promote --to {target_env} --confirm")
+        else:
+            # Proceed with promotion
+            return _do_promotion(server_url, token, app_id, target_env)
+
+    else:
+        # Not ready
+        estimated = data.get("estimated_ready_at")
+        if estimated:
+            from datetime import datetime
+            try:
+                est_dt = datetime.fromisoformat(estimated.replace("Z", "+00:00"))
+                est_str = est_dt.strftime("%a, %b %d at %I:%M %p")
+                print(f"\nYou'll meet these thresholds by: {est_str}")
+            except Exception:
+                pass
+
+        print("\nOptions:")
+        print("  [1] Continue developing, promote when thresholds met")
+        print("  [2] Request expedited approval (requires justification)")
+
+        if expedite:
+            return _request_expedited(server_url, token, app_id)
+        elif not check_only:
+            print("\nThresholds not met. Use --expedite to request expedited approval.")
+            return 1
+
+    return 0
+
+
+def _do_promotion(server_url: str, token: str, app_id: str, target_env: str) -> int:
+    """Execute the actual promotion."""
+    import requests
+
+    print(f"\nPromoting to {target_env}...")
+
+    try:
+        response = requests.post(
+            f"{server_url}/api/v1/applications/{app_id}/promotion",
+            json={"target_environment": target_env},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+
+        if response.status_code == 400:
+            error = response.json().get("detail", "Promotion failed")
+            print(f"\n✗ {error}")
+            return 1
+
+        response.raise_for_status()
+        data = response.json()
+
+        print(f"\n✓ {data.get('message', 'Promotion successful!')}")
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(f"\nError: {e}")
+        return 1
+
+
+def _request_expedited(server_url: str, token: str, app_id: str) -> int:
+    """Request expedited promotion approval."""
+    import requests
+
+    print("\n" + "=" * 60)
+    print("  EXPEDITED PROMOTION REQUEST")
+    print("=" * 60)
+
+    # Get priority
+    print("\nPriority:")
+    print("  [1] Critical - Production down, security incident")
+    print("  [2] High - Customer-impacting, need today")
+    print("  [3] Normal - Business need, flexible timing")
+
+    try:
+        choice = input("\nSelect priority [1-3]: ").strip()
+        priority_map = {"1": "critical", "2": "high", "3": "normal"}
+        priority = priority_map.get(choice, "normal")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 1
+
+    # Get justification
+    print("\nJustification (required):")
+    try:
+        justification = input("> ").strip()
+        if not justification or len(justification) < 10:
+            print("Error: Justification must be at least 10 characters")
+            return 1
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 1
+
+    # Submit request
+    try:
+        response = requests.post(
+            f"{server_url}/api/v1/applications/{app_id}/promotion/expedite",
+            json={
+                "priority": priority,
+                "justification": justification,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+
+        if response.status_code == 400:
+            error = response.json().get("detail", "Request failed")
+            print(f"\n✗ {error}")
+            return 1
+
+        response.raise_for_status()
+        data = response.json()
+
+        print("\n" + "-" * 60)
+        print(f"✓ {data.get('message', 'Expedited request submitted')}")
+
+        if data.get("thresholds_bypassed"):
+            print("\nThresholds bypassed:")
+            for t in data["thresholds_bypassed"]:
+                print(f"  - {t}")
+
+        if data.get("next_steps"):
+            print("\nNext steps:")
+            for step in data["next_steps"]:
+                print(f"  - {step}")
+
+        request_id = data.get("request_id")
+        if request_id:
+            print(f"\nRequest ID: {request_id}")
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(f"\nError: {e}")
+        return 1
+
+
 def cmd_wizard():
     """Interactive context selection wizard."""
     print_header()
@@ -1023,6 +1298,11 @@ def cmd_help():
     print("  status    Show current configuration status")
     print("  verify    Verify SDK is working correctly")
     print("  info      Show current identity information")
+    print("  promote   Check promotion readiness or request promotion")
+    print("            Options: --to <environment> (default: production)")
+    print("                     --confirm (proceed with promotion)")
+    print("                     --expedite (request expedited approval)")
+    print("                     --app <app_id> (specify application)")
     print("  scan      Scan for crypto libraries")
     print("  cbom      Generate Cryptographic Bill of Materials")
     print("            Options: --format json|cyclonedx|spdx")
@@ -1060,6 +1340,7 @@ def main():
         "wizard": cmd_wizard,
         "verify": cmd_verify,
         "info": cmd_info,
+        "promote": cmd_promote,
         "scan": cmd_scan,
         "cbom": cmd_cbom,
         "pqc": cmd_pqc,

@@ -41,6 +41,7 @@ from app.api import (
     dependencies_router,
     inventory_router,
     dashboard_router,
+    promotion_router,
 )
 from app.api.sdk import router as sdk_router
 from app.api.admin import router as admin_router
@@ -550,6 +551,7 @@ app.include_router(certificates_router)
 app.include_router(dependencies_router)
 app.include_router(inventory_router)
 app.include_router(dashboard_router)
+app.include_router(promotion_router)
 app.include_router(sdk_router)
 app.include_router(algorithms_router)
 app.include_router(admin_router)

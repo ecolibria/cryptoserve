@@ -20,6 +20,7 @@ from app.api.certificates import router as certificates_router
 from app.api.dependencies import router as dependencies_router
 from app.api.inventory import router as inventory_router
 from app.api.dashboard import router as dashboard_router
+from app.api.promotion import router as promotion_router
 
 __all__ = [
     "identities_router",
@@ -42,4 +43,5 @@ __all__ = [
     "dependencies_router",
     "inventory_router",
     "dashboard_router",
+    "promotion_router",
 ]
