@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Key, Activity, CheckCircle, XCircle, Plus, Shield, AlertTriangle, Atom, TrendingUp, Clock, Settings, Rocket, Server, Code } from "lucide-react";
+import { Key, Activity, CheckCircle, XCircle, Plus, Shield, AlertTriangle, Atom, TrendingUp, Clock, Settings, Rocket, Server, Code, ArrowUpRight, Timer, Lock } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -329,6 +329,116 @@ export default function DashboardPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Promotion Readiness Section */}
+            {metrics?.promotion_metrics && metrics.promotion_metrics.total_dev_apps > 0 && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Rocket className="h-5 w-5" />
+                        Promotion Readiness
+                      </CardTitle>
+                      <CardDescription>
+                        Progress toward production deployment
+                      </CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={metrics.promotion_metrics.apps_ready_for_promotion > 0 ? "default" : "secondary"}>
+                        {metrics.promotion_metrics.apps_ready_for_promotion} ready
+                      </Badge>
+                      {metrics.promotion_metrics.apps_blocking > 0 && (
+                        <Badge variant="outline" className="text-yellow-600">
+                          {metrics.promotion_metrics.apps_blocking} pending
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {/* Tier Distribution Summary */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="p-3 bg-green-50 rounded-lg text-center">
+                        <p className="text-xs text-green-600 font-medium">Tier 1 (Low)</p>
+                        <p className="text-xl font-bold text-green-700">
+                          {metrics.promotion_metrics.tier_distribution?.tier_1 || 0}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-yellow-50 rounded-lg text-center">
+                        <p className="text-xs text-yellow-600 font-medium">Tier 2 (Medium)</p>
+                        <p className="text-xl font-bold text-yellow-700">
+                          {metrics.promotion_metrics.tier_distribution?.tier_2 || 0}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-red-50 rounded-lg text-center">
+                        <p className="text-xs text-red-600 font-medium">Tier 3 (High)</p>
+                        <p className="text-xl font-bold text-red-700">
+                          {metrics.promotion_metrics.tier_distribution?.tier_3 || 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Per-App Promotion Status */}
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Application Status</p>
+                      {metrics.promotion_metrics.app_statuses.map((app) => (
+                        <Link key={app.app_id} href={`/applications/${app.app_id}/promotion`}>
+                          <div className={`flex items-center justify-between p-3 border rounded-lg hover:bg-slate-50 transition-colors cursor-pointer ${
+                            app.is_ready ? "border-green-200 bg-green-50/30" : "border-yellow-200 bg-yellow-50/30"
+                          }`}>
+                            <div className="flex items-start gap-3">
+                              <div className="mt-0.5">
+                                {app.is_ready ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <Timer className="h-4 w-4 text-yellow-500" />
+                                )}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-medium">{app.app_name}</p>
+                                  <Badge variant="outline" className="text-xs">
+                                    {app.environment}
+                                  </Badge>
+                                  {app.requires_approval && (
+                                    <span title="Requires approval">
+                                      <Lock className="h-3 w-3 text-purple-500" />
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
+                                  <span>{app.ready_count}/{app.total_count} contexts ready</span>
+                                  {app.blocking_contexts.length > 0 && (
+                                    <span className="text-yellow-600">
+                                      Blocking: {app.blocking_contexts.slice(0, 2).join(", ")}
+                                      {app.blocking_contexts.length > 2 && ` +${app.blocking_contexts.length - 2}`}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              {app.is_ready ? (
+                                <Badge className="bg-green-100 text-green-800">Ready</Badge>
+                              ) : app.estimated_ready_at ? (
+                                <span className="text-xs text-slate-500">
+                                  Est: {new Date(app.estimated_ready_at).toLocaleDateString()}
+                                </span>
+                              ) : (
+                                <Badge variant="outline">In Progress</Badge>
+                              )}
+                              <ArrowUpRight className="h-4 w-4 text-slate-400 mt-1 ml-auto" />
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Stats cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

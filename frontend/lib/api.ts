@@ -329,6 +329,27 @@ export interface RecentActivity {
   most_used_algorithm: string | null;
 }
 
+// Promotion Metrics Types
+export interface AppPromotionStatus {
+  app_id: string;
+  app_name: string;
+  environment: string;
+  is_ready: boolean;
+  ready_count: number;
+  total_count: number;
+  blocking_contexts: string[];
+  estimated_ready_at: string | null;
+  requires_approval: boolean;
+}
+
+export interface PromotionMetrics {
+  apps_ready_for_promotion: number;
+  apps_blocking: number;
+  total_dev_apps: number;
+  tier_distribution: Record<string, number>;
+  app_statuses: AppPromotionStatus[];
+}
+
 export interface DashboardMetrics {
   security_posture: SecurityPosture;
   recent_activity: RecentActivity;
@@ -339,6 +360,7 @@ export interface DashboardMetrics {
   total_contexts: number;
   last_scan_date: string | null;
   warnings: string[];
+  promotion_metrics: PromotionMetrics | null;
 }
 
 // Admin Types

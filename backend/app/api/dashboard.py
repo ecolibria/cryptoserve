@@ -5,6 +5,7 @@ Provides crypto security metrics for the user dashboard:
 - Algorithm usage statistics
 - Security posture summary
 - Recent scan results
+- Promotion readiness metrics
 """
 
 from datetime import datetime, timezone, timedelta
@@ -16,8 +17,15 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User, Identity, AuditLog, CryptoInventoryReport
+from app.models.application import Application, ApplicationStatus
 from app.database import get_db
 from app.auth.jwt import get_dashboard_or_sdk_user
+from app.core.promotion import (
+    check_promotion_readiness,
+    get_context_tier,
+    TIER_REQUIREMENTS,
+    ContextTier,
+)
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
@@ -53,6 +61,28 @@ class RecentActivity(BaseModel):
     most_used_algorithm: str | None
 
 
+class AppPromotionStatus(BaseModel):
+    """Promotion status for a single application."""
+    app_id: str
+    app_name: str
+    environment: str
+    is_ready: bool
+    ready_count: int
+    total_count: int
+    blocking_contexts: list[str]
+    estimated_ready_at: datetime | None = None
+    requires_approval: bool = False
+
+
+class PromotionMetrics(BaseModel):
+    """Overall promotion metrics for dashboard."""
+    apps_ready_for_promotion: int = Field(..., description="Apps ready to promote to production")
+    apps_blocking: int = Field(..., description="Apps with blocking contexts")
+    total_dev_apps: int = Field(..., description="Total apps in development/staging")
+    tier_distribution: dict[str, int] = Field(default_factory=dict, description="Context count by tier")
+    app_statuses: list[AppPromotionStatus] = Field(default_factory=list, description="Per-app promotion status")
+
+
 class DashboardMetrics(BaseModel):
     """Complete dashboard metrics response."""
     security_posture: SecurityPosture
@@ -64,6 +94,7 @@ class DashboardMetrics(BaseModel):
     total_contexts: int
     last_scan_date: str | None
     warnings: list[str]
+    promotion_metrics: PromotionMetrics | None = None
 
 
 # Algorithm categorization
@@ -249,6 +280,67 @@ async def get_dashboard_metrics(
     if failed_24h > successful_24h and total_ops_24h > 10:
         warnings.append("High failure rate in last 24 hours")
 
+    # Calculate promotion metrics
+    promotion_metrics = None
+    try:
+        # Get applications from the Application model (not Identity alias)
+        app_result = await db.execute(
+            select(Application)
+            .where(Application.user_id == user.id)
+            .where(Application.status == ApplicationStatus.ACTIVE.value)
+        )
+        apps = list(app_result.scalars().all())
+
+        # Filter non-production apps
+        dev_apps = [a for a in apps if a.environment.lower() != "production"]
+
+        if dev_apps:
+            app_statuses = []
+            apps_ready = 0
+            apps_blocking = 0
+            tier_distribution: dict[str, int] = {
+                "tier_1": 0,
+                "tier_2": 0,
+                "tier_3": 0,
+            }
+
+            for app in dev_apps:
+                # Check promotion readiness
+                readiness = await check_promotion_readiness(db, app, "production")
+
+                # Update tier distribution
+                for ctx in app.allowed_contexts or []:
+                    tier = get_context_tier(ctx)
+                    tier_distribution[tier.value] = tier_distribution.get(tier.value, 0) + 1
+
+                if readiness.is_ready:
+                    apps_ready += 1
+                else:
+                    apps_blocking += 1
+
+                app_statuses.append(AppPromotionStatus(
+                    app_id=app.id,
+                    app_name=app.name,
+                    environment=app.environment,
+                    is_ready=readiness.is_ready,
+                    ready_count=readiness.ready_count,
+                    total_count=readiness.total_count,
+                    blocking_contexts=readiness.blocking_contexts,
+                    estimated_ready_at=readiness.estimated_ready_at,
+                    requires_approval=readiness.requires_approval,
+                ))
+
+            promotion_metrics = PromotionMetrics(
+                apps_ready_for_promotion=apps_ready,
+                apps_blocking=apps_blocking,
+                total_dev_apps=len(dev_apps),
+                tier_distribution=tier_distribution,
+                app_statuses=app_statuses,
+            )
+    except Exception:
+        # Don't fail dashboard if promotion metrics fail
+        pass
+
     return DashboardMetrics(
         security_posture=SecurityPosture(
             overall_score=round(overall_score, 1),
@@ -271,4 +363,5 @@ async def get_dashboard_metrics(
         total_contexts=len(all_contexts),
         last_scan_date=last_scan_date,
         warnings=warnings,
+        promotion_metrics=promotion_metrics,
     )
