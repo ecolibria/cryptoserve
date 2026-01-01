@@ -7,12 +7,20 @@ Commands:
     verify    - Verify SDK is working correctly
     info      - Show current identity information
     promote   - Check promotion readiness or request promotion
+                Uses configured app by default; use --app <id> for specific app
     scan      - Scan for crypto libraries and show inventory
     cbom      - Generate Cryptographic Bill of Materials
     pqc       - Get PQC migration recommendations
     gate      - CI/CD policy gate check
     certs     - Certificate operations (generate-csr, self-signed, parse, verify)
     wizard    - Interactive context selection wizard
+
+Examples:
+    cryptoserve configure --token <token>     # Set up credentials
+    cryptoserve status                        # Check configuration
+    cryptoserve promote                       # Check promotion readiness
+    cryptoserve promote --app myapp_123       # Check specific app
+    cryptoserve promote --confirm             # Promote if ready
 """
 
 import os
@@ -1299,10 +1307,16 @@ def cmd_help():
     print("  verify    Verify SDK is working correctly")
     print("  info      Show current identity information")
     print("  promote   Check promotion readiness or request promotion")
-    print("            Options: --to <environment> (default: production)")
+    print("            Uses configured app by default (from CRYPTOSERVE_TOKEN)")
+    print("            Options: --app <app_id> (specify application)")
+    print("                     --to <environment> (default: production)")
     print("                     --confirm (proceed with promotion)")
     print("                     --expedite (request expedited approval)")
-    print("                     --app <app_id> (specify application)")
+    print("            Examples:")
+    print("              cryptoserve promote                  # Check readiness (uses configured app)")
+    print("              cryptoserve promote --app myapp_123  # Check specific app")
+    print("              cryptoserve promote --confirm        # Promote if ready")
+    print("              cryptoserve promote --expedite       # Request expedited approval")
     print("  scan      Scan for crypto libraries")
     print("  cbom      Generate Cryptographic Bill of Materials")
     print("            Options: --format json|cyclonedx|spdx")
