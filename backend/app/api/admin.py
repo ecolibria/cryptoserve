@@ -668,8 +668,13 @@ async def rotate_context_key(
     Returns:
         Key rotation details including old and new version numbers.
     """
-    # Verify context exists
-    result = await db.execute(select(Context).where(Context.name == context_name))
+    # Verify context exists for this tenant
+    result = await db.execute(
+        select(Context).where(
+            Context.name == context_name,
+            Context.tenant_id == admin.tenant_id
+        )
+    )
     context = result.scalar_one_or_none()
 
     if not context:
@@ -680,14 +685,18 @@ async def rotate_context_key(
 
     # Get current key version before rotation
     key_result = await db.execute(
-        select(Key).where(Key.context == context_name).order_by(desc(Key.version)).limit(1)
+        select(Key)
+        .where(Key.context == context_name)
+        .where(Key.tenant_id == admin.tenant_id)
+        .order_by(desc(Key.version))
+        .limit(1)
     )
     current_key = key_result.scalar_one_or_none()
     old_version = current_key.version if current_key else 0
 
     # Rotate the key
     from app.core.key_manager import key_manager
-    _, new_key_id = await key_manager.rotate_key(db, context_name)
+    _, new_key_id = await key_manager.rotate_key(db, context_name, admin.tenant_id)
 
     # Get the new key record for version info
     new_key_result = await db.execute(

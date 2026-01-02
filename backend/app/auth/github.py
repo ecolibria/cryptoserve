@@ -114,6 +114,10 @@ async def dev_login(
                 detail="CLI callback must be localhost",
             )
 
+    # Ensure default tenant exists and get it
+    from app.core.tenant import get_or_create_default_tenant
+    default_tenant = await get_or_create_default_tenant(db)
+
     # Find or create dev user
     dev_github_id = 1
     result = await db.execute(select(User).where(User.github_id == dev_github_id))
@@ -121,6 +125,7 @@ async def dev_login(
 
     if not user:
         user = User(
+            tenant_id=default_tenant.id,
             github_id=dev_github_id,
             github_username="devuser",
             email="dev@localhost",
@@ -389,6 +394,10 @@ async def github_callback(
     email = allowed_email or primary_email
     email_domain = domain_service.extract_domain(email) if email else None
 
+    # Ensure default tenant exists and get it
+    from app.core.tenant import get_or_create_default_tenant
+    default_tenant = await get_or_create_default_tenant(db)
+
     # Find or create user
     github_id = github_user["id"]
     result = await db.execute(select(User).where(User.github_id == github_id))
@@ -409,8 +418,9 @@ async def github_callback(
         if should_be_admin and not user.is_admin:
             user.is_admin = True
     else:
-        # Create new user
+        # Create new user with default tenant
         user = User(
+            tenant_id=default_tenant.id,
             github_id=github_id,
             github_username=github_user["login"],
             email=email,

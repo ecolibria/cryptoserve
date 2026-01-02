@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as SQLEnum, LargeBinary
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -29,6 +30,15 @@ class Key(Base):
     __tablename__ = "keys"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
+
     context: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("contexts.name"),
@@ -64,6 +74,15 @@ class PQCKey(Base):
     __tablename__ = "pqc_keys"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
+
     context: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("contexts.name"),

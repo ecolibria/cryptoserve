@@ -3,8 +3,9 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import String, DateTime, Text, Boolean
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, DateTime, Text, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base, StringList, JSONType
 
@@ -23,9 +24,21 @@ class Policy(Base):
     """
 
     __tablename__ = "policies"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_policy_tenant_name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
+
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
     rule: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(
@@ -86,6 +99,9 @@ class Policy(Base):
         comment="User who created the policy"
     )
 
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="policies")
+
     def __repr__(self) -> str:
         return f"<Policy {self.name} ({self.severity})>"
 
@@ -111,6 +127,15 @@ class PolicyViolationLog(Base):
     __tablename__ = "policy_violations"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
+
     policy_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     severity: Mapped[str] = mapped_column(String(16), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)

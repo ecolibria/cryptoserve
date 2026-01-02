@@ -87,6 +87,7 @@ class IdentityManager:
         now = datetime.now(timezone.utc)
         identity = Identity(
             id=identity_id,
+            tenant_id=user.tenant_id,
             user_id=user.id,
             type=identity_type,
             name=name,

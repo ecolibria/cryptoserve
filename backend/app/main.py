@@ -484,9 +484,14 @@ def build_default_contexts() -> list[dict]:
 
 async def seed_default_contexts():
     """Seed default contexts if they don't exist."""
+    from app.core.tenant import get_or_create_default_tenant
+
     default_contexts = build_default_contexts()
 
     async with get_session_maker()() as db:
+        # Ensure default tenant exists
+        default_tenant = await get_or_create_default_tenant(db)
+
         for ctx_data in default_contexts:
             result = await db.execute(
                 select(Context).where(Context.name == ctx_data["name"])
@@ -494,6 +499,8 @@ async def seed_default_contexts():
             existing = result.scalar_one_or_none()
 
             if not existing:
+                # Add tenant_id to context data
+                ctx_data["tenant_id"] = default_tenant.id
                 context = Context(**ctx_data)
                 db.add(context)
 

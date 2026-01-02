@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Boolean, Integer, Text
+from sqlalchemy import String, DateTime, Boolean, Integer, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,15 @@ class AuditLog(Base):
         primary_key=True,
         default=lambda: str(uuid4())
     )
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
+
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

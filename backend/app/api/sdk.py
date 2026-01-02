@@ -108,7 +108,10 @@ async def list_sdk_contexts(authorization: Annotated[str, Header()]):
     identity = await _get_identity_from_auth(authorization)
 
     async with get_session_maker()() as db:
-        result = await db.execute(select(Context))
+        # Filter contexts by tenant for isolation
+        result = await db.execute(
+            select(Context).where(Context.tenant_id == identity.tenant_id)
+        )
         all_contexts = result.scalars().all()
 
         # Filter to allowed contexts
@@ -148,7 +151,10 @@ async def search_sdk_contexts(
     query = q.lower().strip()
 
     async with get_session_maker()() as db:
-        result = await db.execute(select(Context))
+        # Filter contexts by tenant for isolation
+        result = await db.execute(
+            select(Context).where(Context.tenant_id == identity.tenant_id)
+        )
         all_contexts = result.scalars().all()
 
         # Filter to allowed contexts
@@ -243,8 +249,12 @@ async def get_sdk_context_info(
         )
 
     async with get_session_maker()() as db:
+        # Filter by tenant for isolation
         result = await db.execute(
-            select(Context).where(Context.name == context_name)
+            select(Context).where(
+                Context.name == context_name,
+                Context.tenant_id == identity.tenant_id
+            )
         )
         ctx = result.scalar_one_or_none()
 

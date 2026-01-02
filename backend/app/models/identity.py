@@ -29,6 +29,15 @@ class Identity(Base):
     __tablename__ = "identities"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
+
     user_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("users.id"),

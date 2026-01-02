@@ -13,7 +13,7 @@ os.environ.setdefault("CRYPTOSERVE_HKDF_SALT", "test-hkdf-salt-for-tests")
 os.environ.setdefault("KMS_BACKEND", "local")
 
 from app.database import Base
-from app.models import User, Context
+from app.models import User, Context, Tenant
 
 
 @pytest.fixture(scope="session")
@@ -64,9 +64,29 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def test_user(db_session: AsyncSession) -> User:
+async def test_tenant(db_session: AsyncSession) -> Tenant:
+    """Create a test tenant."""
+    tenant = Tenant(
+        slug="test-tenant",
+        name="Test Tenant",
+        organization_name="Test Organization",
+        primary_domain="example.com",
+        allowed_domains=["example.com", "test.com"],
+        require_domain_match=False,
+        allow_any_github_user=True,
+        is_active=True,
+    )
+    db_session.add(tenant)
+    await db_session.commit()
+    await db_session.refresh(tenant)
+    return tenant
+
+
+@pytest.fixture
+async def test_user(db_session: AsyncSession, test_tenant: Tenant) -> User:
     """Create a test user."""
     user = User(
+        tenant_id=test_tenant.id,
         github_id=12345,
         github_username="testuser",
         email="test@example.com",
@@ -78,9 +98,10 @@ async def test_user(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def test_context(db_session: AsyncSession) -> Context:
+async def test_context(db_session: AsyncSession, test_tenant: Tenant) -> Context:
     """Create a test context."""
     context = Context(
+        tenant_id=test_tenant.id,
         name="test-context",
         display_name="Test Context",
         description="A test context for unit tests",

@@ -11,8 +11,9 @@ The Context model now supports the 5-layer configuration:
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import String, DateTime, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, DateTime, Text, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base, StringList, JSONType
 
@@ -31,8 +32,19 @@ class Context(Base):
     """
 
     __tablename__ = "contexts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_context_tenant_name"),
+    )
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -94,6 +106,9 @@ class Context(Base):
         default=None,
         onupdate=lambda: datetime.now(timezone.utc)
     )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="contexts")
 
     def __repr__(self) -> str:
         return f"<Context {self.name}>"
