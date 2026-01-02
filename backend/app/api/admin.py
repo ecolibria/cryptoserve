@@ -186,16 +186,24 @@ async def get_admin_dashboard(
     week_from_now = now + timedelta(days=7)
 
     # User stats
-    total_users = await db.scalar(select(func.count(User.id)))
+    total_users = await db.scalar(
+        select(func.count(User.id)).where(User.tenant_id == admin.tenant_id)
+    )
     new_users_today = await db.scalar(
-        select(func.count(User.id)).where(User.created_at >= today_start)
+        select(func.count(User.id)).where(
+            User.tenant_id == admin.tenant_id,
+            User.created_at >= today_start
+        )
     )
 
     # Identity stats
-    total_identities = await db.scalar(select(func.count(Identity.id)))
+    total_identities = await db.scalar(
+        select(func.count(Identity.id)).where(Identity.tenant_id == admin.tenant_id)
+    )
     active_identities = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 Identity.expires_at > now
             )
@@ -204,6 +212,7 @@ async def get_admin_dashboard(
     expiring_soon = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 Identity.expires_at > now,
                 Identity.expires_at <= week_from_now
@@ -212,40 +221,63 @@ async def get_admin_dashboard(
     )
 
     # Operations stats
-    total_operations = await db.scalar(select(func.count(AuditLog.id)))
+    total_operations = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.tenant_id == admin.tenant_id)
+    )
     operations_today = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.timestamp >= today_start)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.timestamp >= today_start
+        )
     )
     operations_yesterday = await db.scalar(
         select(func.count(AuditLog.id)).where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= yesterday_start,
                 AuditLog.timestamp < today_start
             )
         )
     )
     successful_operations = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.success == True)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.success == True
+        )
     )
     failed_operations = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.success == False)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.success == False
+        )
     )
 
     # Average latency
     avg_latency = await db.scalar(
-        select(func.avg(AuditLog.latency_ms)).where(AuditLog.latency_ms.isnot(None))
+        select(func.avg(AuditLog.latency_ms)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.latency_ms.isnot(None)
+        )
     )
 
     # Total data processed
     total_input = await db.scalar(
-        select(func.sum(AuditLog.input_size_bytes)).where(AuditLog.input_size_bytes.isnot(None))
+        select(func.sum(AuditLog.input_size_bytes)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.input_size_bytes.isnot(None)
+        )
     ) or 0
     total_output = await db.scalar(
-        select(func.sum(AuditLog.output_size_bytes)).where(AuditLog.output_size_bytes.isnot(None))
+        select(func.sum(AuditLog.output_size_bytes)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.output_size_bytes.isnot(None)
+        )
     ) or 0
 
     # Context count
-    contexts_count = await db.scalar(select(func.count(Context.name)))
+    contexts_count = await db.scalar(
+        select(func.count(Context.name)).where(Context.tenant_id == admin.tenant_id)
+    )
 
     return AdminDashboardStats(
         total_users=total_users or 0,
@@ -275,7 +307,7 @@ async def list_all_users(
     offset: int = Query(0, ge=0),
 ):
     """List all users with statistics."""
-    query = select(User).order_by(desc(User.created_at))
+    query = select(User).where(User.tenant_id == admin.tenant_id).order_by(desc(User.created_at))
 
     if search:
         query = query.where(
@@ -331,7 +363,9 @@ async def get_user_details(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get detailed user information."""
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == admin.tenant_id)
+    )
     user = result.scalar_one_or_none()
 
     if not user:
@@ -387,7 +421,9 @@ async def list_all_identities(
     offset: int = Query(0, ge=0),
 ):
     """List all identities across all users."""
-    query = select(Identity, User).join(User).order_by(desc(Identity.created_at))
+    query = select(Identity, User).join(User).where(
+        Identity.tenant_id == admin.tenant_id
+    ).order_by(desc(Identity.created_at))
 
     if search:
         query = query.where(
@@ -448,7 +484,12 @@ async def admin_revoke_identity(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Admin revoke an identity."""
-    result = await db.execute(select(Identity).where(Identity.id == identity_id))
+    result = await db.execute(
+        select(Identity).where(
+            Identity.id == identity_id,
+            Identity.tenant_id == admin.tenant_id
+        )
+    )
     identity = result.scalar_one_or_none()
 
     if not identity:
@@ -479,7 +520,9 @@ async def get_global_audit_logs(
     offset: int = Query(0, ge=0),
 ):
     """Get global audit logs with filtering."""
-    query = select(AuditLog).order_by(desc(AuditLog.timestamp))
+    query = select(AuditLog).where(
+        AuditLog.tenant_id == admin.tenant_id
+    ).order_by(desc(AuditLog.timestamp))
 
     if identity_id:
         query = query.where(AuditLog.identity_id == identity_id)
@@ -528,7 +571,9 @@ async def export_audit_logs(
     limit: int = Query(10000, ge=1, le=100000),
 ):
     """Export audit logs as CSV or JSON."""
-    query = select(AuditLog).order_by(desc(AuditLog.timestamp))
+    query = select(AuditLog).where(
+        AuditLog.tenant_id == admin.tenant_id
+    ).order_by(desc(AuditLog.timestamp))
 
     if start_date:
         query = query.where(AuditLog.timestamp >= start_date)
@@ -603,27 +648,36 @@ async def get_contexts_with_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get all contexts with usage statistics."""
-    result = await db.execute(select(Context))
+    result = await db.execute(
+        select(Context).where(Context.tenant_id == admin.tenant_id)
+    )
     contexts = result.scalars().all()
 
     stats = []
     for ctx in contexts:
         # Count operations
         operation_count = await db.scalar(
-            select(func.count(AuditLog.id)).where(AuditLog.context == ctx.name)
+            select(func.count(AuditLog.id)).where(
+                AuditLog.context == ctx.name,
+                AuditLog.tenant_id == admin.tenant_id
+            )
         ) or 0
 
         # Count identities that have access
         # Use JSON containment check for TEXT column storing JSON arrays
         identity_count = await db.scalar(
             select(func.count(Identity.id)).where(
+                Identity.tenant_id == admin.tenant_id,
                 text("allowed_contexts::jsonb ? :context_name").bindparams(context_name=ctx.name)
             )
         ) or 0
 
         # Get latest key info
         key_result = await db.execute(
-            select(Key).where(Key.context == ctx.name).order_by(desc(Key.version)).limit(1)
+            select(Key).where(
+                Key.context == ctx.name,
+                Key.tenant_id == admin.tenant_id
+            ).order_by(desc(Key.version)).limit(1)
         )
         latest_key = key_result.scalar_one_or_none()
 
@@ -752,7 +806,12 @@ async def get_key_usage(
     - Last used timestamp
     """
     # Verify context exists
-    result = await db.execute(select(Context).where(Context.name == context_name))
+    result = await db.execute(
+        select(Context).where(
+            Context.name == context_name,
+            Context.tenant_id == admin.tenant_id
+        )
+    )
     context = result.scalar_one_or_none()
 
     if not context:
@@ -763,7 +822,10 @@ async def get_key_usage(
 
     # Get all keys for this context
     keys_result = await db.execute(
-        select(Key).where(Key.context == context_name).order_by(desc(Key.version))
+        select(Key).where(
+            Key.context == context_name,
+            Key.tenant_id == admin.tenant_id
+        ).order_by(desc(Key.version))
     )
     keys = keys_result.scalars().all()
 
@@ -780,6 +842,7 @@ async def get_key_usage(
         encrypt_count = await db.scalar(
             select(func.count(AuditLog.id)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.context == context_name,
                     AuditLog.operation == "encrypt"
                 )
@@ -789,6 +852,7 @@ async def get_key_usage(
         decrypt_count = await db.scalar(
             select(func.count(AuditLog.id)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.context == context_name,
                     AuditLog.operation == "decrypt"
                 )
@@ -799,6 +863,7 @@ async def get_key_usage(
         total_bytes = await db.scalar(
             select(func.sum(AuditLog.input_size_bytes)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.context == context_name,
                     AuditLog.input_size_bytes.isnot(None)
                 )
@@ -807,8 +872,10 @@ async def get_key_usage(
 
         # Last used
         last_used_result = await db.execute(
-            select(AuditLog.timestamp).where(AuditLog.context == context_name)
-            .order_by(desc(AuditLog.timestamp)).limit(1)
+            select(AuditLog.timestamp).where(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.context == context_name
+            ).order_by(desc(AuditLog.timestamp)).limit(1)
         )
         last_used = last_used_result.scalar_one_or_none()
 
@@ -877,7 +944,9 @@ async def get_cryptographic_bill_of_materials(
     from app.core.algorithm_resolver import ALGORITHMS
 
     # Get all contexts
-    result = await db.execute(select(Context))
+    result = await db.execute(
+        select(Context).where(Context.tenant_id == admin.tenant_id)
+    )
     contexts = result.scalars().all()
 
     # Analyze algorithms in use
@@ -1015,6 +1084,7 @@ async def get_operation_trends(
         encrypt_count = await db.scalar(
             select(func.count(AuditLog.id)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.timestamp >= current_date,
                     AuditLog.timestamp < next_date,
                     AuditLog.operation == "encrypt"
@@ -1025,6 +1095,7 @@ async def get_operation_trends(
         decrypt_count = await db.scalar(
             select(func.count(AuditLog.id)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.timestamp >= current_date,
                     AuditLog.timestamp < next_date,
                     AuditLog.operation == "decrypt"
@@ -1035,6 +1106,7 @@ async def get_operation_trends(
         success_count = await db.scalar(
             select(func.count(AuditLog.id)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.timestamp >= current_date,
                     AuditLog.timestamp < next_date,
                     AuditLog.success == True
@@ -1045,6 +1117,7 @@ async def get_operation_trends(
         failed_count = await db.scalar(
             select(func.count(AuditLog.id)).where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.timestamp >= current_date,
                     AuditLog.timestamp < next_date,
                     AuditLog.success == False
@@ -1075,6 +1148,7 @@ async def get_team_usage(
     # Get teams from identities
     teams_result = await db.execute(
         select(Identity.team, func.count(Identity.id).label("identity_count"))
+        .where(Identity.tenant_id == admin.tenant_id)
         .group_by(Identity.team)
         .order_by(desc("identity_count"))
         .limit(limit)
@@ -1085,7 +1159,10 @@ async def get_team_usage(
     for team_name, identity_count in teams:
         # Get operation count for this team
         operation_count = await db.scalar(
-            select(func.count(AuditLog.id)).where(AuditLog.team == team_name)
+            select(func.count(AuditLog.id)).where(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.team == team_name
+            )
         ) or 0
 
         usage.append(TeamUsage(
@@ -1120,6 +1197,7 @@ async def get_system_health(
     expiring = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 Identity.expires_at > now,
                 Identity.expires_at <= week_from_now
@@ -1131,6 +1209,7 @@ async def get_system_health(
     failed_last_hour = await db.scalar(
         select(func.count(AuditLog.id)).where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= hour_ago,
                 AuditLog.success == False
             )
@@ -1141,6 +1220,7 @@ async def get_system_health(
     avg_latency = await db.scalar(
         select(func.avg(AuditLog.latency_ms)).where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= hour_ago,
                 AuditLog.latency_ms.isnot(None)
             )
@@ -1296,7 +1376,9 @@ async def get_risk_score(
     now = datetime.now(timezone.utc)
 
     # Factor 1: Algorithm strength (check for deprecated algorithms)
-    contexts_result = await db.execute(select(Context))
+    contexts_result = await db.execute(
+        select(Context).where(Context.tenant_id == admin.tenant_id)
+    )
     contexts = contexts_result.scalars().all()
 
     deprecated_algos = {"DES", "3DES", "RC4", "MD5", "SHA-1", "RSA-1024"}
@@ -1307,15 +1389,21 @@ async def get_risk_score(
     # Factor 2: Key rotation frequency
     thirty_days_ago = now - timedelta(days=30)
     recent_rotations = await db.scalar(
-        select(func.count(Key.id)).where(Key.created_at >= thirty_days_ago)
+        select(func.count(Key.id)).where(
+            Key.tenant_id == admin.tenant_id,
+            Key.created_at >= thirty_days_ago
+        )
     ) or 0
     rotation_score = min(100, recent_rotations * 25)  # 4 rotations = 100
 
     # Factor 3: Identity hygiene (expired/revoked cleanup)
-    total_identities = await db.scalar(select(func.count(Identity.id))) or 0
+    total_identities = await db.scalar(
+        select(func.count(Identity.id)).where(Identity.tenant_id == admin.tenant_id)
+    ) or 0
     active_identities = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 Identity.expires_at > now
             )
@@ -1324,9 +1412,14 @@ async def get_risk_score(
     identity_score = (active_identities / total_identities * 100) if total_identities > 0 else 100
 
     # Factor 4: Operation success rate
-    total_ops = await db.scalar(select(func.count(AuditLog.id))) or 0
+    total_ops = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.tenant_id == admin.tenant_id)
+    ) or 0
     successful_ops = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.success == True)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.success == True
+        )
     ) or 0
     success_rate = (successful_ops / total_ops * 100) if total_ops > 0 else 100
 
@@ -1361,6 +1454,7 @@ async def get_risk_score(
     old_failed = await db.scalar(
         select(func.count(AuditLog.id)).where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp < week_ago,
                 AuditLog.success == False
             )
@@ -1369,6 +1463,7 @@ async def get_risk_score(
     recent_failed = await db.scalar(
         select(func.count(AuditLog.id)).where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= week_ago,
                 AuditLog.success == False
             )
@@ -1412,7 +1507,9 @@ async def get_quantum_readiness(
     Premium: Access to migration tools and detailed planning
     """
     # Get all contexts
-    result = await db.execute(select(Context))
+    result = await db.execute(
+        select(Context).where(Context.tenant_id == admin.tenant_id)
+    )
     contexts = result.scalars().all()
 
     # Categorize by quantum readiness
@@ -1475,7 +1572,9 @@ async def get_compliance_status(
     Premium: Export compliance reports, detailed remediation
     """
     # Get all contexts with their compliance tags
-    result = await db.execute(select(Context))
+    result = await db.execute(
+        select(Context).where(Context.tenant_id == admin.tenant_id)
+    )
     contexts = result.scalars().all()
 
     # Analyze compliance by framework
@@ -1488,9 +1587,12 @@ async def get_compliance_status(
 
     # Check what we have
     has_encryption = len(contexts) > 0  # Any contexts means encryption is used
-    has_audit = await db.scalar(select(func.count(AuditLog.id))) > 0
+    has_audit = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.tenant_id == admin.tenant_id)
+    ) > 0
     has_key_rotation = await db.scalar(
         select(func.count(Key.id)).where(
+            Key.tenant_id == admin.tenant_id,
             Key.created_at >= datetime.now(timezone.utc) - timedelta(days=90)
         )
     ) > 0
@@ -1746,7 +1848,10 @@ async def publish_wizard_policy(
     """
     # Check if context already exists
     existing_context = await db.execute(
-        select(Context).where(Context.name == data.context_name)
+        select(Context).where(
+            Context.name == data.context_name,
+            Context.tenant_id == admin.tenant_id
+        )
     )
     if existing_context.scalar_one_or_none():
         raise HTTPException(
@@ -1765,6 +1870,7 @@ async def publish_wizard_policy(
 
     # Create the context
     context = Context(
+        tenant_id=admin.tenant_id,
         name=data.context_name,
         display_name=data.policy_name,
         description=f"{data.policy_name} - Created via policy wizard",
@@ -1779,6 +1885,7 @@ async def publish_wizard_policy(
     # Create the policy
     policy_rule = f"context.name == \"{data.context_name}\""
     policy = Policy(
+        tenant_id=admin.tenant_id,
         name=f"{data.context_name}-policy",
         description=f"Auto-generated policy for {data.policy_name}",
         rule=policy_rule,
@@ -1819,7 +1926,10 @@ async def list_published_policies(
 ):
     """List all published policies (visible to developers)."""
     result = await db.execute(
-        select(Policy).where(Policy.status == "published").order_by(desc(Policy.created_at))
+        select(Policy).where(
+            Policy.tenant_id == admin.tenant_id,
+            Policy.status == "published"
+        ).order_by(desc(Policy.created_at))
     )
     policies = result.scalars().all()
 
@@ -1891,6 +2001,7 @@ async def get_security_alerts(
     expiring_identities = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 Identity.expires_at > now,
                 Identity.expires_at <= week_from_now
@@ -1914,11 +2025,18 @@ async def get_security_alerts(
     # Alert 2: High failure rate
     hour_ago = now - timedelta(hours=1)
     recent_total = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.timestamp >= hour_ago)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.timestamp >= hour_ago
+        )
     ) or 0
     recent_failed = await db.scalar(
         select(func.count(AuditLog.id)).where(
-            and_(AuditLog.timestamp >= hour_ago, AuditLog.success == False)
+            and_(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.timestamp >= hour_ago,
+                AuditLog.success == False
+            )
         )
     ) or 0
 
@@ -1940,7 +2058,10 @@ async def get_security_alerts(
     # Alert 3: Keys needing rotation
     ninety_days_ago = now - timedelta(days=90)
     old_keys = await db.scalar(
-        select(func.count(Key.id)).where(Key.created_at < ninety_days_ago)
+        select(func.count(Key.id)).where(
+            Key.tenant_id == admin.tenant_id,
+            Key.created_at < ninety_days_ago
+        )
     ) or 0
 
     if old_keys > 0:
@@ -1957,7 +2078,9 @@ async def get_security_alerts(
         ))
 
     # Alert 4: Deprecated algorithms in use
-    contexts_result = await db.execute(select(Context))
+    contexts_result = await db.execute(
+        select(Context).where(Context.tenant_id == admin.tenant_id)
+    )
     contexts = contexts_result.scalars().all()
     deprecated_algos = {"DES", "3DES", "RC4", "MD5", "SHA-1"}
     deprecated_contexts = [c for c in contexts if any(d in c.algorithm for d in deprecated_algos)]
@@ -1997,6 +2120,7 @@ async def get_security_alerts(
     unused_identities = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 or_(
                     Identity.last_used_at.is_(None),
@@ -2038,27 +2162,42 @@ async def get_security_metrics(
 
     # Operations per minute (last hour average)
     hour_ops = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.timestamp >= hour_ago)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.timestamp >= hour_ago
+        )
     ) or 0
     ops_per_minute = hour_ops / 60
 
     # Encryption rate
-    total_ops = await db.scalar(select(func.count(AuditLog.id))) or 0
+    total_ops = await db.scalar(
+        select(func.count(AuditLog.id)).where(AuditLog.tenant_id == admin.tenant_id)
+    ) or 0
     encrypt_ops = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.operation == "encrypt")
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.operation == "encrypt"
+        )
     ) or 0
     encryption_rate = (encrypt_ops / total_ops * 100) if total_ops > 0 else 0
 
     # Success rate
     successful_ops = await db.scalar(
-        select(func.count(AuditLog.id)).where(AuditLog.success == True)
+        select(func.count(AuditLog.id)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.success == True
+        )
     ) or 0
     success_rate = (successful_ops / total_ops * 100) if total_ops > 0 else 100
 
     # Average latency (last hour)
     avg_latency = await db.scalar(
         select(func.avg(AuditLog.latency_ms)).where(
-            and_(AuditLog.timestamp >= hour_ago, AuditLog.latency_ms.isnot(None))
+            and_(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.timestamp >= hour_ago,
+                AuditLog.latency_ms.isnot(None)
+            )
         )
     ) or 0
 
@@ -2066,6 +2205,7 @@ async def get_security_metrics(
     active_identities = await db.scalar(
         select(func.count(Identity.id)).where(
             and_(
+                Identity.tenant_id == admin.tenant_id,
                 Identity.status == IdentityStatus.ACTIVE,
                 Identity.expires_at > now
             )
@@ -2075,16 +2215,25 @@ async def get_security_metrics(
     # Contexts in use (have operations in last 24h)
     day_ago = now - timedelta(days=1)
     contexts_used_result = await db.execute(
-        select(AuditLog.context).where(AuditLog.timestamp >= day_ago).distinct()
+        select(AuditLog.context).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.timestamp >= day_ago
+        ).distinct()
     )
     contexts_in_use = len(contexts_used_result.fetchall())
 
     # Data processed (MB)
     total_input = await db.scalar(
-        select(func.sum(AuditLog.input_size_bytes)).where(AuditLog.input_size_bytes.isnot(None))
+        select(func.sum(AuditLog.input_size_bytes)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.input_size_bytes.isnot(None)
+        )
     ) or 0
     total_output = await db.scalar(
-        select(func.sum(AuditLog.output_size_bytes)).where(AuditLog.output_size_bytes.isnot(None))
+        select(func.sum(AuditLog.output_size_bytes)).where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.output_size_bytes.isnot(None)
+        )
     ) or 0
     data_processed_mb = (total_input + total_output) / (1024 * 1024)
 
@@ -2114,10 +2263,15 @@ async def get_blast_radius(
     # Build query for contexts
     if context:
         contexts_result = await db.execute(
-            select(Context).where(Context.name == context)
+            select(Context).where(
+                Context.tenant_id == admin.tenant_id,
+                Context.name == context
+            )
         )
     else:
-        contexts_result = await db.execute(select(Context))
+        contexts_result = await db.execute(
+            select(Context).where(Context.tenant_id == admin.tenant_id)
+        )
 
     contexts = contexts_result.scalars().all()
 
@@ -2125,25 +2279,38 @@ async def get_blast_radius(
     for ctx in contexts:
         # Get key info
         key_result = await db.execute(
-            select(Key).where(Key.context == ctx.name).order_by(desc(Key.version)).limit(1)
+            select(Key).where(
+                Key.tenant_id == admin.tenant_id,
+                Key.context == ctx.name
+            ).order_by(desc(Key.version)).limit(1)
         )
         latest_key = key_result.scalar_one_or_none()
 
         # Get operations for this context
         operations_count = await db.scalar(
-            select(func.count(AuditLog.id)).where(AuditLog.context == ctx.name)
+            select(func.count(AuditLog.id)).where(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.context == ctx.name
+            )
         ) or 0
 
         # Get total data size
         data_size = await db.scalar(
             select(func.sum(AuditLog.input_size_bytes)).where(
-                and_(AuditLog.context == ctx.name, AuditLog.input_size_bytes.isnot(None))
+                and_(
+                    AuditLog.tenant_id == admin.tenant_id,
+                    AuditLog.context == ctx.name,
+                    AuditLog.input_size_bytes.isnot(None)
+                )
             )
         ) or 0
 
         # Get identities that used this context
         identity_result = await db.execute(
-            select(AuditLog.identity_id).where(AuditLog.context == ctx.name).distinct()
+            select(AuditLog.identity_id).where(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.context == ctx.name
+            ).distinct()
         )
         identity_ids = [r[0] for r in identity_result.fetchall()]
         identities_affected = len(identity_ids)
@@ -2151,15 +2318,21 @@ async def get_blast_radius(
         # Get teams
         teams_result = await db.execute(
             select(AuditLog.team).where(
-                and_(AuditLog.context == ctx.name, AuditLog.team.isnot(None))
+                and_(
+                    AuditLog.tenant_id == admin.tenant_id,
+                    AuditLog.context == ctx.name,
+                    AuditLog.team.isnot(None)
+                )
             ).distinct()
         )
         teams = [r[0] for r in teams_result.fetchall() if r[0]]
 
         # Get last used
         last_used_result = await db.execute(
-            select(AuditLog.timestamp).where(AuditLog.context == ctx.name)
-            .order_by(desc(AuditLog.timestamp)).limit(1)
+            select(AuditLog.timestamp).where(
+                AuditLog.tenant_id == admin.tenant_id,
+                AuditLog.context == ctx.name
+            ).order_by(desc(AuditLog.timestamp)).limit(1)
         )
         last_used = last_used_result.scalar_one_or_none()
 
@@ -2216,7 +2389,12 @@ async def playground_operation(
     start_time = time.time()
 
     # Verify context exists
-    ctx_result = await db.execute(select(Context).where(Context.name == request.context))
+    ctx_result = await db.execute(
+        select(Context).where(
+            Context.name == request.context,
+            Context.tenant_id == user.tenant_id
+        )
+    )
     context = ctx_result.scalar_one_or_none()
 
     if not context:
@@ -2333,13 +2511,19 @@ async def get_crypto_inventory_overview(
     """
     # Get distinct identity IDs (apps)
     apps_result = await db.execute(
-        select(CryptoInventoryReport.identity_id).distinct()
+        select(CryptoInventoryReport.identity_id).where(
+            CryptoInventoryReport.tenant_id == admin.tenant_id
+        ).distinct()
     )
     app_ids = [r[0] for r in apps_result.fetchall()]
     total_apps = len(app_ids)
 
     # Total scans
-    total_scans = await db.scalar(select(func.count(CryptoInventoryReport.id))) or 0
+    total_scans = await db.scalar(
+        select(func.count(CryptoInventoryReport.id)).where(
+            CryptoInventoryReport.tenant_id == admin.tenant_id
+        )
+    ) or 0
 
     # Compliance breakdown (based on most recent scan per app)
     compliant_apps = 0
@@ -2353,7 +2537,10 @@ async def get_crypto_inventory_overview(
         # Get most recent scan for this app
         latest_result = await db.execute(
             select(CryptoInventoryReport)
-            .where(CryptoInventoryReport.identity_id == app_id)
+            .where(
+                CryptoInventoryReport.tenant_id == admin.tenant_id,
+                CryptoInventoryReport.identity_id == app_id
+            )
             .order_by(desc(CryptoInventoryReport.scanned_at))
             .limit(1)
         )
@@ -2378,6 +2565,7 @@ async def get_crypto_inventory_overview(
     # Libraries in use
     libs_result = await db.execute(
         select(CryptoLibraryUsage)
+        .where(CryptoLibraryUsage.tenant_id == admin.tenant_id)
         .order_by(desc(CryptoLibraryUsage.app_count))
         .limit(20)
     )
@@ -2403,7 +2591,10 @@ async def get_crypto_inventory_overview(
             func.avg(CryptoInventoryReport.quantum_safe_count).label("avg_safe"),
             func.avg(CryptoInventoryReport.quantum_vulnerable_count).label("avg_vuln"),
         )
-        .where(CryptoInventoryReport.team.isnot(None))
+        .where(
+            CryptoInventoryReport.tenant_id == admin.tenant_id,
+            CryptoInventoryReport.team.isnot(None)
+        )
         .group_by(CryptoInventoryReport.team)
         .order_by(desc("app_count"))
     )
@@ -2422,6 +2613,7 @@ async def get_crypto_inventory_overview(
     # Recent scans
     recent_result = await db.execute(
         select(CryptoInventoryReport)
+        .where(CryptoInventoryReport.tenant_id == admin.tenant_id)
         .order_by(desc(CryptoInventoryReport.scanned_at))
         .limit(10)
     )
@@ -2471,7 +2663,9 @@ async def get_library_usage(
     - deprecated_only: Only show deprecated libraries
     - quantum_vulnerable_only: Only show quantum-vulnerable libraries
     """
-    query = select(CryptoLibraryUsage).order_by(desc(CryptoLibraryUsage.app_count))
+    query = select(CryptoLibraryUsage).where(
+        CryptoLibraryUsage.tenant_id == admin.tenant_id
+    ).order_by(desc(CryptoLibraryUsage.app_count))
 
     if deprecated_only:
         query = query.where(CryptoLibraryUsage.is_deprecated == True)
@@ -2515,7 +2709,10 @@ async def get_app_crypto_details(
     # Get all scans for this app
     scans_result = await db.execute(
         select(CryptoInventoryReport)
-        .where(CryptoInventoryReport.identity_id == identity_id)
+        .where(
+            CryptoInventoryReport.tenant_id == admin.tenant_id,
+            CryptoInventoryReport.identity_id == identity_id
+        )
         .order_by(desc(CryptoInventoryReport.scanned_at))
     )
     scans = scans_result.scalars().all()
@@ -2631,6 +2828,7 @@ async def get_crypto_inventory_trends(
         day_result = await db.execute(
             select(CryptoInventoryReport).where(
                 and_(
+                    CryptoInventoryReport.tenant_id == admin.tenant_id,
                     CryptoInventoryReport.scanned_at >= current_date,
                     CryptoInventoryReport.scanned_at < next_date
                 )
@@ -2794,7 +2992,9 @@ async def toggle_user_admin(
             detail="Cannot modify your own admin status",
         )
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.tenant_id == admin.tenant_id)
+    )
     user = result.scalar_one_or_none()
 
     if not user:
@@ -2843,7 +3043,10 @@ async def get_algorithm_metrics(
     # Get total operations in period
     total_result = await db.execute(
         select(func.count(AuditLog.id))
-        .where(AuditLog.timestamp >= cutoff)
+        .where(
+            AuditLog.tenant_id == admin.tenant_id,
+            AuditLog.timestamp >= cutoff
+        )
     )
     total_operations = total_result.scalar() or 0
 
@@ -2852,6 +3055,7 @@ async def get_algorithm_metrics(
         select(AuditLog.cipher, func.count(AuditLog.id))
         .where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= cutoff,
                 AuditLog.cipher.isnot(None),
                 AuditLog.success == True,
@@ -2866,6 +3070,7 @@ async def get_algorithm_metrics(
         select(AuditLog.mode, func.count(AuditLog.id))
         .where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= cutoff,
                 AuditLog.mode.isnot(None),
                 AuditLog.success == True,
@@ -2880,6 +3085,7 @@ async def get_algorithm_metrics(
         select(AuditLog.key_bits, func.count(AuditLog.id))
         .where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= cutoff,
                 AuditLog.key_bits.isnot(None),
                 AuditLog.success == True,
@@ -2894,6 +3100,7 @@ async def get_algorithm_metrics(
         select(func.count(AuditLog.id))
         .where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= cutoff,
                 AuditLog.quantum_safe == True,
                 AuditLog.success == True,
@@ -2907,6 +3114,7 @@ async def get_algorithm_metrics(
         select(func.count(AuditLog.id))
         .where(
             and_(
+                AuditLog.tenant_id == admin.tenant_id,
                 AuditLog.timestamp >= cutoff,
                 AuditLog.policy_violation == True,
             )
@@ -2926,6 +3134,7 @@ async def get_algorithm_metrics(
             select(func.count(AuditLog.id))
             .where(
                 and_(
+                    AuditLog.tenant_id == admin.tenant_id,
                     AuditLog.timestamp >= day_start,
                     AuditLog.timestamp < day_end,
                     AuditLog.success == True,
