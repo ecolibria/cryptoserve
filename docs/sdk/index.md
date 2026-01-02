@@ -60,12 +60,15 @@ graph TB
 
 ### Zero Configuration
 
-Your identity is embedded in the SDK package itself:
+Auto-registration with a one-time login:
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
 
-# No configuration needed!
+# One-time: cryptoserve login
+crypto = CryptoServe(app_name="my-app", team="platform")
+
+# Encrypt with zero config!
 encrypted = crypto.encrypt_string("secret", context="user-pii")
 ```
 
@@ -82,8 +85,10 @@ The SDK handles:
 Full type hints for IDE support:
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
 from cryptoserve.types import EncryptResult
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 result: EncryptResult = crypto.encrypt_string("data", context="pii")
 # IDE knows: result.ciphertext, result.algorithm, result.key_id

@@ -104,7 +104,9 @@ sequenceDiagram
 === "Python"
 
     ```python
-    from cryptoserve import crypto
+    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="platform")
 
     # Encrypt sensitive data
     ciphertext = crypto.encrypt_string(
@@ -113,7 +115,7 @@ sequenceDiagram
     )
 
     # Decrypt when needed
-    plaintext = crypto.decrypt_string(ciphertext)
+    plaintext = crypto.decrypt_string(ciphertext, context="user-pii")
     ```
 
 === "TypeScript"

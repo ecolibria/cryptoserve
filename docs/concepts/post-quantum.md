@@ -177,7 +177,9 @@ curl -X POST http://localhost:8001/v1/crypto/encrypt \
 ### SDK Usage
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Encrypt with hybrid PQC
 ciphertext = crypto.encrypt_string(

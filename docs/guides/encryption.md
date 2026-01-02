@@ -7,32 +7,42 @@ This guide covers common encryption patterns and best practices.
 ### String Data
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Encrypt
 encrypted = crypto.encrypt_string("sensitive data", context="user-pii")
 
 # Decrypt
-decrypted = crypto.decrypt_string(encrypted)
+decrypted = crypto.decrypt_string(encrypted, context="user-pii")
 ```
 
 ### Binary Data
 
 ```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 # Encrypt bytes
 data = b"binary data"
 encrypted = crypto.encrypt(data, context="user-pii")
 
 # Decrypt
-decrypted = crypto.decrypt(encrypted)
+decrypted = crypto.decrypt(encrypted, context="user-pii")
 ```
 
 ### JSON Objects
 
 ```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 user = {"name": "John", "ssn": "123-45-6789"}
 encrypted = crypto.encrypt_json(user, context="user-pii")
-decrypted = crypto.decrypt_json(encrypted)
+decrypted = crypto.decrypt_json(encrypted, context="user-pii")
 ```
 
 ---
@@ -42,6 +52,10 @@ decrypted = crypto.decrypt_json(encrypted)
 Associated Data (AAD) is authenticated but not encrypted. Use it to bind ciphertext to specific metadata.
 
 ```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 # Encrypt with AAD
 encrypted = crypto.encrypt_string(
     "sensitive data",
@@ -52,6 +66,7 @@ encrypted = crypto.encrypt_string(
 # Decrypt - AAD must match exactly
 decrypted = crypto.decrypt_string(
     encrypted,
+    context="user-pii",
     associated_data=b"user_id:12345"
 )
 ```
@@ -83,6 +98,10 @@ Select the appropriate context for your data:
 Encrypt specific fields in a database:
 
 ```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 class User:
     def __init__(self, email, ssn):
         self.email = email
@@ -90,7 +109,7 @@ class User:
 
     @property
     def ssn(self):
-        return crypto.decrypt_string(self._ssn_encrypted)
+        return crypto.decrypt_string(self._ssn_encrypted, context="user-pii")
 ```
 
 ---
@@ -100,6 +119,10 @@ class User:
 Process multiple items efficiently:
 
 ```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 # Encrypt multiple items
 items = [
     {"data": b"item1", "context": "user-pii"},
@@ -120,15 +143,18 @@ for result in results:
 ## Error Handling
 
 ```python
-from cryptoserve.exceptions import (
-    DecryptionError,
+from cryptoserve import CryptoServe
+from cryptoserve import (
+    CryptoServeError,
     AuthorizationError,
     ContextNotFoundError
 )
 
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 try:
-    decrypted = crypto.decrypt_string(ciphertext)
-except DecryptionError:
+    decrypted = crypto.decrypt_string(ciphertext, context="user-pii")
+except CryptoServeError:
     # Ciphertext corrupted or wrong key
     log.error("Decryption failed")
 except AuthorizationError:

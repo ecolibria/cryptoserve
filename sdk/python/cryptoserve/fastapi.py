@@ -3,6 +3,13 @@ FastAPI integration for CryptoServe.
 
 Provides field-level encryption for Pydantic models and SQLAlchemy.
 
+Setup (required before using encryption):
+    from cryptoserve import CryptoServe
+    from cryptoserve.fastapi import configure
+
+    crypto = CryptoServe(app_name="my-api", team="platform")
+    configure(crypto)
+
 Usage with Pydantic:
     from cryptoserve.fastapi import EncryptedStr
 
@@ -28,14 +35,54 @@ Usage with decorator:
         ssn: str
 """
 
-from typing import Any, Callable, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Type, TypeVar, get_type_hints, TYPE_CHECKING
 from functools import wraps
 
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
+if TYPE_CHECKING:
+    from cryptoserve import CryptoServe
+
 # Type variable for generic model decoration
 T = TypeVar("T")
+
+# Module-level CryptoServe instance
+_crypto_instance: "CryptoServe | None" = None
+
+
+def configure(crypto_instance: "CryptoServe") -> None:
+    """
+    Configure the FastAPI integration with a CryptoServe instance.
+
+    This must be called before using any encrypted fields.
+
+    Args:
+        crypto_instance: Initialized CryptoServe instance
+
+    Example:
+        from cryptoserve import CryptoServe
+        from cryptoserve.fastapi import configure
+
+        crypto = CryptoServe(app_name="my-api", team="platform")
+        configure(crypto)
+    """
+    global _crypto_instance
+    _crypto_instance = crypto_instance
+
+
+def _get_crypto() -> "CryptoServe":
+    """Get the configured CryptoServe instance."""
+    if _crypto_instance is None:
+        raise RuntimeError(
+            "CryptoServe not configured. Call cryptoserve.fastapi.configure(crypto) first.\n\n"
+            "Example:\n"
+            "  from cryptoserve import CryptoServe\n"
+            "  from cryptoserve.fastapi import configure\n\n"
+            "  crypto = CryptoServe(app_name='my-api', team='platform')\n"
+            "  configure(crypto)"
+        )
+    return _crypto_instance
 
 
 class EncryptedStr:
@@ -74,8 +121,6 @@ class EncryptedStrType:
         self, source_type: Any, handler: GetCoreSchemaHandler
     ) -> CoreSchema:
         """Generate Pydantic core schema for encrypted string."""
-        from cryptoserve import crypto
-
         context = self.context
 
         def encrypt_value(value: str) -> str:
@@ -83,11 +128,13 @@ class EncryptedStrType:
             if value.startswith("ENC:"):
                 # Already encrypted
                 return value
+            crypto = _get_crypto()
             return "ENC:" + crypto.encrypt_string(value, context)
 
         def decrypt_value(value: str) -> str:
             """Decrypt on output."""
             if value.startswith("ENC:"):
+                crypto = _get_crypto()
                 return crypto.decrypt_string(value[4:], context)
             return value
 
@@ -148,7 +195,6 @@ def encrypt_fields(**field_contexts: str) -> Callable[[Type[T]], Type[T]]:
     """
     def decorator(cls: Type[T]) -> Type[T]:
         from pydantic import BaseModel, model_validator
-        from cryptoserve import crypto
 
         if not issubclass(cls, BaseModel):
             raise TypeError("@encrypt_fields can only be used with Pydantic models")
@@ -158,6 +204,7 @@ def encrypt_fields(**field_contexts: str) -> Callable[[Type[T]], Type[T]]:
         @wraps(original_init)
         def new_init(self, **data):
             # Encrypt specified fields before passing to original init
+            crypto = _get_crypto()
             for field_name, context in field_contexts.items():
                 if field_name in data and data[field_name] is not None:
                     value = data[field_name]
@@ -175,6 +222,7 @@ def encrypt_fields(**field_contexts: str) -> Callable[[Type[T]], Type[T]]:
                 def getter(self):
                     value = getattr(self, f"_{fn}", None) or object.__getattribute__(self, fn)
                     if isinstance(value, str) and value.startswith("ENC:"):
+                        crypto = _get_crypto()
                         return crypto.decrypt_string(value[4:], ctx)
                     return value
                 return getter
@@ -240,7 +288,7 @@ try:
             """Encrypt value before storing in database."""
             if value is None:
                 return None
-            from cryptoserve import crypto
+            crypto = _get_crypto()
             return "ENC:" + crypto.encrypt_string(value, self.context)
 
         def process_result_value(self, value: str | None, dialect) -> str | None:
@@ -249,7 +297,7 @@ try:
                 return None
             if not value.startswith("ENC:"):
                 return value  # Not encrypted (legacy data)
-            from cryptoserve import crypto
+            crypto = _get_crypto()
             return crypto.decrypt_string(value[4:], self.context)
 
 except ImportError:
@@ -259,6 +307,7 @@ except ImportError:
 
 # Convenience imports for common patterns
 __all__ = [
+    "configure",
     "EncryptedStr",
     "EncryptedStrType",
     "encrypted_field",

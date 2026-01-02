@@ -46,11 +46,69 @@ The `CryptoServe` class provides:
 |--------|-------------|
 | `encrypt(plaintext, context)` | Encrypt binary data |
 | `decrypt(ciphertext, context)` | Decrypt binary data |
+| `encrypt_string(text, context)` | Encrypt string (returns base64) |
+| `decrypt_string(ciphertext, context)` | Decrypt to string |
+| `encrypt_json(obj, context)` | Encrypt JSON object |
+| `decrypt_json(ciphertext, context)` | Decrypt to JSON |
 | `sign(data, key_id)` | Create digital signature |
 | `verify_signature(data, signature, key_id)` | Verify signature |
 | `hash(data, algorithm)` | Compute cryptographic hash |
 | `mac(data, key, algorithm)` | Compute MAC |
 | `health_check()` | Verify connection |
+| `cache_stats()` | Get cache performance stats |
+| `invalidate_cache(context)` | Clear cached keys |
+
+## Performance Features
+
+CryptoServe SDK includes built-in performance optimizations:
+
+### Local Key Caching
+
+Keys are cached locally to reduce network round-trips:
+
+- **First operation**: ~5-50ms (fetches key from server)
+- **Subsequent operations**: ~0.1-0.5ms (local crypto with cached key)
+
+```python
+from cryptoserve import CryptoServe
+
+# Enable caching (default: enabled)
+crypto = CryptoServe(
+    app_name="my-service",
+    team="platform",
+    enable_cache=True,   # Default: True
+    cache_ttl=300.0,     # 5 minutes (default)
+    cache_size=100,      # Max cached keys (default)
+)
+
+# First call fetches key from server
+encrypted = crypto.encrypt(b"data", context="user-pii")  # ~10ms
+
+# Subsequent calls use cached key
+encrypted = crypto.encrypt(b"more data", context="user-pii")  # ~0.2ms
+```
+
+### Cache Statistics
+
+Monitor cache performance:
+
+```python
+stats = crypto.cache_stats()
+print(f"Hit rate: {stats['hit_rate']:.1%}")
+print(f"Cached contexts: {stats['contexts']}")
+```
+
+### Cache Invalidation
+
+Invalidate cached keys (e.g., after key rotation):
+
+```python
+# Invalidate specific context
+crypto.invalidate_cache("user-pii")
+
+# Invalidate all cached keys
+crypto.invalidate_cache()
+```
 
 ## Health Check
 
@@ -65,23 +123,16 @@ else:
     print("Connection failed")
 ```
 
-## Legacy Mode (Identity-Embedded SDK)
-
-For backward compatibility:
-
-```python
-from cryptoserve import crypto
-
-# Requires downloading personalized SDK
-encrypted = crypto.encrypt_string("my secret", context="user-pii")
-decrypted = crypto.decrypt_string(encrypted, context="user-pii")
-```
-
 ## FastAPI Integration
 
 ```python
+from cryptoserve import CryptoServe
+from cryptoserve.fastapi import configure, EncryptedStr
 from pydantic import BaseModel
-from cryptoserve.fastapi import EncryptedStr
+
+# Configure once at startup
+crypto = CryptoServe(app_name="my-api", team="platform")
+configure(crypto)
 
 class User(BaseModel):
     name: str
@@ -91,8 +142,13 @@ class User(BaseModel):
 ## SQLAlchemy Integration
 
 ```python
+from cryptoserve import CryptoServe
+from cryptoserve.fastapi import configure, EncryptedString
 from sqlalchemy import Column, Integer
-from cryptoserve.fastapi import EncryptedString
+
+# Configure once at startup
+crypto = CryptoServe(app_name="my-api", team="platform")
+configure(crypto)
 
 class User(Base):
     id = Column(Integer, primary_key=True)
@@ -145,11 +201,13 @@ CryptoServe uses a modular architecture for flexibility:
 
 ```python
 from cryptoserve import (
-    crypto,
+    CryptoServe,
     AuthenticationError,
     AuthorizationError,
     ContextNotFoundError,
 )
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 try:
     ciphertext = crypto.encrypt(data, context="user-pii")

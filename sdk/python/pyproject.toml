@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryptoserve"
-version = "0.6.0"
-description = "CryptoServe SDK - Zero-config cryptographic operations with auto-registration"
+version = "0.8.0"
+description = "CryptoServe SDK - Zero-config cryptographic operations with auto-registration and local key caching"
 readme = "README.md"
 license = {text = "AGPL-3.0"}
 requires-python = ">=3.9"
@@ -23,10 +23,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security :: Cryptography",
 ]
-keywords = ["cryptography", "encryption", "security", "sdk"]
+keywords = ["cryptography", "encryption", "security", "sdk", "performance", "caching"]
 dependencies = [
     "cryptoserve-core>=0.1.0",
     "cryptoserve-client>=0.1.0",
+    "cryptography>=41.0.0",  # For local key caching
 ]
 
 [project.urls]

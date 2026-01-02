@@ -70,7 +70,9 @@ pip install http://localhost:8001/sdk/download/YOUR_TOKEN/python
 Create a Python file and try it out:
 
 ```python filename="demo.py" copy
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-service", team="engineering")
 
 # Encrypt a string
 encrypted = crypto.encrypt_string(
@@ -80,13 +82,13 @@ encrypted = crypto.encrypt_string(
 print(f"Encrypted: {encrypted[:50]}...")
 
 # Decrypt it back
-decrypted = crypto.decrypt_string(encrypted)
+decrypted = crypto.decrypt_string(encrypted, context="user-pii")
 print(f"Decrypted: {decrypted}")
 
 # Works with binary data too
 binary_data = b"sensitive binary data"
 ciphertext = crypto.encrypt(binary_data, context="general")
-plaintext = crypto.decrypt(ciphertext)
+plaintext = crypto.decrypt(ciphertext, context="general")
 print(f"Binary roundtrip: {plaintext == binary_data}")
 ```
 

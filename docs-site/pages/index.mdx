@@ -23,11 +23,14 @@ import { Cards, Card, Steps, Callout, Tabs } from 'nextra/components'
 </div>
 
 ```python copy
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
 
-# No configuration needed - identity is embedded in your SDK
-ciphertext = crypto.encrypt("sensitive data", context="user-pii")
-plaintext = crypto.decrypt(ciphertext)
+# One-time: cryptoserve login
+crypto = CryptoServe(app_name="my-app", team="platform")
+
+# Encrypt and decrypt with zero config!
+ciphertext = crypto.encrypt(b"sensitive data", context="user-pii")
+plaintext = crypto.decrypt(ciphertext, context="user-pii")
 ```
 
 ---
@@ -89,13 +92,15 @@ pip install https://your-server/sdk/download/YOUR_TOKEN/python
 Use the SDK with a single line of code. The right algorithm is selected automatically.
 
 ```python copy
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Encrypt with automatic algorithm selection
 encrypted = crypto.encrypt_string("user@example.com", context="user-pii")
 
 # Decrypt seamlessly
-email = crypto.decrypt_string(encrypted)
+email = crypto.decrypt_string(encrypted, context="user-pii")
 ```
 </Steps>
 

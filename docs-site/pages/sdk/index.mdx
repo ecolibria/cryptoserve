@@ -24,16 +24,15 @@ Zero-configuration SDKs for CryptoServe.
 <Tabs items={['Python', 'TypeScript']}>
   <Tabs.Tab>
 ```python copy
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Encrypt
 encrypted = crypto.encrypt_string("data", context="user-pii")
 
 # Decrypt
-decrypted = crypto.decrypt_string(encrypted)
-
-# Async support
-encrypted = await crypto.async_encrypt(data)
+decrypted = crypto.decrypt_string(encrypted, context="user-pii")
 ```
   </Tabs.Tab>
   <Tabs.Tab>

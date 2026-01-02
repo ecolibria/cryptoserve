@@ -185,20 +185,6 @@ if crypto.health_check():
 
 ---
 
-## Legacy API (Identity-Embedded SDK)
-
-For backward compatibility, the identity-embedded SDK is still supported:
-
-```python
-from cryptoserve import crypto
-
-# Requires downloading personalized SDK
-encrypted = crypto.encrypt_string("Hello World!", context="user-pii")
-decrypted = crypto.decrypt_string(encrypted)
-```
-
----
-
 ## API Reference
 
 ### Encryption
@@ -208,7 +194,9 @@ decrypted = crypto.decrypt_string(encrypted)
 Encrypt binary data.
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Encrypt bytes
 data = b"binary data here"
@@ -238,6 +226,7 @@ encrypted = crypto.encrypt(
 Encrypt a string (UTF-8 encoded).
 
 ```python
+# Using the crypto instance from above
 encrypted = crypto.encrypt_string("sensitive text", context="user-pii")
 ```
 
@@ -255,6 +244,7 @@ encrypted = crypto.encrypt_string("sensitive text", context="user-pii")
 Encrypt a JSON-serializable object.
 
 ```python
+# Using the crypto instance from above
 user = {"name": "John", "ssn": "123-45-6789"}
 encrypted = crypto.encrypt_json(user, context="user-pii")
 ```
@@ -445,25 +435,25 @@ asyncio.run(main())
 ## Error Handling
 
 ```python
-from cryptoserve import crypto
-from cryptoserve.exceptions import (
+from cryptoserve import CryptoServe
+from cryptoserve import (
     CryptoServeError,      # Base exception
-    DecryptionError,       # Decryption failed
+    AuthenticationError,   # Authentication failed
     AuthorizationError,    # Not authorized for context
     ContextNotFoundError,  # Context doesn't exist
-    PolicyViolationError,  # Blocked by policy
-    NetworkError,          # Connection issues
-    TokenExpiredError      # Token needs refresh
+    TokenRefreshError      # Token refresh failed
 )
 
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 try:
-    decrypted = crypto.decrypt_string(ciphertext)
-except DecryptionError as e:
-    print(f"Decryption failed: {e}")
+    decrypted = crypto.decrypt_string(ciphertext, context="user-pii")
+except AuthenticationError as e:
+    print(f"Authentication failed: {e}")
 except AuthorizationError as e:
     print(f"Not authorized: {e}")
-except PolicyViolationError as e:
-    print(f"Policy violation: {e.violations}")
+except ContextNotFoundError as e:
+    print(f"Context not found: {e}")
 except CryptoServeError as e:
     print(f"General error: {e}")
 ```
@@ -475,13 +465,9 @@ except CryptoServeError as e:
 Full type annotations for IDE support:
 
 ```python
-from cryptoserve import crypto
-from cryptoserve.types import (
-    EncryptResult,
-    DecryptResult,
-    ContextInfo,
-    IdentityInfo
-)
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 def encrypt_user_data(user: dict) -> str:
     """Encrypt user data and return ciphertext."""
@@ -497,7 +483,10 @@ def encrypt_user_data(user: dict) -> str:
 ```python
 # models.py
 from django.db import models
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+# Initialize once at module level
+crypto = CryptoServe(app_name="my-django-app", team="platform")
 
 class User(models.Model):
     email = models.EmailField()
@@ -505,7 +494,7 @@ class User(models.Model):
 
     @property
     def ssn(self):
-        return crypto.decrypt_string(self._ssn_encrypted)
+        return crypto.decrypt_string(self._ssn_encrypted, context="user-pii")
 
     @ssn.setter
     def ssn(self, value):
@@ -517,10 +506,15 @@ class User(models.Model):
 ### FastAPI Integration
 
 ```python
-from fastapi import FastAPI, Depends
-from cryptoserve import crypto
+from fastapi import FastAPI
+from cryptoserve import CryptoServe
+from cryptoserve.fastapi import configure
 
 app = FastAPI()
+
+# Initialize CryptoServe at startup
+crypto = CryptoServe(app_name="my-fastapi-app", team="platform")
+configure(crypto)  # Configure FastAPI integration
 
 @app.post("/users")
 async def create_user(ssn: str):
@@ -531,7 +525,7 @@ async def create_user(ssn: str):
 @app.get("/users/{user_id}/ssn")
 async def get_ssn(user_id: str):
     # Fetch encrypted_ssn from database
-    return {"ssn": crypto.decrypt_string(encrypted_ssn)}
+    return {"ssn": crypto.decrypt_string(encrypted_ssn, context="user-pii")}
 ```
 
 ### SQLAlchemy Integration
@@ -539,7 +533,10 @@ async def get_ssn(user_id: str):
 ```python
 from sqlalchemy import Column, String
 from sqlalchemy.ext.hybrid import hybrid_property
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+# Initialize once at module level
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 class User(Base):
     __tablename__ = 'users'
@@ -550,7 +547,7 @@ class User(Base):
     @hybrid_property
     def ssn(self):
         if self._ssn:
-            return crypto.decrypt_string(self._ssn)
+            return crypto.decrypt_string(self._ssn, context="user-pii")
         return None
 
     @ssn.setter
@@ -564,7 +561,9 @@ class User(Base):
 ### File Encryption
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 def encrypt_file(input_path: str, output_path: str, context: str):
     """Encrypt a file."""
@@ -576,12 +575,12 @@ def encrypt_file(input_path: str, output_path: str, context: str):
     with open(output_path, "wb") as f:
         f.write(ciphertext)
 
-def decrypt_file(input_path: str, output_path: str):
+def decrypt_file(input_path: str, output_path: str, context: str):
     """Decrypt a file."""
     with open(input_path, "rb") as f:
         ciphertext = f.read()
 
-    plaintext = crypto.decrypt(ciphertext)
+    plaintext = crypto.decrypt(ciphertext, context=context)
 
     with open(output_path, "wb") as f:
         f.write(plaintext)
@@ -593,34 +592,46 @@ def decrypt_file(input_path: str, output_path: str):
 
 ### Mock Mode
 
-For testing without a server:
+For testing without a server, use environment variables or mock the CryptoServe class:
 
 ```python
-from cryptoserve import crypto
-from cryptoserve.testing import enable_mock_mode
+from unittest.mock import Mock, patch
+from cryptoserve import CryptoServe
 
-# In your test setup
-enable_mock_mode()
+# Option 1: Mock the entire class
+@patch('mymodule.CryptoServe')
+def test_encryption(mock_crypto_class):
+    mock_instance = Mock()
+    mock_crypto_class.return_value = mock_instance
+    mock_instance.encrypt_string.return_value = "encrypted"
+    mock_instance.decrypt_string.return_value = "decrypted"
 
-# Now all operations work locally
-encrypted = crypto.encrypt_string("test", context="test-context")
-decrypted = crypto.decrypt_string(encrypted)
-assert decrypted == "test"
+    # Your test code here
+
+# Option 2: Use a test server
+crypto = CryptoServe(
+    app_name="test-app",
+    team="test",
+    server_url="http://localhost:8000"  # Test server
+)
 ```
 
 ### Pytest Fixture
 
 ```python
 import pytest
-from cryptoserve.testing import mock_crypto
+from unittest.mock import Mock, patch
 
-@pytest.fixture(autouse=True)
-def mock_cryptoserve():
-    with mock_crypto():
-        yield
+@pytest.fixture
+def mock_crypto():
+    with patch('mymodule.CryptoServe') as mock:
+        instance = Mock()
+        mock.return_value = instance
+        instance.encrypt_string.side_effect = lambda x, **kw: f"ENC:{x}"
+        instance.decrypt_string.side_effect = lambda x, **kw: x.replace("ENC:", "")
+        yield instance
 
-def test_encryption():
-    from cryptoserve import crypto
-    encrypted = crypto.encrypt_string("test", context="user-pii")
-    assert crypto.decrypt_string(encrypted) == "test"
+def test_encryption(mock_crypto):
+    encrypted = mock_crypto.encrypt_string("test", context="user-pii")
+    assert "test" in mock_crypto.decrypt_string(encrypted, context="user-pii")
 ```

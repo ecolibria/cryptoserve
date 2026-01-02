@@ -189,7 +189,9 @@ This means:
 
 ```python
 import json
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 user_data = {
     "name": "John Doe",
@@ -207,7 +209,7 @@ encrypted = crypto.encrypt_string(
 # ...
 
 # Later, decrypt and parse
-decrypted = json.loads(crypto.decrypt_string(encrypted))
+decrypted = json.loads(crypto.decrypt_string(encrypted, context="user-pii"))
 ```
 
 ### Encrypt with Associated Data
@@ -225,6 +227,7 @@ encrypted = crypto.encrypt_string(
 # Decryption will fail if associated_data doesn't match
 decrypted = crypto.decrypt_string(
     encrypted,
+    context="user-pii",
     associated_data=b"user_id:12345"
 )
 ```
@@ -232,17 +235,19 @@ decrypted = crypto.decrypt_string(
 ### Error Handling
 
 ```python
-from cryptoserve import crypto
-from cryptoserve.exceptions import (
-    DecryptionError,
+from cryptoserve import CryptoServe
+from cryptoserve import (
+    AuthenticationError,
     AuthorizationError,
     ContextNotFoundError
 )
 
+crypto = CryptoServe(app_name="my-app", team="platform")
+
 try:
-    decrypted = crypto.decrypt_string(ciphertext)
-except DecryptionError as e:
-    print(f"Decryption failed: {e}")
+    decrypted = crypto.decrypt_string(ciphertext, context="user-pii")
+except AuthenticationError as e:
+    print(f"Authentication failed: {e}")
 except AuthorizationError as e:
     print(f"Not authorized for this context: {e}")
 except ContextNotFoundError as e:

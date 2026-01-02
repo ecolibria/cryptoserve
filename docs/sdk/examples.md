@@ -9,14 +9,16 @@ Common patterns and use cases for CryptoServe SDKs.
 === "Python"
 
     ```python
-    from cryptoserve import crypto
+    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="platform")
 
     # Encrypt
     secret = "My secret message"
     encrypted = crypto.encrypt_string(secret, context="user-pii")
 
     # Decrypt
-    decrypted = crypto.decrypt_string(encrypted)
+    decrypted = crypto.decrypt_string(encrypted, context="user-pii")
     assert decrypted == secret
     ```
 
@@ -39,7 +41,9 @@ Common patterns and use cases for CryptoServe SDKs.
 === "Python"
 
     ```python
-    from cryptoserve import crypto
+    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="platform")
 
     # Read a file
     with open("document.pdf", "rb") as f:
@@ -56,7 +60,7 @@ Common patterns and use cases for CryptoServe SDKs.
     with open("document.pdf.enc", "rb") as f:
         encrypted = f.read()
 
-    decrypted = crypto.decrypt(encrypted)
+    decrypted = crypto.decrypt(encrypted, context="documents")
     ```
 
 === "TypeScript"
@@ -84,7 +88,9 @@ Common patterns and use cases for CryptoServe SDKs.
 === "Python"
 
     ```python
-    from cryptoserve import crypto
+    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="platform")
 
     user = {
         "name": "John Doe",
@@ -100,7 +106,7 @@ Common patterns and use cases for CryptoServe SDKs.
     encrypted = crypto.encrypt_json(user, context="user-pii")
 
     # Decrypt
-    decrypted_user = crypto.decrypt_json(encrypted)
+    decrypted_user = crypto.decrypt_json(encrypted, context="user-pii")
     print(decrypted_user["name"])  # "John Doe"
     ```
 
@@ -138,7 +144,9 @@ Use associated data to bind ciphertext to a specific context:
 === "Python"
 
     ```python
-    from cryptoserve import crypto
+    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="platform")
 
     user_id = "user_12345"
     secret_data = "sensitive information"
@@ -153,6 +161,7 @@ Use associated data to bind ciphertext to a specific context:
     # Decrypt - AAD must match
     decrypted = crypto.decrypt_string(
         encrypted,
+        context="user-pii",
         associated_data=f"user:{user_id}".encode()
     )
 
@@ -160,9 +169,10 @@ Use associated data to bind ciphertext to a specific context:
     try:
         crypto.decrypt_string(
             encrypted,
+            context="user-pii",
             associated_data=b"user:wrong_id"
         )
-    except DecryptionError:
+    except Exception:
         print("AAD mismatch - decryption failed")
     ```
 
@@ -196,9 +206,10 @@ Use associated data to bind ciphertext to a specific context:
 from sqlalchemy import Column, String, create_engine
 from sqlalchemy.orm import declarative_base, Session
 from sqlalchemy.ext.hybrid import hybrid_property
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
 
 Base = declarative_base()
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 class User(Base):
     __tablename__ = 'users'
@@ -211,7 +222,7 @@ class User(Base):
     @hybrid_property
     def ssn(self):
         if self._ssn:
-            return crypto.decrypt_string(self._ssn)
+            return crypto.decrypt_string(self._ssn, context="user-pii")
         return None
 
     @ssn.setter
@@ -224,7 +235,7 @@ class User(Base):
     @hybrid_property
     def credit_card(self):
         if self._credit_card:
-            return crypto.decrypt_string(self._credit_card)
+            return crypto.decrypt_string(self._credit_card, context="payment-data")
         return None
 
     @credit_card.setter
@@ -255,7 +266,9 @@ print(user.ssn)  # "123-45-6789"
 
 ```python
 from django.db import models
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-django-app", team="platform")
 
 
 class EncryptedCharField(models.TextField):
@@ -268,7 +281,7 @@ class EncryptedCharField(models.TextField):
     def from_db_value(self, value, expression, connection):
         if value is None:
             return None
-        return crypto.decrypt_string(value)
+        return crypto.decrypt_string(value, context=self.context)
 
     def get_prep_value(self, value):
         if value is None:
@@ -306,10 +319,12 @@ print(patient.ssn)  # "123-45-6789"
 ```python
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from cryptoserve import crypto
-from cryptoserve.exceptions import CryptoServeError
+from cryptoserve import CryptoServe, CryptoServeError
+from cryptoserve.fastapi import configure
 
 app = FastAPI()
+crypto = CryptoServe(app_name="my-fastapi-app", team="platform")
+configure(crypto)
 
 
 class CreateUserRequest(BaseModel):
@@ -342,7 +357,7 @@ async def create_user(request: CreateUserRequest):
 @app.get("/users/{user_id}/ssn")
 async def get_user_ssn(user_id: str, encrypted_ssn: str):
     try:
-        ssn = crypto.decrypt_string(encrypted_ssn)
+        ssn = crypto.decrypt_string(encrypted_ssn, context="user-pii")
         return {"ssn": ssn}
     except CryptoServeError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -386,7 +401,9 @@ app.listen(3000);
 ### Process Multiple Records
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Prepare batch
 records = [
@@ -395,26 +412,18 @@ records = [
     {"id": "3", "ssn": "333-33-3333"},
 ]
 
-# Batch encrypt
-encrypt_items = [
-    {"data": r["ssn"].encode(), "context": "user-pii"}
-    for r in records
-]
-results = crypto.batch_encrypt(encrypt_items)
+# Encrypt each record
+for record in records:
+    record["ssn_encrypted"] = crypto.encrypt_string(
+        record["ssn"], context="user-pii"
+    )
 
-# Pair results with records
-for record, result in zip(records, results):
-    if result.success:
-        record["ssn_encrypted"] = result.ciphertext.decode()
-    else:
-        print(f"Failed to encrypt {record['id']}: {result.error}")
-
-# Batch decrypt
-decrypt_items = [
-    {"ciphertext": r["ssn_encrypted"].encode()}
-    for r in records
-]
-decrypted = crypto.batch_decrypt(decrypt_items)
+# Decrypt each record
+for record in records:
+    decrypted = crypto.decrypt_string(
+        record["ssn_encrypted"], context="user-pii"
+    )
+    print(f"Record {record['id']}: {decrypted}")
 ```
 
 ---
@@ -424,16 +433,16 @@ decrypted = crypto.batch_decrypt(decrypt_items)
 ### Comprehensive Error Handling
 
 ```python
-from cryptoserve import crypto
-from cryptoserve.exceptions import (
+from cryptoserve import CryptoServe
+from cryptoserve import (
     CryptoServeError,
-    DecryptionError,
+    AuthenticationError,
     AuthorizationError,
     ContextNotFoundError,
-    PolicyViolationError,
-    NetworkError,
-    TokenExpiredError
+    TokenRefreshError
 )
+
+crypto = CryptoServe(app_name="my-app", team="platform")
 
 
 def safe_encrypt(data: str, context: str) -> str | None:
@@ -443,48 +452,37 @@ def safe_encrypt(data: str, context: str) -> str | None:
 
     except AuthorizationError as e:
         # Identity not authorized for this context
-        logger.error(f"Authorization failed: {e}")
+        print(f"Authorization failed: {e}")
         raise PermissionError(f"Not authorized for context: {context}")
 
     except ContextNotFoundError as e:
         # Context doesn't exist
-        logger.error(f"Context not found: {e}")
+        print(f"Context not found: {e}")
         raise ValueError(f"Invalid context: {context}")
-
-    except PolicyViolationError as e:
-        # Blocked by policy
-        logger.warning(f"Policy violation: {e.violations}")
-        raise SecurityError(f"Operation blocked by policy")
-
-    except NetworkError as e:
-        # Connection issues
-        logger.error(f"Network error: {e}")
-        # Could retry here
-        raise ConnectionError("CryptoServe unavailable")
 
     except CryptoServeError as e:
         # Catch-all for other errors
-        logger.error(f"Encryption failed: {e}")
+        print(f"Encryption failed: {e}")
         raise
 
 
-def safe_decrypt(ciphertext: str) -> str | None:
+def safe_decrypt(ciphertext: str, context: str) -> str | None:
     """Decrypt with comprehensive error handling."""
     try:
-        return crypto.decrypt_string(ciphertext)
+        return crypto.decrypt_string(ciphertext, context=context)
 
-    except DecryptionError as e:
-        # Decryption failed (bad ciphertext, wrong key, etc.)
-        logger.error(f"Decryption failed: {e}")
+    except AuthenticationError as e:
+        # Authentication failed
+        print(f"Authentication failed: {e}")
         return None
 
-    except TokenExpiredError:
-        # Token needs refresh (SDK handles this, but just in case)
-        logger.warning("Token expired, retrying...")
-        return crypto.decrypt_string(ciphertext)
+    except TokenRefreshError:
+        # Token refresh failed
+        print("Token expired and refresh failed")
+        return None
 
     except CryptoServeError as e:
-        logger.error(f"Decryption error: {e}")
+        print(f"Decryption error: {e}")
         raise
 ```
 
@@ -496,38 +494,36 @@ def safe_decrypt(ciphertext: str) -> str | None:
 
 ```python
 import pytest
-from cryptoserve import crypto
-from cryptoserve.testing import enable_mock_mode, disable_mock_mode
+from unittest.mock import Mock, patch
 
 
-@pytest.fixture(autouse=True)
-def setup_mock():
-    """Enable mock mode for all tests."""
-    enable_mock_mode()
-    yield
-    disable_mock_mode()
+@pytest.fixture
+def mock_crypto():
+    """Create a mock CryptoServe instance for tests."""
+    with patch('mymodule.CryptoServe') as mock_class:
+        instance = Mock()
+        mock_class.return_value = instance
+
+        # Configure mock encrypt/decrypt behavior
+        encrypted_data = {}
+        def mock_encrypt(data, context):
+            key = f"{context}:{data}"
+            encrypted_data[key] = data
+            return f"ENC:{key}"
+
+        def mock_decrypt(ciphertext, context):
+            key = ciphertext.replace("ENC:", "")
+            return encrypted_data.get(key, "")
+
+        instance.encrypt_string.side_effect = mock_encrypt
+        instance.decrypt_string.side_effect = mock_decrypt
+        yield instance
 
 
-def test_encrypt_decrypt():
+def test_encrypt_decrypt(mock_crypto):
     """Test basic encryption/decryption."""
     original = "test data"
-    encrypted = crypto.encrypt_string(original, context="test")
-    decrypted = crypto.decrypt_string(encrypted)
+    encrypted = mock_crypto.encrypt_string(original, context="test")
+    decrypted = mock_crypto.decrypt_string(encrypted, context="test")
     assert decrypted == original
-
-
-def test_json_encryption():
-    """Test JSON encryption."""
-    data = {"key": "value", "number": 42}
-    encrypted = crypto.encrypt_json(data, context="test")
-    decrypted = crypto.decrypt_json(encrypted)
-    assert decrypted == data
-
-
-def test_binary_encryption():
-    """Test binary encryption."""
-    data = b"\x00\x01\x02\x03"
-    encrypted = crypto.encrypt(data, context="test")
-    decrypted = crypto.decrypt(encrypted)
-    assert decrypted == data
 ```
