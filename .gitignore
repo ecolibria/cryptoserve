@@ -46,3 +46,6 @@ backend/app/sdk_generator/output/
 # Logs
 *.log
 logs/
+
+# MkDocs build output
+site/

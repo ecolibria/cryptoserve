@@ -13,9 +13,10 @@ Get up and running with CryptoServe in 5 minutes.
 
 Open the dashboard at [http://localhost:3001](http://localhost:3001) and click **Sign in with GitHub**.
 
-![Sign In](../assets/screenshots/signin.png){ loading=lazy }
+!!! note "Dashboard Login"
+    The login page displays OAuth providers configured for your instance. Click your preferred provider to authenticate. After authorizing, you'll be redirected to the main dashboard.
 
-After authorizing, you'll be redirected to the dashboard.
+After authorizing, you'll see the dashboard with your identities and recent activity.
 
 ---
 

@@ -1,10 +1,37 @@
 /* CryptoServe Documentation Custom Styles */
 
+/* High contrast color scheme for better readability */
 :root {
-  --md-primary-fg-color: #5c6bc0;
-  --md-primary-fg-color--light: #8e99f3;
-  --md-primary-fg-color--dark: #26418f;
-  --md-accent-fg-color: #7c4dff;
+  --md-primary-fg-color: #1565c0;
+  --md-primary-fg-color--light: #1976d2;
+  --md-primary-fg-color--dark: #0d47a1;
+  --md-accent-fg-color: #00897b;
+
+  /* Improved text contrast */
+  --md-default-fg-color: #212121;
+  --md-default-fg-color--light: #424242;
+  --md-default-fg-color--lighter: #616161;
+}
+
+/* Better base typography */
+.md-typeset {
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  padding-bottom: 0.5rem;
+}
+
+.md-typeset p {
+  color: var(--md-default-fg-color--light);
 }
 
 /* Hero section styling */
@@ -14,19 +41,21 @@
 }
 
 .hero h1 {
-  font-size: 3rem;
+  font-size: 2.5rem;
   margin-bottom: 0.5rem;
+  color: var(--md-default-fg-color);
 }
 
 .hero h3 {
   font-weight: 400;
-  opacity: 0.8;
+  color: var(--md-default-fg-color--light);
   margin-bottom: 1.5rem;
 }
 
 /* Button styling */
 .md-button {
   margin: 0.5rem;
+  font-weight: 600;
 }
 
 /* Card grid improvements */
@@ -137,14 +166,38 @@
 
 /* Dark mode adjustments */
 [data-md-color-scheme="slate"] {
-  --md-default-fg-color--lightest: rgba(255, 255, 255, 0.12);
+  --md-default-fg-color: rgba(255, 255, 255, 0.9);
+  --md-default-fg-color--light: rgba(255, 255, 255, 0.75);
+  --md-default-fg-color--lighter: rgba(255, 255, 255, 0.6);
+  --md-default-fg-color--lightest: rgba(255, 255, 255, 0.15);
+  --md-default-bg-color: #1a1a2e;
+  --md-default-bg-color--light: #16213e;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2,
+[data-md-color-scheme="slate"] .md-typeset h3 {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+[data-md-color-scheme="slate"] .md-typeset p {
+  color: rgba(255, 255, 255, 0.8);
 }
 
 [data-md-color-scheme="slate"] .grid.cards > ul > li {
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 [data-md-color-scheme="slate"] .grid.cards > ul > li:hover {
   border-color: var(--md-primary-fg-color);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+[data-md-color-scheme="slate"] .md-typeset code {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background: rgba(255, 255, 255, 0.08);
 }
