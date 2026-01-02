@@ -24,7 +24,8 @@ except ImportError:
 
 from app.config import get_settings
 from app.database import init_db, close_db, get_session_maker, get_db
-from app.auth import github_oauth_router
+from app.auth.oauth import router as oauth_router
+from app.auth.providers.registry import initialize_providers
 from app.api import (
     identities_router,
     applications_router,
@@ -54,6 +55,9 @@ from app.api.admin import router as admin_router
 from app.api.algorithms import router as algorithms_router
 from app.api.tenants import router as tenants_router
 from app.api.public import router as public_router
+from app.api.ceremony import router as ceremony_router
+from app.api.compliance import router as compliance_router
+from app.api.rbac import router as rbac_router
 from app.models import Context
 from app.schemas.context import (
     ContextConfig,
@@ -523,6 +527,9 @@ async def lifespan(app: FastAPI):
     from app.core.startup import validate_startup
     validate_startup()  # Raises RuntimeError in STRICT mode if validation fails
 
+    # Initialize OAuth providers
+    initialize_providers()
+
     # Initialize database
     await init_db()
     await seed_default_contexts()
@@ -552,9 +559,59 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CryptoServe",
-    description="Cryptographic operations server with personalized SDK distribution",
+    description="""
+## Enterprise Cryptographic Operations Platform
+
+CryptoServe provides a comprehensive cryptographic operations server with:
+
+### Core Features
+- **Context-Based Encryption**: Automatic algorithm selection based on data classification
+- **Key Management**: AWS KMS integration with envelope encryption
+- **Post-Quantum Cryptography**: ML-KEM, ML-DSA, SLH-DSA support
+- **Secret Sharding**: Shamir's Secret Sharing with key ceremony workflow
+- **FIPS 140-2/140-3**: Compliance mode with approved algorithms
+
+### Security & Compliance
+- Multi-tenant isolation with RBAC
+- Full audit logging with algorithm tracking
+- GDPR, HIPAA, PCI-DSS, SOC2 context support
+- Cryptographic Bill of Materials (CBOM) generation
+
+### Developer Experience
+- Zero-config Python SDK
+- Auto-protection for third-party libraries
+- CLI tools for backup, migration, and policy management
+
+---
+**API Version**: 0.1.0 | **OpenAPI**: 3.1.0
+    """,
     version="0.1.0",
     lifespan=lifespan,
+    contact={
+        "name": "CryptoServe Support",
+        "url": "https://github.com/your-org/cryptoserve",
+    },
+    license_info={
+        "name": "Apache 2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+    },
+    openapi_tags=[
+        {"name": "auth", "description": "Authentication and authorization"},
+        {"name": "crypto", "description": "Encryption, decryption, and cryptographic operations"},
+        {"name": "contexts", "description": "Encryption context management"},
+        {"name": "keys", "description": "Key management operations"},
+        {"name": "secrets", "description": "Secret sharing and threshold cryptography"},
+        {"name": "ceremony", "description": "Key ceremony and master key sharding"},
+        {"name": "signatures", "description": "Digital signature operations"},
+        {"name": "hashing", "description": "Hashing and MAC operations"},
+        {"name": "passwords", "description": "Password hashing and verification"},
+        {"name": "certificates", "description": "Certificate operations"},
+        {"name": "inventory", "description": "Cryptographic inventory and CBOM"},
+        {"name": "policies", "description": "Policy management and enforcement"},
+        {"name": "audit", "description": "Audit logging and compliance"},
+        {"name": "admin", "description": "Administrative operations"},
+        {"name": "health", "description": "Health checks and status"},
+    ],
 )
 
 # Add rate limiter to app state (if available)
@@ -578,7 +635,7 @@ app.add_middleware(
 app.add_middleware(RequestLoggingMiddleware)
 
 # Include routers
-app.include_router(github_oauth_router)
+app.include_router(oauth_router)  # Multi-provider OAuth (GitHub, Google, Azure AD, Okta, OIDC)
 app.include_router(users_router)
 app.include_router(identities_router)
 app.include_router(applications_router)
@@ -606,6 +663,9 @@ app.include_router(algorithms_router)
 app.include_router(admin_router)
 app.include_router(tenants_router)
 app.include_router(public_router)
+app.include_router(ceremony_router)
+app.include_router(compliance_router)
+app.include_router(rbac_router)
 
 
 @app.get("/")

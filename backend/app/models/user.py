@@ -2,12 +2,16 @@
 
 from datetime import datetime, timezone
 from uuid import uuid4
+from typing import TYPE_CHECKING
 
-from sqlalchemy import String, DateTime, BigInteger, Boolean, ForeignKey
+from sqlalchemy import String, DateTime, BigInteger, Boolean, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.core.rbac import Role, Permission
 
 
 class User(Base):
@@ -43,7 +47,27 @@ class User(Base):
         DateTime(timezone=True),
         nullable=True
     )
+
+    # RBAC fields
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    role: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        default="developer",
+        doc="User role: owner, admin, developer, viewer, service_account"
+    )
+    custom_permissions: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        doc="Additional permissions beyond role defaults"
+    )
+    denied_permissions: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        doc="Permissions explicitly denied (overrides role)"
+    )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(
