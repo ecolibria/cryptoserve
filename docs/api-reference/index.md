@@ -2,6 +2,35 @@
 
 Complete reference documentation for the CryptoServe REST API.
 
+## Interactive API Documentation
+
+!!! tip "Try it live with Swagger UI"
+    CryptoServe provides **interactive API documentation** powered by OpenAPI 3.1:
+
+    <div class="grid cards" markdown>
+
+    -   :material-api:{ .lg .middle } **Swagger UI**
+
+        ---
+
+        Interactive API explorer with live request testing
+
+        [:octicons-arrow-right-24: Open Swagger UI](http://localhost:8001/docs){ .md-button }
+
+    -   :material-file-document-outline:{ .lg .middle } **ReDoc**
+
+        ---
+
+        Beautiful, three-panel API documentation
+
+        [:octicons-arrow-right-24: Open ReDoc](http://localhost:8001/redoc){ .md-button }
+
+    </div>
+
+    **OpenAPI Specification**: [`/openapi.json`](http://localhost:8001/openapi.json) - Import into Postman, Insomnia, or any OpenAPI-compatible tool.
+
+---
+
 ## Base URL
 
 ```
@@ -143,10 +172,9 @@ Response includes pagination info:
 }
 ```
 
-## OpenAPI Specification
+## Client SDKs
 
-Interactive API documentation is available at:
+For type-safe API access, use our official SDKs:
 
-- **Swagger UI**: `http://localhost:8001/docs`
-- **ReDoc**: `http://localhost:8001/redoc`
-- **OpenAPI JSON**: `http://localhost:8001/openapi.json`
+- [Python SDK](../sdk/python.md) - Full async support, Django/FastAPI integrations
+- [TypeScript SDK](../sdk/typescript.md) - Browser and Node.js compatible

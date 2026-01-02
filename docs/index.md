@@ -22,8 +22,18 @@ Eliminate the complexity of implementing encryption correctly. Download a person
 
 [Get Started](getting-started/quickstart.md){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/keytum/crypto-serve){ .md-button }
+[API Docs :material-api:](http://localhost:8001/docs){ .md-button }
 
 </div>
+
+---
+
+!!! example "Interactive API Documentation"
+    **Try the API instantly** with our OpenAPI-powered documentation:
+
+    - **[Swagger UI](/docs)** - Interactive API explorer with live request testing
+    - **[ReDoc](/redoc)** - Three-panel documentation with search
+    - **[OpenAPI Spec](/openapi.json)** - Import into Postman, Insomnia, or generate client SDKs
 
 ---
 
