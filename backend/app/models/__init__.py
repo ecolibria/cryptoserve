@@ -1,7 +1,8 @@
 """Database models."""
 
+from app.models.tenant import Tenant, DEFAULT_TENANT_ID, DEFAULT_TENANT_SLUG
 from app.models.user import User
-from app.models.organization import OrganizationSettings
+from app.models.organization import OrganizationSettings  # Legacy, kept for migration
 from app.models.identity import Identity, IdentityType, IdentityStatus
 from app.models.application import Application, ApplicationStatus
 from app.models.context import Context
@@ -17,8 +18,13 @@ from app.models.crypto_inventory import (
 )
 
 __all__ = [
+    # Multi-tenancy
+    "Tenant",
+    "DEFAULT_TENANT_ID",
+    "DEFAULT_TENANT_SLUG",
+    # Users
     "User",
-    "OrganizationSettings",
+    "OrganizationSettings",  # Legacy, kept for migration
     # Legacy Identity (keeping for backward compatibility)
     "Identity",
     "IdentityType",

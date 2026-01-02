@@ -435,7 +435,7 @@ class CryptoEngine:
             # Handle hybrid PQC mode separately
             if mode == CipherMode.HYBRID:
                 packed, key_id, algorithm = await self._encrypt_hybrid(
-                    db, plaintext, context_name, algorithm, associated_data
+                    db, plaintext, context_name, identity.tenant_id, algorithm, associated_data
                 )
                 # For hybrid, we don't have a nonce in the same sense - it's embedded
                 nonce = b""  # Nonce is internal to the hybrid ciphertext
@@ -458,7 +458,7 @@ class CryptoEngine:
             # Get key for context
             key_size_bytes = key_bits // 8
             key, key_id = await key_manager.get_or_create_key(
-                db, context_name, key_size=key_size_bytes
+                db, context_name, identity.tenant_id, key_size=key_size_bytes
             )
 
             # Generate nonce/IV (12 bytes for GCM/CCM/ChaCha20, 16 for CBC/CTR)
@@ -543,6 +543,7 @@ class CryptoEngine:
                 )
 
             audit = AuditLog(
+                tenant_id=identity.tenant_id,
                 operation="encrypt",
                 context=context_name,
                 success=success,
@@ -905,6 +906,7 @@ class CryptoEngine:
         db: AsyncSession,
         plaintext: bytes,
         context_name: str,
+        tenant_id: str,
         algorithm: str,
         associated_data: bytes | None = None,
     ) -> tuple[bytes, str, str]:
@@ -917,6 +919,7 @@ class CryptoEngine:
             db: Database session
             plaintext: Data to encrypt
             context_name: Encryption context name
+            tenant_id: Tenant ID for isolation
             algorithm: Hybrid algorithm (e.g., "AES-256-GCM+ML-KEM-768")
             associated_data: Optional AAD
 
@@ -948,6 +951,7 @@ class CryptoEngine:
         await key_manager.store_pqc_key(
             db,
             context_name,
+            tenant_id,
             keypair.key_id,
             keypair.private_key,
             keypair.public_key,
@@ -1148,6 +1152,7 @@ class CryptoEngine:
                 pass  # If we can't extract header info, use None values
 
             audit = AuditLog(
+                tenant_id=identity.tenant_id,
                 operation="decrypt",
                 context=context_name,
                 success=success,
@@ -1278,6 +1283,7 @@ class CryptoEngine:
         for result in results:
             if not result.passed:
                 violation = PolicyViolationLog(
+                    tenant_id=identity.tenant_id,
                     policy_name=result.policy_name,
                     severity=result.severity.value,
                     message=result.message,

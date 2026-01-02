@@ -6,6 +6,7 @@ from enum import Enum
 
 from sqlalchemy import String, DateTime, ForeignKey, Integer, Boolean, Text, JSON
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -52,6 +53,14 @@ class CryptoInventoryReport(Base):
     __tablename__ = "crypto_inventory_reports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
 
     # Human-readable reference ID for tracking (e.g., CBOM-A7B3C9D2)
     scan_ref: Mapped[str] = mapped_column(
@@ -194,6 +203,14 @@ class CryptoLibraryUsage(Base):
     __tablename__ = "crypto_library_usage"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True
+    )
 
     # Library identification
     library_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)

@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, timedelta
 
 from app.core.identity_manager import identity_manager
-from app.models import Identity, IdentityType, IdentityStatus, User
+from app.models import Identity, IdentityType, IdentityStatus, User, Tenant
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_revoke_identity(db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_revoke_other_users_identity(db_session, test_user):
+async def test_revoke_other_users_identity(db_session, test_user, test_tenant):
     """Test that users cannot revoke other users' identities."""
     identity, _ = await identity_manager.create_identity(
         db=db_session,
@@ -141,8 +141,9 @@ async def test_revoke_other_users_identity(db_session, test_user):
         allowed_contexts=["general"],
     )
 
-    # Create another user
+    # Create another user in the same tenant
     other_user = User(
+        tenant_id=test_tenant.id,
         github_id=99999,
         github_username="otheruser",
         email="other@example.com",

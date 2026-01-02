@@ -176,6 +176,7 @@ class KeyManager:
         self,
         db: AsyncSession,
         context: str,
+        tenant_id: str,
         key_size: int = KEY_SIZE_256,
     ) -> tuple[bytes, str]:
         """Get current key for context, creating if needed.
@@ -183,15 +184,17 @@ class KeyManager:
         Args:
             db: Database session
             context: Context name
+            tenant_id: Tenant ID for isolation
             key_size: Key size in bytes (default 32 for AES-256)
 
         Returns:
             Tuple of (key_material, key_id)
         """
-        # Find active key for context
+        # Find active key for context and tenant
         result = await db.execute(
             select(Key)
             .where(Key.context == context)
+            .where(Key.tenant_id == tenant_id)
             .where(Key.status == KeyStatus.ACTIVE)
             .order_by(Key.version.desc())
         )
@@ -202,6 +205,7 @@ class KeyManager:
             key_id = f"key_{context}_{secrets.token_hex(4)}"
             key_record = Key(
                 id=key_id,
+                tenant_id=tenant_id,
                 context=context,
                 version=1,
                 status=KeyStatus.ACTIVE,
@@ -243,6 +247,7 @@ class KeyManager:
         self,
         db: AsyncSession,
         context: str,
+        tenant_id: str,
         key_size: int = KEY_SIZE_256,
     ) -> tuple[bytes, str]:
         """Rotate key by creating new version.
@@ -250,6 +255,7 @@ class KeyManager:
         Args:
             db: Database session
             context: Context name
+            tenant_id: Tenant ID for isolation
             key_size: Key size in bytes for new key
 
         Returns:
@@ -259,6 +265,7 @@ class KeyManager:
         result = await db.execute(
             select(Key)
             .where(Key.context == context)
+            .where(Key.tenant_id == tenant_id)
             .where(Key.status == KeyStatus.ACTIVE)
         )
         current_key = result.scalar_one_or_none()
@@ -272,6 +279,7 @@ class KeyManager:
         key_id = f"key_{context}_{secrets.token_hex(4)}"
         new_key = Key(
             id=key_id,
+            tenant_id=tenant_id,
             context=context,
             version=new_version,
             status=KeyStatus.ACTIVE,
@@ -331,6 +339,7 @@ class KeyManager:
         self,
         db: AsyncSession,
         context: str,
+        tenant_id: str,
         key_id: str,
         private_key: bytes,
         public_key: bytes,
@@ -347,6 +356,7 @@ class KeyManager:
         Args:
             db: Database session
             context: Context name
+            tenant_id: Tenant ID for isolation
             key_id: Unique key identifier
             private_key: Raw private key bytes
             public_key: Raw public key bytes
@@ -368,6 +378,7 @@ class KeyManager:
         # Store in database
         pqc_key = PQCKey(
             id=key_id,
+            tenant_id=tenant_id,
             context=context,
             key_type=key_type,
             algorithm=algorithm,

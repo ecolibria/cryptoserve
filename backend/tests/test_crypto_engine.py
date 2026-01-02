@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.core.crypto_engine import crypto_engine, CryptoError, ContextNotFoundError, AuthorizationError
 from app.core.key_manager import key_manager
-from app.models import Identity, IdentityType, IdentityStatus, User, Context
+from app.models import Identity, IdentityType, IdentityStatus, User, Context, Tenant
 
 
 @pytest.mark.asyncio
@@ -23,11 +23,12 @@ async def test_key_derivation():
 
 
 @pytest.mark.asyncio
-async def test_encrypt_decrypt_roundtrip(db_session, test_user, test_context):
+async def test_encrypt_decrypt_roundtrip(db_session, test_user, test_context, test_tenant):
     """Test basic encrypt/decrypt roundtrip."""
     # Create identity with access to test context
     identity = Identity(
         id="test_identity_abc123",
+        tenant_id=test_tenant.id,
         user_id=test_user.id,
         type=IdentityType.DEVELOPER,
         name="Test Identity",
@@ -64,10 +65,11 @@ async def test_encrypt_decrypt_roundtrip(db_session, test_user, test_context):
 
 
 @pytest.mark.asyncio
-async def test_encrypt_unknown_context(db_session, test_user):
+async def test_encrypt_unknown_context(db_session, test_user, test_tenant):
     """Test encryption with unknown context fails."""
     identity = Identity(
         id="test_identity_xyz789",
+        tenant_id=test_tenant.id,
         user_id=test_user.id,
         type=IdentityType.DEVELOPER,
         name="Test Identity",
@@ -90,11 +92,12 @@ async def test_encrypt_unknown_context(db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_encrypt_unauthorized_context(db_session, test_user, test_context):
+async def test_encrypt_unauthorized_context(db_session, test_user, test_context, test_tenant):
     """Test encryption with unauthorized context fails."""
     # Identity without access to test-context
     identity = Identity(
         id="test_identity_noauth",
+        tenant_id=test_tenant.id,
         user_id=test_user.id,
         type=IdentityType.DEVELOPER,
         name="Test Identity",
@@ -117,16 +120,18 @@ async def test_encrypt_unauthorized_context(db_session, test_user, test_context)
 
 
 @pytest.mark.asyncio
-async def test_different_contexts_different_keys(db_session, test_user):
+async def test_different_contexts_different_keys(db_session, test_user, test_tenant):
     """Test that different contexts produce different ciphertext."""
     # Create two contexts
     ctx1 = Context(
+        tenant_id=test_tenant.id,
         name="context-1",
         display_name="Context 1",
         description="First context",
         algorithm="AES-256-GCM",
     )
     ctx2 = Context(
+        tenant_id=test_tenant.id,
         name="context-2",
         display_name="Context 2",
         description="Second context",
@@ -137,6 +142,7 @@ async def test_different_contexts_different_keys(db_session, test_user):
 
     identity = Identity(
         id="test_identity_multi",
+        tenant_id=test_tenant.id,
         user_id=test_user.id,
         type=IdentityType.DEVELOPER,
         name="Test Identity",
