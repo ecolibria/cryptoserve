@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     # Options: "disabled" (default), "enabled" (strict), "preferred" (use if available)
     fips_mode: str = "disabled"
 
+    # Key ceremony mode (enterprise key sharding)
+    # When enabled, master key is split into shares using Shamir's Secret Sharing
+    # Service starts sealed and requires threshold custodians to unseal
+    key_ceremony_enabled: bool = False
+    key_ceremony_threshold: int = 3  # Minimum shares needed to unseal
+    key_ceremony_shares: int = 5     # Total shares to generate
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
     @property

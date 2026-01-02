@@ -61,7 +61,19 @@ class StartupValidator:
         return result
 
     def validate_master_key(self, settings) -> ValidationResult:
-        """Validate CRYPTOSERVE_MASTER_KEY."""
+        """Validate CRYPTOSERVE_MASTER_KEY.
+
+        If key_ceremony_enabled, skip this check (master key comes from ceremony).
+        """
+        # Skip if using key ceremony mode
+        if settings.key_ceremony_enabled:
+            return self._check(
+                "master_key",
+                True,
+                "Master key managed by Key Ceremony (Shamir's Secret Sharing)",
+                critical=True,
+            )
+
         key = settings.cryptoserve_master_key
 
         if not key:
@@ -102,6 +114,98 @@ class StartupValidator:
             "master_key",
             True,
             "Master key is properly configured",
+            critical=True,
+        )
+
+    def validate_key_ceremony(self, settings) -> ValidationResult:
+        """Validate Key Ceremony configuration.
+
+        Checks if key ceremony is properly configured and provides
+        status information about the sealed/unsealed state.
+        """
+        if not settings.key_ceremony_enabled:
+            return self._check(
+                "key_ceremony",
+                True,
+                "Key Ceremony disabled (using simple master key mode)",
+                critical=False,
+            )
+
+        # Validate ceremony parameters
+        threshold = settings.key_ceremony_threshold
+        total_shares = settings.key_ceremony_shares
+
+        if threshold < 2:
+            return self._check(
+                "key_ceremony",
+                False,
+                "KEY_CEREMONY_THRESHOLD must be at least 2",
+                critical=True,
+            )
+
+        if total_shares < threshold:
+            return self._check(
+                "key_ceremony",
+                False,
+                f"KEY_CEREMONY_SHARES ({total_shares}) must be >= threshold ({threshold})",
+                critical=True,
+            )
+
+        if threshold > 10:
+            return self._check(
+                "key_ceremony",
+                False,
+                "KEY_CEREMONY_THRESHOLD cannot exceed 10",
+                critical=True,
+            )
+
+        if total_shares > 20:
+            return self._check(
+                "key_ceremony",
+                False,
+                "KEY_CEREMONY_SHARES cannot exceed 20",
+                critical=True,
+            )
+
+        # Check ceremony state
+        from app.core.key_ceremony import key_ceremony_service, CeremonyState
+
+        state = key_ceremony_service.state
+
+        if state == CeremonyState.UNINITIALIZED:
+            return self._check(
+                "key_ceremony",
+                True,  # Allow startup but warn
+                f"Key Ceremony enabled ({threshold}-of-{total_shares}) but not initialized. "
+                f"POST /api/admin/ceremony/initialize to create master key shares.",
+                critical=False,  # Not critical - admin needs to initialize
+            )
+
+        if state == CeremonyState.SEALED:
+            return self._check(
+                "key_ceremony",
+                True,  # Allow startup but service is sealed
+                f"Key Ceremony enabled ({threshold}-of-{total_shares}) - SERVICE SEALED. "
+                f"Unseal required before crypto operations work.",
+                critical=False,  # Not critical - admin needs to unseal
+            )
+
+        if state == CeremonyState.UNSEALING:
+            progress = key_ceremony_service.get_unseal_progress()
+            return self._check(
+                "key_ceremony",
+                True,
+                f"Key Ceremony enabled - UNSEALING IN PROGRESS. "
+                f"{progress.shares_provided}/{progress.shares_required} shares provided.",
+                critical=False,
+            )
+
+        # UNSEALED
+        return self._check(
+            "key_ceremony",
+            True,
+            f"Key Ceremony enabled ({threshold}-of-{total_shares}) and UNSEALED. "
+            f"Master key is available.",
             critical=True,
         )
 
@@ -319,6 +423,9 @@ class StartupValidator:
         self.validate_master_key(settings)
         self.validate_jwt_secret(settings)
         self.validate_hkdf_salt(settings)
+
+        # Key ceremony (enterprise master key sharding)
+        self.validate_key_ceremony(settings)
 
         # External services
         self.validate_database(settings)

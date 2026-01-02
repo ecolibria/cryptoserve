@@ -8,6 +8,11 @@ The local provider:
 - Stores master key in environment variable (INSECURE)
 - Does not provide HSM protection
 - Does not provide FIPS compliance
+
+Enterprise mode (key_ceremony_enabled=True):
+- Master key comes from the Key Ceremony service
+- Service must be initialized and unsealed
+- Uses Shamir's Secret Sharing for master key protection
 """
 
 import os
@@ -43,33 +48,60 @@ class LocalKMSProvider(KMSProvider):
         self._salt: bytes | None = None
         self._version = 1
         self._created_at = datetime.now(timezone.utc)
+        self._using_ceremony = False  # True when using Key Ceremony master key
 
     async def initialize(self) -> None:
-        """Initialize the local KMS provider."""
-        # Get master key from config or environment
-        master_key_str = self.config.master_key_id or os.environ.get(
-            "CRYPTOSERVE_MASTER_KEY", ""
-        )
+        """Initialize the local KMS provider.
 
-        if not master_key_str:
-            raise KMSError(
-                "Master key not configured. Set CRYPTOSERVE_MASTER_KEY environment variable."
+        In enterprise mode (key_ceremony_enabled=True):
+        - Master key comes from the Key Ceremony service
+        - Service must be initialized and unsealed
+
+        In simple mode (key_ceremony_enabled=False):
+        - Master key comes from environment variable
+        """
+        from app.config import get_settings
+
+        settings = get_settings()
+
+        # Check if key ceremony mode is enabled
+        if settings.key_ceremony_enabled:
+            self._master_key = self._get_ceremony_master_key()
+            self._using_ceremony = True
+            logger.info(
+                "Local KMS using Key Ceremony master key. "
+                "Enterprise mode active with Shamir's Secret Sharing."
+            )
+        else:
+            # Simple mode: Get master key from config or environment
+            master_key_str = self.config.master_key_id or os.environ.get(
+                "CRYPTOSERVE_MASTER_KEY", ""
             )
 
-        # Validate master key strength
-        if len(master_key_str) < 32:
-            logger.warning(
-                "Master key is less than 32 characters. "
-                "This is insecure for production use."
-            )
+            if not master_key_str:
+                raise KMSError(
+                    "Master key not configured. Set CRYPTOSERVE_MASTER_KEY environment variable."
+                )
 
-        if "change-in-production" in master_key_str.lower():
-            raise KMSError(
-                "Default development master key detected. "
-                "Set a secure CRYPTOSERVE_MASTER_KEY for production."
-            )
+            # Validate master key strength
+            if len(master_key_str) < 32:
+                logger.warning(
+                    "Master key is less than 32 characters. "
+                    "This is insecure for production use."
+                )
 
-        self._master_key = master_key_str.encode()
+            if "change-in-production" in master_key_str.lower():
+                raise KMSError(
+                    "Default development master key detected. "
+                    "Set a secure CRYPTOSERVE_MASTER_KEY for production."
+                )
+
+            self._master_key = master_key_str.encode()
+            self._using_ceremony = False
+            logger.info(
+                "Local KMS provider initialized in simple mode. "
+                "WARNING: Use cloud KMS in production for HSM protection."
+            )
 
         # Get salt from config or environment
         salt_str = self.config.options.get("salt") or os.environ.get(
@@ -78,10 +110,44 @@ class LocalKMSProvider(KMSProvider):
         self._salt = salt_str.encode()
 
         self._initialized = True
-        logger.info(
-            "Local KMS provider initialized. "
-            "WARNING: Use cloud KMS in production for HSM protection."
+
+    def _get_ceremony_master_key(self) -> bytes:
+        """Get master key from the Key Ceremony service.
+
+        Raises:
+            KMSError: If ceremony is not initialized or is sealed
+        """
+        from app.core.key_ceremony import (
+            get_ceremony_master_key,
+            is_service_sealed,
+            key_ceremony_service,
         )
+
+        # Check if ceremony is initialized
+        if not key_ceremony_service.is_initialized:
+            raise KMSError(
+                "Key ceremony not initialized. "
+                "An admin must run the initialization ceremony first. "
+                "POST /api/admin/ceremony/initialize"
+            )
+
+        # Check if service is sealed
+        if is_service_sealed():
+            progress = key_ceremony_service.get_unseal_progress()
+            raise KMSError(
+                f"Service is sealed. Unseal required to access master key. "
+                f"Progress: {progress.shares_provided}/{progress.shares_required} shares provided. "
+                "POST /api/admin/ceremony/unseal with recovery shares."
+            )
+
+        # Get the master key
+        master_key = get_ceremony_master_key()
+        if master_key is None:
+            raise KMSError(
+                "Failed to retrieve master key from ceremony service."
+            )
+
+        return master_key
 
     async def generate_data_key(
         self,
@@ -181,8 +247,9 @@ class LocalKMSProvider(KMSProvider):
         key_id: str | None = None,
     ) -> KeyMetadata:
         """Get metadata about the master key."""
+        key_type = "ceremony" if self._using_ceremony else "local"
         return KeyMetadata(
-            key_id=f"local-master-v{self._version}",
+            key_id=f"{key_type}-master-v{self._version}",
             version=self._version,
             context="master",
             created_at=self._created_at,
@@ -195,11 +262,12 @@ class LocalKMSProvider(KMSProvider):
 
     async def list_key_versions(self) -> list[KeyMetadata]:
         """List all versions of the master key."""
+        key_type = "ceremony" if self._using_ceremony else "local"
         versions = []
         for v in range(1, self._version + 1):
             versions.append(
                 KeyMetadata(
-                    key_id=f"local-master-v{v}",
+                    key_id=f"{key_type}-master-v{v}",
                     version=v,
                     context="master",
                     created_at=self._created_at,

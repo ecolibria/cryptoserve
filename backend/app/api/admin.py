@@ -3161,3 +3161,303 @@ async def get_algorithm_metrics(
         policy_violations=policy_violations,
         daily_trend=daily_trend,
     )
+
+
+# =============================================================================
+# BACKUP AND RESTORE
+# =============================================================================
+
+class BackupRequest(BaseModel):
+    """Request to create a backup."""
+    password: str
+    include_audit_logs: bool = False
+    tenant_only: bool = False  # If True, only backup current tenant's data
+
+
+class BackupResponse(BaseModel):
+    """Response from backup creation."""
+    success: bool
+    backup_id: str | None
+    filename: str | None
+    size_bytes: int
+    duration_seconds: float
+    tenant_count: int
+    context_count: int
+    key_count: int
+    pqc_key_count: int
+    checksum: str | None
+    error: str | None
+
+
+class RestoreRequest(BaseModel):
+    """Request to restore from backup."""
+    backup_id: str
+    password: str
+    dry_run: bool = True  # Preview what would be restored
+
+
+class RestoreResponse(BaseModel):
+    """Response from restore operation."""
+    success: bool
+    dry_run: bool
+    records_restored: dict[str, int]
+    duration_seconds: float
+    warnings: list[str]
+    error: str | None
+
+
+class BackupInfo(BaseModel):
+    """Info about an available backup."""
+    backup_id: str
+    filename: str
+    size_bytes: int
+    created_at: str
+
+
+class BackupManifestResponse(BaseModel):
+    """Backup manifest details."""
+    version: str
+    created_at: str
+    cryptoserve_version: str
+    database_type: str
+    tenant_count: int
+    context_count: int
+    key_count: int
+    pqc_key_count: int
+    includes_audit_logs: bool
+    checksum: str
+
+
+@router.post("/backups", response_model=BackupResponse)
+async def create_backup(
+    request: BackupRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an encrypted backup of the database.
+
+    Admin-only endpoint. Creates a password-protected backup file.
+
+    The backup includes:
+    - All database records (tenants, contexts, keys, users, etc.)
+    - PQC key material (already encrypted at rest)
+    - Optional: Audit logs (can be very large)
+
+    Classical symmetric keys are NOT backed up - they are derived from the master key.
+    To restore, you need the backup file, password, AND the original master key.
+    """
+    import secrets
+    import os
+    from pathlib import Path
+    from app.core.backup import backup_service
+
+    # Generate backup ID
+    backup_id = f"backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"
+
+    # Determine backup directory
+    backup_dir = os.environ.get("CRYPTOSERVE_BACKUP_DIR", "/tmp/cryptoserve-backups")
+    backup_path = Path(backup_dir) / f"{backup_id}.tar.gz.enc"
+
+    # Create backup
+    tenant_id = admin.tenant_id if request.tenant_only else None
+
+    result = await backup_service.create_backup(
+        output_path=str(backup_path),
+        password=request.password,
+        tenant_id=tenant_id,
+        include_audit_logs=request.include_audit_logs,
+    )
+
+    if not result.success:
+        return BackupResponse(
+            success=False,
+            backup_id=None,
+            filename=None,
+            size_bytes=0,
+            duration_seconds=result.duration_seconds,
+            tenant_count=0,
+            context_count=0,
+            key_count=0,
+            pqc_key_count=0,
+            checksum=None,
+            error=result.error,
+        )
+
+    return BackupResponse(
+        success=True,
+        backup_id=backup_id,
+        filename=backup_path.name,
+        size_bytes=result.size_bytes,
+        duration_seconds=result.duration_seconds,
+        tenant_count=result.manifest.tenant_count if result.manifest else 0,
+        context_count=result.manifest.context_count if result.manifest else 0,
+        key_count=result.manifest.key_count if result.manifest else 0,
+        pqc_key_count=result.manifest.pqc_key_count if result.manifest else 0,
+        checksum=result.manifest.checksum if result.manifest else None,
+        error=None,
+    )
+
+
+@router.get("/backups", response_model=list[BackupInfo])
+async def list_backups(
+    admin: User = Depends(require_admin),
+):
+    """List available backup files.
+
+    Admin-only endpoint. Returns list of backup files in the backup directory.
+    """
+    import os
+    from app.core.backup import backup_service
+
+    backup_dir = os.environ.get("CRYPTOSERVE_BACKUP_DIR", "/tmp/cryptoserve-backups")
+
+    backups = await backup_service.list_backups(backup_dir)
+
+    return [
+        BackupInfo(
+            backup_id=b["filename"].replace(".tar.gz.enc", ""),
+            filename=b["filename"],
+            size_bytes=b["size_bytes"],
+            created_at=b["modified_at"],
+        )
+        for b in backups
+    ]
+
+
+@router.get("/backups/{backup_id}", response_model=BackupManifestResponse)
+async def get_backup_info(
+    backup_id: str,
+    password: str = Query(..., description="Backup password to decrypt manifest"),
+    admin: User = Depends(require_admin),
+):
+    """Get details about a specific backup.
+
+    Admin-only endpoint. Requires backup password to decrypt and read the manifest.
+    """
+    import os
+    from pathlib import Path
+    from app.core.backup import backup_service
+
+    backup_dir = os.environ.get("CRYPTOSERVE_BACKUP_DIR", "/tmp/cryptoserve-backups")
+    backup_path = Path(backup_dir) / f"{backup_id}.tar.gz.enc"
+
+    if not backup_path.exists():
+        raise HTTPException(status_code=404, detail=f"Backup not found: {backup_id}")
+
+    try:
+        manifest = await backup_service.get_backup_info(str(backup_path), password)
+        return BackupManifestResponse(
+            version=manifest.version,
+            created_at=manifest.created_at,
+            cryptoserve_version=manifest.cryptoserve_version,
+            database_type=manifest.database_type,
+            tenant_count=manifest.tenant_count,
+            context_count=manifest.context_count,
+            key_count=manifest.key_count,
+            pqc_key_count=manifest.pqc_key_count,
+            includes_audit_logs=manifest.includes_audit_logs,
+            checksum=manifest.checksum,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/backups/{backup_id}/restore", response_model=RestoreResponse)
+async def restore_backup(
+    backup_id: str,
+    request: RestoreRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore from a backup file.
+
+    Admin-only endpoint.
+
+    By default, runs in dry_run mode which only validates the backup
+    and reports what would be restored without making changes.
+
+    Set dry_run=False to actually restore the data.
+
+    IMPORTANT: Restoring will skip records that already exist.
+    This is to prevent accidental data loss.
+    """
+    import os
+    from pathlib import Path
+    from app.core.backup import backup_service
+
+    backup_dir = os.environ.get("CRYPTOSERVE_BACKUP_DIR", "/tmp/cryptoserve-backups")
+    backup_path = Path(backup_dir) / f"{backup_id}.tar.gz.enc"
+
+    if not backup_path.exists():
+        raise HTTPException(status_code=404, detail=f"Backup not found: {backup_id}")
+
+    result = await backup_service.restore_backup(
+        backup_path=str(backup_path),
+        password=request.password,
+        dry_run=request.dry_run,
+    )
+
+    return RestoreResponse(
+        success=result.success,
+        dry_run=request.dry_run,
+        records_restored=result.records_restored,
+        duration_seconds=result.duration_seconds,
+        warnings=result.warnings,
+        error=result.error,
+    )
+
+
+@router.get("/backups/{backup_id}/download")
+async def download_backup(
+    backup_id: str,
+    admin: User = Depends(require_admin),
+):
+    """Download a backup file.
+
+    Admin-only endpoint. Returns the encrypted backup file for offline storage.
+    """
+    import os
+    from pathlib import Path
+
+    backup_dir = os.environ.get("CRYPTOSERVE_BACKUP_DIR", "/tmp/cryptoserve-backups")
+    backup_path = Path(backup_dir) / f"{backup_id}.tar.gz.enc"
+
+    if not backup_path.exists():
+        raise HTTPException(status_code=404, detail=f"Backup not found: {backup_id}")
+
+    def iterfile():
+        with open(backup_path, "rb") as f:
+            while chunk := f.read(64 * 1024):  # 64KB chunks
+                yield chunk
+
+    return StreamingResponse(
+        iterfile(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename={backup_path.name}",
+            "Content-Length": str(backup_path.stat().st_size),
+        },
+    )
+
+
+@router.delete("/backups/{backup_id}")
+async def delete_backup(
+    backup_id: str,
+    admin: User = Depends(require_admin),
+):
+    """Delete a backup file.
+
+    Admin-only endpoint. Permanently deletes the backup file from storage.
+    """
+    import os
+    from pathlib import Path
+
+    backup_dir = os.environ.get("CRYPTOSERVE_BACKUP_DIR", "/tmp/cryptoserve-backups")
+    backup_path = Path(backup_dir) / f"{backup_id}.tar.gz.enc"
+
+    if not backup_path.exists():
+        raise HTTPException(status_code=404, detail=f"Backup not found: {backup_id}")
+
+    backup_path.unlink()
+
+    return {"success": True, "message": f"Backup {backup_id} deleted"}

@@ -106,6 +106,10 @@ def _get_cli_server_url():
     return creds.get("server_url", os.getenv("CRYPTOSERVE_SERVER_URL", "http://localhost:8000"))
 
 
+# Alias for convenience
+_get_server_url = _get_cli_server_url
+
+
 def cmd_login():
     """Login to CryptoServe via browser."""
     import webbrowser
@@ -2397,12 +2401,920 @@ def cmd_help():
     print(dim("               parse          Parse certificate"))
     print(dim("               verify         Verify certificate"))
     print()
+    print(f"  {bold('BACKUP & RESTORE')} {dim('(requires admin)')}")
+    print()
+    print(f"    {bold('backup')}     Create encrypted database backup")
+    print(dim("               --output <file>  Output path"))
+    print(dim("               --audit-logs     Include audit logs"))
+    print(dim("               --tenant-only    Backup current tenant only"))
+    print()
+    print(f"    {bold('restore')}    Restore from backup file")
+    print(dim("               --backup <file>  Backup file path"))
+    print(dim("               --dry-run        Preview what would be restored"))
+    print()
+    print(f"    {bold('backups')}    List available backups")
+    print()
     print(f"  {bold('OTHER')}")
     print()
     print(f"    {bold('wizard')}     Interactive context selection wizard")
     print(f"    {bold('help')}       Show this help message")
     print()
     return 0
+
+
+# =============================================================================
+# BACKUP COMMANDS
+# =============================================================================
+
+def cmd_backup():
+    """Create encrypted backup of CryptoServe database."""
+    import getpass
+    import requests
+
+    # Parse arguments
+    output_path = None
+    include_audit = False
+    tenant_only = False
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--output", "-o") and i + 1 < len(sys.argv):
+            output_path = sys.argv[i + 1]
+            i += 2
+        elif arg == "--audit-logs":
+            include_audit = True
+            i += 1
+        elif arg == "--tenant-only":
+            tenant_only = True
+            i += 1
+        else:
+            i += 1
+
+    print(compact_header("BACKUP"))
+
+    # Check login
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    # Get backup password
+    print()
+    print(info("Backups are encrypted with a password you provide."))
+    print(info("You'll need this password to restore the backup."))
+    print()
+
+    password = getpass.getpass("Enter backup password: ")
+    if len(password) < 8:
+        print(error("Password must be at least 8 characters."))
+        return 1
+
+    confirm = getpass.getpass("Confirm password: ")
+    if password != confirm:
+        print(error("Passwords do not match."))
+        return 1
+
+    print()
+    print(info("Creating backup..."))
+
+    try:
+        resp = requests.post(
+            f"{server}/api/admin/backups",
+            cookies={"session": cookie},
+            json={
+                "password": password,
+                "include_audit_logs": include_audit,
+                "tenant_only": tenant_only,
+            },
+            timeout=300,  # 5 minute timeout for large backups
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for backup operations."))
+            return 1
+
+        data = resp.json()
+
+        if not data.get("success"):
+            print(error(f"Backup failed: {data.get('error', 'Unknown error')}"))
+            return 1
+
+        print()
+        print(success("Backup created successfully!"))
+        print()
+        print(f"  Backup ID:     {bold(data['backup_id'])}")
+        print(f"  Size:          {_format_size(data['size_bytes'])}")
+        print(f"  Duration:      {data['duration_seconds']:.2f}s")
+        print(f"  Tenants:       {data['tenant_count']}")
+        print(f"  Contexts:      {data['context_count']}")
+        print(f"  Keys:          {data['key_count']}")
+        print(f"  PQC Keys:      {data['pqc_key_count']}")
+        print(f"  Checksum:      {data['checksum'][:16]}...")
+        print()
+
+        # Download if output path specified
+        if output_path:
+            print(info(f"Downloading backup to {output_path}..."))
+            download_resp = requests.get(
+                f"{server}/api/admin/backups/{data['backup_id']}/download",
+                cookies={"session": cookie},
+                stream=True,
+                timeout=300,
+            )
+            if download_resp.status_code == 200:
+                with open(output_path, "wb") as f:
+                    for chunk in download_resp.iter_content(chunk_size=64 * 1024):
+                        f.write(chunk)
+                print(success(f"Backup saved to: {output_path}"))
+            else:
+                print(warning(f"Failed to download: {download_resp.status_code}"))
+        else:
+            print(info(f"To download: cryptoserve backup --output backup.tar.gz.enc"))
+            print(info(f"Or use: GET /api/admin/backups/{data['backup_id']}/download"))
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def cmd_restore():
+    """Restore from encrypted backup."""
+    import getpass
+    import requests
+
+    # Parse arguments
+    backup_path = None
+    dry_run = True
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--backup", "-b") and i + 1 < len(sys.argv):
+            backup_path = sys.argv[i + 1]
+            i += 2
+        elif arg == "--dry-run":
+            dry_run = True
+            i += 1
+        elif arg == "--execute":
+            dry_run = False
+            i += 1
+        else:
+            i += 1
+
+    print(compact_header("RESTORE"))
+
+    if not backup_path:
+        print(error("Backup path required. Use --backup <file>"))
+        print()
+        print(info("Usage: cryptoserve restore --backup backup.tar.gz.enc"))
+        print(info("       cryptoserve restore --backup backup.tar.gz.enc --execute"))
+        return 1
+
+    # Check login
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    # For now, local file restore is not supported via API
+    # The backup must be on the server
+    print()
+    print(warning("Note: Restore requires backup file to be on the server."))
+    print(info("Upload the backup to the server's backup directory first."))
+    print()
+
+    # Extract backup ID from filename
+    backup_id = os.path.basename(backup_path).replace(".tar.gz.enc", "")
+
+    # Get password
+    password = getpass.getpass("Enter backup password: ")
+
+    if dry_run:
+        print()
+        print(info("Running in dry-run mode (no changes will be made)"))
+        print(info("Use --execute to actually restore data"))
+
+    print()
+    print(info("Validating backup..."))
+
+    try:
+        # First, check backup info
+        resp = requests.get(
+            f"{server}/api/admin/backups/{backup_id}",
+            params={"password": password},
+            cookies={"session": cookie},
+            timeout=60,
+        )
+
+        if resp.status_code == 404:
+            print(error(f"Backup not found: {backup_id}"))
+            print(info("Make sure the backup file is in the server's backup directory."))
+            return 1
+
+        if resp.status_code == 400:
+            print(error("Invalid password or corrupted backup."))
+            return 1
+
+        if resp.status_code != 200:
+            print(error(f"Failed to read backup: {resp.text}"))
+            return 1
+
+        manifest = resp.json()
+
+        print()
+        print(success("Backup validated successfully!"))
+        print()
+        print(f"  Version:       {manifest['version']}")
+        print(f"  Created:       {manifest['created_at']}")
+        print(f"  Database:      {manifest['database_type']}")
+        print(f"  Tenants:       {manifest['tenant_count']}")
+        print(f"  Contexts:      {manifest['context_count']}")
+        print(f"  Keys:          {manifest['key_count']}")
+        print(f"  PQC Keys:      {manifest['pqc_key_count']}")
+        print(f"  Audit Logs:    {'Yes' if manifest['includes_audit_logs'] else 'No'}")
+        print()
+
+        # Perform restore
+        print(info("Restoring..." if not dry_run else "Analyzing what would be restored..."))
+
+        restore_resp = requests.post(
+            f"{server}/api/admin/backups/{backup_id}/restore",
+            cookies={"session": cookie},
+            json={
+                "backup_id": backup_id,
+                "password": password,
+                "dry_run": dry_run,
+            },
+            timeout=300,
+        )
+
+        if restore_resp.status_code != 200:
+            print(error(f"Restore failed: {restore_resp.text}"))
+            return 1
+
+        result = restore_resp.json()
+
+        if not result.get("success"):
+            print(error(f"Restore failed: {result.get('error', 'Unknown error')}"))
+            return 1
+
+        print()
+        if dry_run:
+            print(success("Dry run complete - no changes made"))
+        else:
+            print(success("Restore completed successfully!"))
+
+        print()
+        print(f"  Duration: {result['duration_seconds']:.2f}s")
+        print()
+        print(f"  {'Would restore' if dry_run else 'Restored'}:")
+        for table, count in result['records_restored'].items():
+            print(f"    {table}: {count} records")
+
+        if result.get('warnings'):
+            print()
+            print(warning("Warnings:"))
+            for w in result['warnings']:
+                print(f"    - {w}")
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def cmd_backups():
+    """List available backups."""
+    import requests
+
+    print(compact_header("BACKUPS"))
+
+    # Check login
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    try:
+        resp = requests.get(
+            f"{server}/api/admin/backups",
+            cookies={"session": cookie},
+            timeout=30,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for backup operations."))
+            return 1
+
+        backups = resp.json()
+
+        if not backups:
+            print()
+            print(info("No backups found."))
+            print()
+            print(info("Create a backup with: cryptoserve backup"))
+            return 0
+
+        print()
+        print(f"  Found {bold(str(len(backups)))} backup(s):")
+        print()
+
+        for b in backups:
+            print(f"  {bold(b['backup_id'])}")
+            print(f"    Size:     {_format_size(b['size_bytes'])}")
+            print(f"    Created:  {b['created_at']}")
+            print()
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format bytes as human-readable size."""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
+# =============================================================================
+# Key Ceremony Commands (Enterprise Master Key Sharding)
+# =============================================================================
+
+def cmd_ceremony():
+    """Key Ceremony operations for enterprise master key management.
+
+    Subcommands:
+        status      - Show ceremony status (initialized/sealed/unsealed)
+        initialize  - Initialize master key with Shamir's Secret Sharing
+        seal        - Seal the service (clear master key from memory)
+        unseal      - Provide a share to unseal the service
+        verify      - Verify a share without using it
+        audit       - View ceremony audit log
+    """
+    import requests
+
+    if len(sys.argv) < 3:
+        _ceremony_help()
+        return 0
+
+    subcommand = sys.argv[2].lower()
+
+    subcommands = {
+        "status": _ceremony_status,
+        "initialize": _ceremony_initialize,
+        "seal": _ceremony_seal,
+        "unseal": _ceremony_unseal,
+        "verify": _ceremony_verify,
+        "audit": _ceremony_audit,
+        "help": _ceremony_help,
+    }
+
+    if subcommand in subcommands:
+        return subcommands[subcommand]()
+    else:
+        print(error(f"Unknown ceremony subcommand: {subcommand}"))
+        _ceremony_help()
+        return 1
+
+
+def _ceremony_help():
+    """Show ceremony command help."""
+    print(compact_header("KEY CEREMONY"))
+    print()
+    print("  Enterprise master key management using Shamir's Secret Sharing.")
+    print("  Splits master key into shares requiring a threshold to unseal.")
+    print()
+    print("  Subcommands:")
+    print(f"    {bold('status')}      Show ceremony status (initialized/sealed/unsealed)")
+    print(f"    {bold('initialize')}  Initialize master key and generate recovery shares")
+    print(f"    {bold('seal')}        Seal the service (clear master key from memory)")
+    print(f"    {bold('unseal')}      Provide a recovery share to unseal the service")
+    print(f"    {bold('verify')}      Verify a share is valid (without using it)")
+    print(f"    {bold('audit')}       View ceremony audit log")
+    print()
+    print("  Examples:")
+    print("    cryptoserve ceremony status")
+    print("    cryptoserve ceremony initialize --threshold 3 --shares 5")
+    print("    cryptoserve ceremony unseal --share <hex-share>")
+    print()
+
+
+def _ceremony_status():
+    """Show key ceremony status."""
+    import requests
+
+    print(compact_header("CEREMONY STATUS"))
+
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    try:
+        resp = requests.get(
+            f"{server}/api/admin/ceremony/status",
+            cookies={"session": cookie},
+            timeout=30,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for ceremony operations."))
+            return 1
+
+        if resp.status_code != 200:
+            print(error(f"Failed to get status: {resp.text}"))
+            return 1
+
+        data = resp.json()
+
+        print()
+
+        # State with visual indicator
+        state = data["state"]
+        if state == "uninitialized":
+            print(f"  State:         {warning('UNINITIALIZED')}")
+            print("                 Master key has not been created yet.")
+        elif state == "sealed":
+            print(f"  State:         {error('SEALED')}")
+            print("                 Master key exists but is locked.")
+        elif state == "unsealing":
+            print(f"  State:         {warning('UNSEALING')}")
+            progress = data.get("unseal_progress", {})
+            print(f"                 {progress.get('shares_provided', 0)}/{progress.get('shares_required', 0)} shares provided.")
+        elif state == "unsealed":
+            print(f"  State:         {success('UNSEALED')}")
+            print("                 Service is operational.")
+
+        print()
+        print(f"  Initialized:   {'Yes' if data['is_initialized'] else 'No'}")
+        print(f"  Sealed:        {'Yes' if data['is_sealed'] else 'No'}")
+        print(f"  Threshold:     {data['threshold']}-of-{data['total_shares']}")
+        print(f"  Custodians:    {data['custodians']}")
+        print()
+
+        if data.get("unseal_progress"):
+            progress = data["unseal_progress"]
+            print(f"  Unseal Progress:")
+            print(f"    Shares:      {progress['shares_provided']}/{progress['shares_required']}")
+            pct = progress.get('progress_percent', 0)
+            bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+            print(f"    Progress:    [{bar}] {pct:.0f}%")
+            print()
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def _ceremony_initialize():
+    """Initialize master key with Shamir's Secret Sharing."""
+    import requests
+    import getpass
+
+    print(compact_header("INITIALIZE KEY CEREMONY"))
+
+    # Parse arguments
+    threshold = 3
+    total_shares = 5
+    custodian_emails = []
+
+    i = 3
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--threshold", "-t") and i + 1 < len(sys.argv):
+            threshold = int(sys.argv[i + 1])
+            i += 2
+        elif arg in ("--shares", "-s") and i + 1 < len(sys.argv):
+            total_shares = int(sys.argv[i + 1])
+            i += 2
+        elif arg == "--custodian" and i + 1 < len(sys.argv):
+            custodian_emails.append(sys.argv[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    print()
+    print(warning("  ⚠ IMPORTANT: This operation can only be performed ONCE."))
+    print()
+    print(f"  You are about to initialize a {threshold}-of-{total_shares} threshold scheme.")
+    print(f"  This means {total_shares} recovery shares will be generated,")
+    print(f"  and any {threshold} of them can reconstruct the master key.")
+    print()
+    print("  The recovery shares will be displayed ONCE. Store them securely!")
+    print()
+
+    confirm = input("  Type 'INITIALIZE' to confirm: ")
+    if confirm != "INITIALIZE":
+        print(error("Initialization cancelled."))
+        return 1
+
+    try:
+        resp = requests.post(
+            f"{server}/api/admin/ceremony/initialize",
+            cookies={"session": cookie},
+            json={
+                "threshold": threshold,
+                "total_shares": total_shares,
+                "custodian_emails": custodian_emails if custodian_emails else None,
+            },
+            timeout=60,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for ceremony operations."))
+            return 1
+
+        if resp.status_code == 409:
+            print(error("Master key already initialized. Use key rotation instead."))
+            return 1
+
+        if resp.status_code != 200:
+            data = resp.json()
+            print(error(f"Initialization failed: {data.get('detail', resp.text)}"))
+            return 1
+
+        data = resp.json()
+
+        print()
+        print(success("Master key initialized successfully!"))
+        print()
+        print(divider())
+        print(bold("  RECOVERY SHARES - SAVE THESE SECURELY"))
+        print(divider())
+        print()
+
+        for i, (share, fingerprint) in enumerate(zip(data["recovery_shares"], data["share_fingerprints"]), 1):
+            print(f"  Share {i}:")
+            print(f"    {share}")
+            print(f"    Fingerprint: {fingerprint}")
+            print()
+
+        print(divider())
+        print(bold("  ROOT TOKEN - SAVE THIS SECURELY"))
+        print(divider())
+        print()
+        print(f"  {data['root_token']}")
+        print()
+        print(divider())
+        print()
+        print(warning("  These values will NOT be shown again!"))
+        print("  Distribute shares to custodians via secure channels.")
+        print()
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def _ceremony_seal():
+    """Seal the service (clear master key from memory)."""
+    import requests
+
+    print(compact_header("SEAL SERVICE"))
+
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    print()
+    print(warning("  ⚠ This will lock the service. All crypto operations will fail."))
+    print("  Unseal with recovery shares to restore functionality.")
+    print()
+
+    confirm = input("  Type 'SEAL' to confirm: ")
+    if confirm != "SEAL":
+        print("Seal cancelled.")
+        return 1
+
+    try:
+        resp = requests.post(
+            f"{server}/api/admin/ceremony/seal",
+            cookies={"session": cookie},
+            timeout=30,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for ceremony operations."))
+            return 1
+
+        if resp.status_code == 409:
+            print(warning("Service is already sealed."))
+            return 0
+
+        if resp.status_code != 200:
+            data = resp.json()
+            print(error(f"Seal failed: {data.get('detail', resp.text)}"))
+            return 1
+
+        print()
+        print(success("Service sealed. Master key cleared from memory."))
+        print()
+        print(info("Use 'cryptoserve ceremony unseal --share <share>' to unseal."))
+        print()
+
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def _ceremony_unseal():
+    """Provide a recovery share to unseal the service."""
+    import requests
+    import getpass
+
+    print(compact_header("UNSEAL SERVICE"))
+
+    # Parse arguments
+    share = None
+    i = 3
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--share", "-s") and i + 1 < len(sys.argv):
+            share = sys.argv[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    # Prompt for share if not provided
+    if not share:
+        print()
+        print(info("Enter your recovery share (or paste from secure storage):"))
+        share = getpass.getpass("Share: ")
+
+    if not share:
+        print(error("No share provided."))
+        return 1
+
+    try:
+        resp = requests.post(
+            f"{server}/api/admin/ceremony/unseal",
+            cookies={"session": cookie},
+            json={"share": share.strip()},
+            timeout=30,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for ceremony operations."))
+            return 1
+
+        if resp.status_code == 409:
+            print(warning("Service is already unsealed."))
+            return 0
+
+        if resp.status_code == 400:
+            data = resp.json()
+            print(error(f"Invalid share: {data.get('detail', 'Unknown error')}"))
+            return 1
+
+        if resp.status_code != 200:
+            data = resp.json()
+            print(error(f"Unseal failed: {data.get('detail', resp.text)}"))
+            return 1
+
+        data = resp.json()
+
+        print()
+
+        if data["is_sealed"]:
+            print(success(f"Share accepted! {data['shares_provided']}/{data['shares_required']} shares provided."))
+            remaining = data['shares_required'] - data['shares_provided']
+            print(info(f"Need {remaining} more share(s) to unseal."))
+            pct = data.get('progress_percent', 0)
+            bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+            print(f"  Progress: [{bar}] {pct:.0f}%")
+        else:
+            print(success("Service unsealed! Master key is now available."))
+            print()
+            print(info("All crypto operations are now functional."))
+
+        print()
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def _ceremony_verify():
+    """Verify a share is valid without using it."""
+    import requests
+    import getpass
+
+    print(compact_header("VERIFY SHARE"))
+
+    # Parse arguments
+    share = None
+    i = 3
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--share", "-s") and i + 1 < len(sys.argv):
+            share = sys.argv[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    # Prompt for share if not provided
+    if not share:
+        print()
+        print(info("Enter share to verify:"))
+        share = getpass.getpass("Share: ")
+
+    if not share:
+        print(error("No share provided."))
+        return 1
+
+    try:
+        resp = requests.post(
+            f"{server}/api/admin/ceremony/verify-share",
+            cookies={"session": cookie},
+            json={"share": share.strip()},
+            timeout=30,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for ceremony operations."))
+            return 1
+
+        if resp.status_code != 200:
+            data = resp.json()
+            print(error(f"Verification failed: {data.get('detail', resp.text)}"))
+            return 1
+
+        data = resp.json()
+
+        print()
+
+        if data["valid"]:
+            print(success("Share is VALID"))
+            print()
+            print(f"  Share Index:       {data['share_index']}")
+            print(f"  Fingerprint:       {data['fingerprint']}")
+            print(f"  Parameters Match:  {'Yes' if data['params_match'] else 'No'}")
+            print(f"  Fingerprint Valid: {'Yes' if data['fingerprint_valid'] else 'No'}")
+        else:
+            print(error("Share is INVALID"))
+            if data.get("error"):
+                print(f"  Error: {data['error']}")
+
+        print()
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
+
+
+def _ceremony_audit():
+    """View ceremony audit log."""
+    import requests
+
+    print(compact_header("CEREMONY AUDIT LOG"))
+
+    # Parse arguments
+    limit = 20
+    i = 3
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--limit", "-n") and i + 1 < len(sys.argv):
+            limit = int(sys.argv[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    server = _get_server_url()
+    cookie = _get_session_cookie()
+    if not cookie:
+        print(error("Not logged in. Run 'cryptoserve login' first."))
+        return 1
+
+    try:
+        resp = requests.get(
+            f"{server}/api/admin/ceremony/audit",
+            cookies={"session": cookie},
+            params={"limit": limit},
+            timeout=30,
+        )
+
+        if resp.status_code == 401:
+            print(error("Session expired. Please login again."))
+            return 1
+
+        if resp.status_code == 403:
+            print(error("Admin access required for ceremony operations."))
+            return 1
+
+        if resp.status_code != 200:
+            data = resp.json()
+            print(error(f"Failed to get audit log: {data.get('detail', resp.text)}"))
+            return 1
+
+        data = resp.json()
+        events = data.get("events", [])
+
+        print()
+
+        if not events:
+            print(dim("  No ceremony events recorded."))
+        else:
+            print(f"  Showing {len(events)} of {data.get('total', len(events))} events")
+            print()
+
+            for event in events:
+                timestamp = event["timestamp"][:19].replace("T", " ")
+                event_type = event["event_type"]
+                actor = event["actor"]
+
+                # Color by event type
+                if event_type == "initialize":
+                    type_str = success(event_type.upper())
+                elif event_type == "seal":
+                    type_str = error(event_type.upper())
+                elif event_type in ("unseal_share", "unseal_complete"):
+                    type_str = warning(event_type.upper())
+                else:
+                    type_str = event_type.upper()
+
+                print(f"  {dim(timestamp)}  {type_str:20}  {actor}")
+
+                # Show details for some events
+                details = event.get("details", {})
+                if details:
+                    for k, v in details.items():
+                        print(f"                            {dim(f'{k}: {v}')}")
+
+        print()
+        return 0
+
+    except requests.exceptions.RequestException as e:
+        print(error(f"Request failed: {e}"))
+        return 1
 
 
 def main():
@@ -2428,6 +3340,10 @@ def main():
         "pqc": cmd_pqc,
         "gate": cmd_gate,
         "certs": cmd_certs,
+        "backup": cmd_backup,
+        "restore": cmd_restore,
+        "backups": cmd_backups,
+        "ceremony": cmd_ceremony,
         "help": cmd_help,
         "--help": cmd_help,
         "-h": cmd_help,
