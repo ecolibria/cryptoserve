@@ -2,10 +2,15 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import select
+
+# Initialize structured logging early
+from app.core.logging import setup_logging, RequestLoggingMiddleware, get_logger
+setup_logging(json_output=False, level="INFO")  # Set json_output=True in production
 
 # Rate limiting (optional - graceful fallback if not installed)
 try:
@@ -18,7 +23,7 @@ except ImportError:
     Limiter = None
 
 from app.config import get_settings
-from app.database import init_db, close_db, get_session_maker
+from app.database import init_db, close_db, get_session_maker, get_db
 from app.auth import github_oauth_router
 from app.api import (
     identities_router,
@@ -40,6 +45,7 @@ from app.api import (
     certificates_router,
     dependencies_router,
     inventory_router,
+    cbom_router,
     dashboard_router,
     promotion_router,
 )
@@ -497,11 +503,21 @@ async def seed_default_contexts():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
-    # Startup
+    # Validate startup configuration
+    from app.core.startup import validate_startup
+    validate_startup()  # Raises RuntimeError in STRICT mode if validation fails
+
+    # Initialize database
     await init_db()
     await seed_default_contexts()
+
+    logger = get_logger("cryptoserve")
+    logger.info("CryptoServe started", version="0.1.0")
+
     yield
+
     # Shutdown
+    logger.info("CryptoServe shutting down")
     await close_db()
 
 
@@ -526,8 +542,11 @@ app.add_middleware(
     allow_origins=[settings.frontend_url],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "X-Correlation-ID"],
 )
+
+# Request logging middleware with correlation IDs
+app.add_middleware(RequestLoggingMiddleware)
 
 # Include routers
 app.include_router(github_oauth_router)
@@ -550,6 +569,7 @@ app.include_router(code_analysis_router)
 app.include_router(certificates_router)
 app.include_router(dependencies_router)
 app.include_router(inventory_router)
+app.include_router(cbom_router)
 app.include_router(dashboard_router)
 app.include_router(promotion_router)
 app.include_router(sdk_router)
@@ -570,5 +590,56 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Basic health check - backwards compatible."""
     return {"status": "healthy"}
+
+
+@app.get("/health/live")
+async def health_liveness():
+    """Liveness probe for Kubernetes.
+
+    Quick check that the service is running.
+    """
+    from app.core.health import health_checker
+    return await health_checker.liveness()
+
+
+@app.get("/health/ready")
+async def health_readiness(db: AsyncSession = Depends(get_db)):
+    """Readiness probe for Kubernetes.
+
+    Checks critical dependencies (database, KMS).
+    Returns 503 if not ready to accept traffic.
+    """
+    from app.core.health import health_checker, HealthStatus
+    from fastapi.responses import JSONResponse
+
+    report = await health_checker.readiness(db)
+    status_code = 200 if report.status != HealthStatus.UNHEALTHY else 503
+
+    return JSONResponse(
+        content=report.to_dict(),
+        status_code=status_code,
+    )
+
+
+@app.get("/health/deep")
+async def health_deep(db: AsyncSession = Depends(get_db)):
+    """Deep health check for debugging and monitoring.
+
+    Checks all dependencies including:
+    - Database connectivity
+    - KMS provider health
+    - Cryptographic operations
+    - Configuration validation
+    """
+    from app.core.health import health_checker, HealthStatus
+    from fastapi.responses import JSONResponse
+
+    report = await health_checker.deep(db)
+    status_code = 200 if report.status != HealthStatus.UNHEALTHY else 503
+
+    return JSONResponse(
+        content=report.to_dict(),
+        status_code=status_code,
+    )
