@@ -5,247 +5,227 @@
 <h1 align="center">CryptoServe</h1>
 
 <p align="center">
-  <strong>Cryptography-as-a-Service with Zero Configuration SDKs</strong>
+  <strong>Cryptography-as-a-Service Platform</strong><br>
+  Encrypt, sign, and hash data with zero configuration. Post-quantum ready.
 </p>
 
 <p align="center">
   <a href="https://github.com/keytum/crypto-serve/actions"><img src="https://img.shields.io/github/actions/workflow/status/keytum/crypto-serve/ci.yml?branch=main&style=flat-square" alt="Build Status"></a>
   <a href="https://github.com/keytum/crypto-serve/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License"></a>
-  <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python 3.11+"></a>
+  <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square" alt="Python 3.10+"></a>
   <a href="https://keytum.github.io/crypto-serve/"><img src="https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square" alt="Documentation"></a>
 </p>
 
 <p align="center">
-  <a href="https://keytum.github.io/crypto-serve/">Documentation</a> |
-  <a href="https://keytum.github.io/crypto-serve/getting-started/quickstart/">Quick Start</a> |
-  <a href="https://keytum.github.io/crypto-serve/api-reference/">API Reference</a> |
+  <a href="#get-started-in-60-seconds">Get Started</a> •
+  <a href="https://keytum.github.io/crypto-serve/">Documentation</a> •
+  <a href="https://keytum.github.io/crypto-serve/api-reference/">API Reference</a> •
   <a href="https://keytum.github.io/crypto-serve/security/whitepaper/">Security Whitepaper</a>
 </p>
 
 ---
 
-## What is CryptoServe?
+## Get Started in 60 Seconds
 
-CryptoServe is a **cryptography-as-a-service platform** that eliminates the complexity of implementing encryption correctly. With auto-registration, your apps connect with zero configuration:
+### Prerequisites
 
-```python
-from cryptoserve import CryptoServe
+- Docker and Docker Compose
+- Python 3.10+
+- A GitHub account
 
-# Auto-registers your app on first use (after one-time `cryptoserve login`)
-crypto = CryptoServe(app_name="my-service", team="platform")
-
-# Full cryptographic operations
-encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
-decrypted = crypto.decrypt(encrypted, context="user-pii")
-signature = crypto.sign(b"document", key_id="signing-key")
-hash_hex = crypto.hash(b"data", algorithm="sha256")
-```
-
-### Why CryptoServe?
-
-| Traditional Approach | CryptoServe |
-|---------------------|-------------|
-| Configure crypto libraries | Zero configuration |
-| Manage encryption keys | Keys managed server-side |
-| Implement key rotation | Automatic key rotation |
-| Track algorithm compliance | Policy engine enforces standards |
-| Build audit logging | Full audit trail included |
-| Handle PQC migration | Post-quantum ready |
-
-## Key Features
-
-### Zero-Configuration SDKs
-Download a personalized SDK with your identity embedded. No API keys to configure, no secrets to manage.
-
-### 5-Layer Context Model
-Intelligent algorithm selection based on:
-- **Data Identity** - Sensitivity level and classification
-- **Regulatory** - Compliance requirements (HIPAA, PCI-DSS, GDPR)
-- **Threat Model** - Protection duration and attack vectors
-- **Access Patterns** - Usage frequency and latency needs
-- **Technical** - Hardware capabilities and constraints
-
-### Post-Quantum Ready
-First-class support for NIST-standardized post-quantum algorithms:
-- **ML-KEM** (FIPS 203) - Quantum-safe key encapsulation
-- **ML-DSA** (FIPS 204) - Quantum-safe digital signatures
-- **Hybrid modes** - Classical + PQC for defense in depth
-
-### Enterprise-Grade Security
-- AES-256-GCM with key commitment
-- HKDF key derivation with domain separation
-- Ed25519 JWT authentication
-- Complete audit logging
-- FIPS 140-2/140-3 compliance modes
-
-### Community Dashboard
-Self-service web interface for developers and security teams:
-- **Context Management** - Create and configure encryption contexts
-- **Key Management** - View key status, rotation history, and health
-- **Usage Analytics** - Monitor encryption/decryption operations
-- **Policy Management** - Define and enforce cryptographic policies
-- **Audit Logs** - Complete audit trail with filtering and export
-- **Algorithm Policy** - Configure allowed algorithms and FIPS compliance
-- **CBOM Scanner** - Cryptographic Bill of Materials for your codebase
-
-## Quick Start
-
-### 1. Start the Server
+### Step 1: Clone and Start the Server
 
 ```bash
 git clone https://github.com/keytum/crypto-serve.git
 cd crypto-serve
 cp .env.example .env
-# Edit .env with your GitHub OAuth credentials
 docker compose up -d
 ```
 
-### 2. Login (One-Time Setup)
+The server is now running at `http://localhost:8001` and the dashboard at `http://localhost:3001`.
+
+### Step 2: Install the SDK and Login
 
 ```bash
 pip install cryptoserve
 cryptoserve login
-# Opens browser for GitHub OAuth, stores credentials locally
 ```
 
-### 3. Use the SDK
+This opens your browser for GitHub authentication. Your credentials are stored securely in `~/.cryptoserve/`.
+
+### Step 3: Start Encrypting
+
+Create a file called `example.py`:
 
 ```python
 from cryptoserve import CryptoServe
 
-# Auto-registers your app on first use
-crypto = CryptoServe(
-    app_name="my-service",
-    team="platform",
-    environment="development"
-)
+crypto = CryptoServe(app_name="my-app", team="engineering")
 
-# Encrypt/Decrypt
-encrypted = crypto.encrypt(b"Hello, World!", context="user-pii")
-decrypted = crypto.decrypt(encrypted, context="user-pii")
+# Encrypt
+plaintext = b"Hello, World!"
+ciphertext = crypto.encrypt(plaintext, context="default")
 
-# Sign/Verify
-signature = crypto.sign(b"document content", key_id="my-signing-key")
-is_valid = crypto.verify_signature(b"document content", signature, key_id="my-signing-key")
+# Decrypt
+decrypted = crypto.decrypt(ciphertext, context="default")
 
-# Hash and MAC
-hash_hex = crypto.hash(b"data to hash", algorithm="sha256")
-mac_hex = crypto.mac(b"message", key=secret_key, algorithm="hmac-sha256")
+print(decrypted)  # b"Hello, World!"
 ```
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Client Applications                          │
-│                    (Python SDK / TypeScript SDK)                     │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                            API Gateway                               │
-│                         (Authentication)                             │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│   ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐   │
-│   │   Identity   │   │   Context    │   │      Policy          │   │
-│   │   Service    │   │   Service    │   │      Engine          │   │
-│   └──────────────┘   └──────────────┘   └──────────────────────┘   │
-│                                                                      │
-│   ┌──────────────────────────────────────────────────────────────┐  │
-│   │                      Crypto Engine                            │  │
-│   │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────┐  │  │
-│   │  │ AES-GCM │  │ ChaCha20│  │ CBC+MAC │  │ Hybrid PQC      │  │  │
-│   │  │         │  │ Poly1305│  │         │  │ (ML-KEM+AES)    │  │  │
-│   │  └─────────┘  └─────────┘  └─────────┘  └─────────────────┘  │  │
-│   └──────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│   ┌──────────────────────────────────────────────────────────────┐  │
-│   │                     Key Management                            │  │
-│   │           (HKDF Derivation / KMS Integration)                 │  │
-│   └──────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                     PostgreSQL / SQLite                              │
-│              (Identities, Contexts, Audit Logs)                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## Documentation
-
-| Section | Description |
-|---------|-------------|
-| [Getting Started](https://keytum.github.io/crypto-serve/getting-started/) | Installation and first steps |
-| [Concepts](https://keytum.github.io/crypto-serve/concepts/) | Architecture, context model, key management |
-| [Guides](https://keytum.github.io/crypto-serve/guides/) | How-to guides for common tasks |
-| [API Reference](https://keytum.github.io/crypto-serve/api-reference/) | Complete API documentation |
-| [SDK Reference](https://keytum.github.io/crypto-serve/sdk/) | Python and TypeScript SDK docs |
-| [Security](https://keytum.github.io/crypto-serve/security/) | Security whitepaper and threat model |
-
-## Supported Algorithms
-
-### Symmetric Encryption
-
-| Algorithm | Key Size | Use Case | FIPS |
-|-----------|----------|----------|------|
-| AES-256-GCM | 256-bit | Default, high security | Yes |
-| AES-128-GCM | 128-bit | Performance-sensitive | Yes |
-| ChaCha20-Poly1305 | 256-bit | No AES-NI hardware | No |
-| AES-256-CBC + HMAC | 256-bit | Legacy compatibility | Yes |
-
-### Post-Quantum
-
-| Algorithm | Standard | Security Level |
-|-----------|----------|----------------|
-| ML-KEM-768 | FIPS 203 | Level 3 (192-bit) |
-| ML-KEM-1024 | FIPS 203 | Level 5 (256-bit) |
-| ML-DSA-65 | FIPS 204 | Level 3 (192-bit) |
-| ML-DSA-87 | FIPS 204 | Level 5 (256-bit) |
-
-### Hybrid Modes
-
-| Mode | Components | Recommendation |
-|------|------------|----------------|
-| `AES-256-GCM+ML-KEM-768` | Classical + PQC | Recommended for long-term data |
-| `AES-256-GCM+ML-KEM-1024` | Classical + PQC | Maximum security |
-
-## Configuration
-
-### Environment Variables
+Run it:
 
 ```bash
-# Required
-GITHUB_CLIENT_ID=your_client_id
-GITHUB_CLIENT_SECRET=your_client_secret
-CRYPTOSERVE_MASTER_KEY=your-secure-master-key
-JWT_SECRET_KEY=your-jwt-secret
-
-# Optional
-FIPS_MODE=disabled|preferred|enabled
-LOG_LEVEL=INFO
-DATABASE_URL=sqlite:///./cryptoserve.db
+python example.py
 ```
 
-### GitHub OAuth Setup
+That's it. Your app is automatically registered and ready to use.
 
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Create a new OAuth App
-3. Set Homepage URL: `http://localhost:3001`
-4. Set Callback URL: `http://localhost:8001/auth/github/callback`
-5. Copy credentials to `.env`
+---
 
-## Development
+## Why CryptoServe?
 
-### Prerequisites
+| Without CryptoServe | With CryptoServe |
+|---------------------|------------------|
+| Configure cryptographic libraries | `pip install cryptoserve` |
+| Generate and store encryption keys | Keys managed automatically |
+| Implement key rotation logic | Automatic key rotation |
+| Build compliance audit trails | Full audit logging built-in |
+| Plan for post-quantum migration | PQC algorithms ready to use |
 
-- Python 3.11+
-- Node.js 18+
-- Docker (optional)
+---
 
-### Local Development
+## SDK Reference
+
+### Installation
+
+```bash
+pip install cryptoserve
+```
+
+### Initialization
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(
+    app_name="my-service",       # Required: unique identifier for your app
+    team="platform",             # Optional: team name (default: "default")
+    environment="production",    # Optional: environment (default: "development")
+    contexts=["user-pii"],       # Optional: encryption contexts to use
+)
+```
+
+### Encrypt and Decrypt
+
+```python
+# Encrypt bytes
+ciphertext = crypto.encrypt(b"sensitive data", context="user-pii")
+
+# Decrypt bytes
+plaintext = crypto.decrypt(ciphertext, context="user-pii")
+```
+
+### Sign and Verify
+
+```python
+# Sign data
+signature = crypto.sign(b"document content", key_id="signing-key")
+
+# Verify signature
+is_valid = crypto.verify_signature(b"document content", signature, key_id="signing-key")
+```
+
+### Hash
+
+```python
+# SHA-256 (default)
+hash_hex = crypto.hash(b"data to hash")
+
+# Other algorithms: sha384, sha512, sha3-256, blake2b
+hash_hex = crypto.hash(b"data", algorithm="sha512")
+```
+
+### MAC (Message Authentication Code)
+
+```python
+secret_key = b"my-secret-key-32-bytes-long!!!!!"
+mac_hex = crypto.mac(b"message", key=secret_key)
+```
+
+### Health Check
+
+```python
+if crypto.health_check():
+    print("Connected to CryptoServe")
+```
+
+---
+
+## Features
+
+### Supported Algorithms
+
+| Category | Algorithms |
+|----------|------------|
+| Symmetric Encryption | AES-256-GCM (default), AES-128-GCM, ChaCha20-Poly1305 |
+| Hash Functions | SHA-256, SHA-384, SHA-512, SHA3-256, BLAKE2b |
+| Post-Quantum | ML-KEM-768, ML-KEM-1024, ML-DSA-65, ML-DSA-87 |
+| Hybrid Modes | AES-256-GCM + ML-KEM-768 |
+
+### Community Dashboard
+
+Access the web dashboard at `http://localhost:3001` to:
+
+- View registered applications
+- Monitor encryption/decryption usage
+- Manage encryption contexts
+- Configure algorithm policies
+- Review audit logs
+- Scan for cryptographic vulnerabilities (CBOM)
+
+### Enterprise Features
+
+- **FIPS 140-2/140-3 compliance modes**
+- **Multi-tenant isolation**
+- **Key rotation with zero downtime**
+- **Complete audit trail**
+- **Policy engine for compliance enforcement**
+
+---
+
+## Self-Hosting
+
+### Using Docker Compose (Recommended)
+
+```bash
+git clone https://github.com/keytum/crypto-serve.git
+cd crypto-serve
+cp .env.example .env
+```
+
+Edit `.env` with your configuration:
+
+```bash
+# Required: GitHub OAuth (create at https://github.com/settings/developers)
+GITHUB_CLIENT_ID=your_client_id
+GITHUB_CLIENT_SECRET=your_client_secret
+
+# Required: Security keys (generate with: openssl rand -hex 32)
+CRYPTOSERVE_MASTER_KEY=your-32-byte-hex-key
+JWT_SECRET_KEY=your-jwt-secret-key
+
+# Optional
+DATABASE_URL=sqlite:///./cryptoserve.db
+FIPS_MODE=disabled
+```
+
+Start the services:
+
+```bash
+docker compose up -d
+```
+
+### Manual Installation
 
 ```bash
 # Backend
@@ -253,57 +233,100 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --host 0.0.0.0 --port 8001
 
-# Frontend (new terminal)
+# Frontend (separate terminal)
 cd frontend
 npm install
-npm run dev
-
-# SDK development
-cd sdk/python
-pip install -e ".[dev]"
-pytest
+npm run build
+npm start
 ```
 
-### Running Tests
+---
 
-```bash
-cd backend
-pytest -v --cov=app --cov-report=term-missing
+## GitHub OAuth Setup
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Click **New OAuth App**
+3. Fill in:
+   - **Application name:** CryptoServe
+   - **Homepage URL:** `http://localhost:3001`
+   - **Authorization callback URL:** `http://localhost:8001/auth/github/callback`
+4. Click **Register application**
+5. Copy **Client ID** and generate a **Client Secret**
+6. Add to your `.env` file
+
+---
+
+## Architecture
+
 ```
+┌─────────────────────────────────────────────────────────────┐
+│                    Client Applications                       │
+│                      (Python SDK)                            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     CryptoServe Server                       │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ Auth Layer  │  │ Policy      │  │ Crypto Engine       │  │
+│  │ (JWT/OAuth) │  │ Engine      │  │ (AES, PQC, Hybrid)  │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │              Key Management (HKDF / KMS)                ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  PostgreSQL / SQLite                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Documentation
+
+| Resource | Description |
+|----------|-------------|
+| [Quick Start](https://keytum.github.io/crypto-serve/getting-started/quickstart/) | Get running in 5 minutes |
+| [SDK Reference](https://keytum.github.io/crypto-serve/sdk/python/) | Complete Python SDK documentation |
+| [API Reference](https://keytum.github.io/crypto-serve/api-reference/) | REST API documentation |
+| [Security Whitepaper](https://keytum.github.io/crypto-serve/security/whitepaper/) | Cryptographic design and threat model |
+| [Concepts](https://keytum.github.io/crypto-serve/concepts/) | Architecture and key management |
+
+---
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### Development Workflow
+```bash
+# Run tests
+cd backend
+pytest -v
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests
-5. Submit a pull request
+# Run with coverage
+pytest --cov=app --cov-report=term-missing
+```
+
+---
 
 ## Security
 
-For security vulnerabilities, please see our [Security Policy](SECURITY.md) or email security@cryptoserve.io.
+Report security vulnerabilities to **security@cryptoserve.io** or via [GitHub Security Advisories](https://github.com/keytum/crypto-serve/security/advisories).
 
-For detailed security information, see our [Security Whitepaper](https://keytum.github.io/crypto-serve/security/whitepaper/).
+See our [Security Policy](SECURITY.md) and [Security Whitepaper](https://keytum.github.io/crypto-serve/security/whitepaper/) for details.
+
+---
 
 ## License
 
-Apache License 2.0 - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-- [cryptography](https://cryptography.io/) - Core cryptographic primitives
-- [liboqs](https://openquantumsafe.org/) - Post-quantum algorithms
-- [FastAPI](https://fastapi.tiangolo.com/) - API framework
-- [Next.js](https://nextjs.org/) - Frontend framework
+Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
 <p align="center">
-  Made with care for developers who want encryption done right.
+  <sub>Built for developers who need encryption done right.</sub>
 </p>
