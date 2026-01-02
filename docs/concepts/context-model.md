@@ -200,7 +200,14 @@ def resolve_algorithm(config: ContextConfig) -> DerivedRequirements:
 1. Navigate to **Contexts** → **Create New**
 2. Fill in each layer:
 
-![Context Creation](../assets/screenshots/context-create.png){ loading=lazy }
+!!! example "Context Creation Form"
+    The form guides you through each of the 5 layers:
+
+    - **Data Identity**: Category, sensitivity, PII/PHI/PCI flags
+    - **Regulatory**: Compliance frameworks, retention policies
+    - **Threat Model**: Adversaries, protection lifetime
+    - **Access Patterns**: Frequency, latency requirements
+    - **Algorithm**: Auto-resolved or manually selected
 
 ### Via API
 
