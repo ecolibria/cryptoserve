@@ -285,6 +285,7 @@ class BackupService:
         password: str,
         tenant_id: str | None = None,
         include_audit_logs: bool = False,
+        db: AsyncSession | None = None,
     ) -> BackupResult:
         """Create an encrypted backup of the database.
 
@@ -293,6 +294,7 @@ class BackupService:
             password: Password to encrypt the backup
             tenant_id: Optional - backup only this tenant's data
             include_audit_logs: Include audit logs (can be very large)
+            db: Optional database session (for testing)
 
         Returns:
             BackupResult with details about the backup
@@ -300,98 +302,105 @@ class BackupService:
         start_time = datetime.now(timezone.utc)
         logger.info(f"Starting backup to {output_path}")
 
+        async def _do_backup(db_session: AsyncSession) -> BackupResult:
+            # Export all models to JSON
+            backup_data = {}
+            checksums = {}
+
+            models_to_backup = BACKUP_MODELS.copy()
+            if include_audit_logs:
+                models_to_backup.append(AuditLog)
+
+            for model in models_to_backup:
+                model_name = model.__tablename__
+                logger.info(f"Exporting {model_name}...")
+
+                records = await self._export_model(db_session, model, tenant_id)
+                backup_data[model_name] = records
+
+                # Calculate checksum for this table
+                table_json = json.dumps(records, sort_keys=True)
+                checksums[model_name] = hashlib.sha256(table_json.encode()).hexdigest()
+
+                logger.info(f"Exported {len(records)} {model_name} records")
+
+            # Calculate overall checksum
+            overall_checksum = hashlib.sha256(
+                json.dumps(checksums, sort_keys=True).encode()
+            ).hexdigest()
+
+            # Create manifest
+            manifest = BackupManifest(
+                version=BACKUP_VERSION,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                cryptoserve_version="1.0.0",  # TODO: Get from package
+                database_type="postgresql" if "postgresql" in settings.database_url else "sqlite",
+                tenant_count=len(backup_data.get("tenants", [])),
+                context_count=len(backup_data.get("contexts", [])),
+                key_count=len(backup_data.get("keys", [])),
+                pqc_key_count=len(backup_data.get("pqc_keys", [])),
+                includes_audit_logs=include_audit_logs,
+                checksum=overall_checksum,
+            )
+
+            # Create tar archive in memory
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                # Add manifest
+                manifest_json = json.dumps(manifest.to_dict(), indent=2)
+                manifest_bytes = manifest_json.encode()
+                manifest_info = tarfile.TarInfo(name="manifest.json")
+                manifest_info.size = len(manifest_bytes)
+                tar.addfile(manifest_info, io.BytesIO(manifest_bytes))
+
+                # Add data files
+                for table_name, records in backup_data.items():
+                    data_json = json.dumps(records, indent=2, default=str)
+                    data_bytes = data_json.encode()
+                    data_info = tarfile.TarInfo(name=f"data/{table_name}.json")
+                    data_info.size = len(data_bytes)
+                    tar.addfile(data_info, io.BytesIO(data_bytes))
+
+                # Add checksums
+                checksums_json = json.dumps(checksums, indent=2)
+                checksums_bytes = checksums_json.encode()
+                checksums_info = tarfile.TarInfo(name="checksums.json")
+                checksums_info.size = len(checksums_bytes)
+                tar.addfile(checksums_info, io.BytesIO(checksums_bytes))
+
+            # Encrypt the archive
+            tar_data = tar_buffer.getvalue()
+            encrypted_data = self._encrypt_data(tar_data, password)
+
+            # Write to file
+            output = Path(output_path)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(encrypted_data)
+
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+
+            logger.info(
+                f"Backup completed: {len(encrypted_data)} bytes, "
+                f"{duration:.2f}s, checksum={overall_checksum[:16]}..."
+            )
+
+            return BackupResult(
+                success=True,
+                backup_path=str(output_path),
+                manifest=manifest,
+                error=None,
+                size_bytes=len(encrypted_data),
+                duration_seconds=duration,
+            )
+
         try:
-            async with get_session_maker()() as db:
-                # Export all models to JSON
-                backup_data = {}
-                checksums = {}
-
-                models_to_backup = BACKUP_MODELS.copy()
-                if include_audit_logs:
-                    models_to_backup.append(AuditLog)
-
-                for model in models_to_backup:
-                    model_name = model.__tablename__
-                    logger.info(f"Exporting {model_name}...")
-
-                    records = await self._export_model(db, model, tenant_id)
-                    backup_data[model_name] = records
-
-                    # Calculate checksum for this table
-                    table_json = json.dumps(records, sort_keys=True)
-                    checksums[model_name] = hashlib.sha256(table_json.encode()).hexdigest()
-
-                    logger.info(f"Exported {len(records)} {model_name} records")
-
-                # Calculate overall checksum
-                overall_checksum = hashlib.sha256(
-                    json.dumps(checksums, sort_keys=True).encode()
-                ).hexdigest()
-
-                # Create manifest
-                manifest = BackupManifest(
-                    version=BACKUP_VERSION,
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                    cryptoserve_version="1.0.0",  # TODO: Get from package
-                    database_type="postgresql" if "postgresql" in settings.database_url else "sqlite",
-                    tenant_count=len(backup_data.get("tenants", [])),
-                    context_count=len(backup_data.get("contexts", [])),
-                    key_count=len(backup_data.get("keys", [])),
-                    pqc_key_count=len(backup_data.get("pqc_keys", [])),
-                    includes_audit_logs=include_audit_logs,
-                    checksum=overall_checksum,
-                )
-
-                # Create tar archive in memory
-                tar_buffer = io.BytesIO()
-                with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
-                    # Add manifest
-                    manifest_json = json.dumps(manifest.to_dict(), indent=2)
-                    manifest_bytes = manifest_json.encode()
-                    manifest_info = tarfile.TarInfo(name="manifest.json")
-                    manifest_info.size = len(manifest_bytes)
-                    tar.addfile(manifest_info, io.BytesIO(manifest_bytes))
-
-                    # Add data files
-                    for table_name, records in backup_data.items():
-                        data_json = json.dumps(records, indent=2, default=str)
-                        data_bytes = data_json.encode()
-                        data_info = tarfile.TarInfo(name=f"data/{table_name}.json")
-                        data_info.size = len(data_bytes)
-                        tar.addfile(data_info, io.BytesIO(data_bytes))
-
-                    # Add checksums
-                    checksums_json = json.dumps(checksums, indent=2)
-                    checksums_bytes = checksums_json.encode()
-                    checksums_info = tarfile.TarInfo(name="checksums.json")
-                    checksums_info.size = len(checksums_bytes)
-                    tar.addfile(checksums_info, io.BytesIO(checksums_bytes))
-
-                # Encrypt the archive
-                tar_data = tar_buffer.getvalue()
-                encrypted_data = self._encrypt_data(tar_data, password)
-
-                # Write to file
-                output = Path(output_path)
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_bytes(encrypted_data)
-
-                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-
-                logger.info(
-                    f"Backup completed: {len(encrypted_data)} bytes, "
-                    f"{duration:.2f}s, checksum={overall_checksum[:16]}..."
-                )
-
-                return BackupResult(
-                    success=True,
-                    backup_path=str(output_path),
-                    manifest=manifest,
-                    error=None,
-                    size_bytes=len(encrypted_data),
-                    duration_seconds=duration,
-                )
-
+            if db is not None:
+                # Use provided session (for testing)
+                return await _do_backup(db)
+            else:
+                # Create new session for production use
+                async with get_session_maker()() as db_session:
+                    return await _do_backup(db_session)
         except Exception as e:
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.error(f"Backup failed: {e}")
@@ -410,6 +419,7 @@ class BackupService:
         password: str,
         dry_run: bool = True,
         skip_existing: bool = True,
+        db: AsyncSession | None = None,
     ) -> RestoreResult:
         """Restore from an encrypted backup.
 
@@ -418,6 +428,7 @@ class BackupService:
             password: Password to decrypt the backup
             dry_run: If True, only validate and report what would be restored
             skip_existing: If True, skip records that already exist
+            db: Optional database session (for testing)
 
         Returns:
             RestoreResult with details about the restore
@@ -498,24 +509,31 @@ class BackupService:
                         logger.info(f"Would restore {len(records)} {table_name} records")
                 else:
                     # Actually restore data
-                    async with get_session_maker()() as db:
+                    async def _do_restore(db_session: AsyncSession) -> None:
+                        nonlocal records_restored
                         # Restore in order of BACKUP_MODELS to handle foreign keys
                         for model in BACKUP_MODELS:
                             table_name = model.__tablename__
                             if table_name in backup_data:
                                 records = backup_data[table_name]
-                                count = await self._import_model(db, model, records)
+                                count = await self._import_model(db_session, model, records)
                                 records_restored[table_name] = count
                                 logger.info(f"Restored {count} {table_name} records")
 
                         # Handle audit logs if present
                         if "audit_logs" in backup_data:
                             count = await self._import_model(
-                                db, AuditLog, backup_data["audit_logs"]
+                                db_session, AuditLog, backup_data["audit_logs"]
                             )
                             records_restored["audit_logs"] = count
 
-                        await db.commit()
+                        await db_session.commit()
+
+                    if db is not None:
+                        await _do_restore(db)
+                    else:
+                        async with get_session_maker()() as db_session:
+                            await _do_restore(db_session)
 
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 

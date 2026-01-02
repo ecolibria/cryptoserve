@@ -144,6 +144,7 @@ class TestBackupCreateRestore:
             output_path=backup_path,
             password=password,
             include_audit_logs=False,
+            db=db_session,
         )
 
         assert result.success is True
@@ -167,6 +168,7 @@ class TestBackupCreateRestore:
         result = await backup_service.create_backup(
             output_path=backup_path,
             password=password,
+            db=db_session,
         )
 
         # Read back the manifest
@@ -187,6 +189,7 @@ class TestBackupCreateRestore:
         await backup_service.create_backup(
             output_path=backup_path,
             password=password,
+            db=db_session,
         )
 
         # Restore in dry-run mode
@@ -194,6 +197,7 @@ class TestBackupCreateRestore:
             backup_path=backup_path,
             password=password,
             dry_run=True,
+            db=db_session,
         )
 
         assert result.success is True
@@ -211,6 +215,7 @@ class TestBackupCreateRestore:
         await backup_service.create_backup(
             output_path=backup_path,
             password=password,
+            db=db_session,
         )
 
         # Try to restore with wrong password
@@ -218,6 +223,7 @@ class TestBackupCreateRestore:
             backup_path=backup_path,
             password="wrong-password",
             dry_run=True,
+            db=db_session,
         )
 
         assert result.success is False
