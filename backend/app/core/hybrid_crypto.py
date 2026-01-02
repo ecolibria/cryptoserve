@@ -3,6 +3,11 @@
 Implements hybrid encryption combining classical algorithms with post-quantum
 Key Encapsulation Mechanisms (KEMs) per NIST guidance for the PQC transition.
 
+This module uses liboqs (Open Quantum Safe) for real NIST-standardized
+post-quantum algorithms:
+- ML-KEM (FIPS 203) - Key Encapsulation Mechanism (formerly Kyber)
+- ML-DSA (FIPS 204) - Digital Signature Algorithm (formerly Dilithium)
+
 Hybrid Mode Benefits:
 - Security if either algorithm is unbroken
 - Transition path from classical to post-quantum
@@ -12,14 +17,6 @@ Supported Hybrid Modes:
 - AES-256-GCM + ML-KEM-768 (recommended for most use cases)
 - AES-256-GCM + ML-KEM-1024 (maximum security)
 - ChaCha20-Poly1305 + ML-KEM-768 (no AES-NI environments)
-
-Note: This uses a mock/placeholder implementation for ML-KEM since
-liboqs Python bindings may not be available. In production, you would
-use the oqs-python package (https://github.com/open-quantum-safe/liboqs-python).
-
-For production deployment:
-1. pip install oqs
-2. Replace mock implementations with actual ML-KEM calls
 """
 
 import os
@@ -27,6 +24,7 @@ import json
 import base64
 import hashlib
 import secrets
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -34,6 +32,25 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# liboqs Integration
+# =============================================================================
+
+try:
+    import oqs
+    LIBOQS_AVAILABLE = True
+    logger.info("liboqs loaded successfully - real PQC enabled")
+except ImportError:
+    LIBOQS_AVAILABLE = False
+    logger.warning("liboqs not available - PQC operations will fail")
+
+
+class PQCError(Exception):
+    """Post-quantum cryptography error."""
+    pass
 
 
 class HybridMode(str, Enum):
@@ -43,17 +60,42 @@ class HybridMode(str, Enum):
     CHACHA_MLKEM_768 = "ChaCha20-Poly1305+ML-KEM-768"
 
 
+class SignatureAlgorithm(str, Enum):
+    """Supported PQC signature algorithms."""
+    ML_DSA_44 = "ML-DSA-44"      # NIST Level 1 (128-bit security)
+    ML_DSA_65 = "ML-DSA-65"      # NIST Level 3 (192-bit security)
+    ML_DSA_87 = "ML-DSA-87"      # NIST Level 5 (256-bit security)
+    FALCON_512 = "Falcon-512"    # Alternative: smaller signatures
+    FALCON_1024 = "Falcon-1024"  # Alternative: maximum security
+
+
 @dataclass
 class HybridKeyPair:
     """A hybrid key pair combining classical and PQC keys."""
     mode: HybridMode
-    public_key: bytes     # Serialized public key (classical + PQC)
-    private_key: bytes    # Serialized private key (classical + PQC)
+    public_key: bytes     # Serialized public key (KEM)
+    private_key: bytes    # Serialized private key (KEM)
     key_id: str           # Unique identifier
 
     def to_dict(self) -> dict:
         return {
             "mode": self.mode.value,
+            "public_key": base64.b64encode(self.public_key).decode('ascii'),
+            "key_id": self.key_id,
+        }
+
+
+@dataclass
+class SignatureKeyPair:
+    """A PQC signature key pair."""
+    algorithm: SignatureAlgorithm
+    public_key: bytes
+    private_key: bytes
+    key_id: str
+
+    def to_dict(self) -> dict:
+        return {
+            "algorithm": self.algorithm.value,
             "public_key": base64.b64encode(self.public_key).decode('ascii'),
             "key_id": self.key_id,
         }
@@ -111,104 +153,263 @@ class HybridCiphertext:
 
 
 # =============================================================================
-# Mock ML-KEM Implementation
-# For production, replace with liboqs: pip install oqs
+# Real ML-KEM Implementation using liboqs
 # =============================================================================
 
-class MockMLKEM:
-    """Mock ML-KEM implementation for development/testing.
+class MLKEM:
+    """Real ML-KEM implementation using liboqs.
 
-    In production, replace with:
-    ```
-    import oqs
-    kem = oqs.KeyEncapsulation("ML-KEM-768")
-    public_key = kem.generate_keypair()
-    ciphertext, shared_secret = kem.encap_secret(public_key)
-    shared_secret = kem.decap_secret(ciphertext)
-    ```
+    ML-KEM (Module-Lattice-based Key Encapsulation Mechanism) is the
+    NIST-standardized post-quantum KEM (FIPS 203), formerly known as Kyber.
+
+    Security levels:
+    - ML-KEM-512: NIST Level 1 (128-bit security)
+    - ML-KEM-768: NIST Level 3 (192-bit security) - Recommended
+    - ML-KEM-1024: NIST Level 5 (256-bit security) - Maximum security
     """
 
-    # Parameter sizes per NIST FIPS 203
+    # NIST FIPS 203 parameter sizes
     PARAMS = {
-        "ML-KEM-512": {"pk_len": 800, "sk_len": 1632, "ct_len": 768, "ss_len": 32},
-        "ML-KEM-768": {"pk_len": 1184, "sk_len": 2400, "ct_len": 1088, "ss_len": 32},
-        "ML-KEM-1024": {"pk_len": 1568, "sk_len": 3168, "ct_len": 1568, "ss_len": 32},
+        "ML-KEM-512": {"pk_len": 800, "sk_len": 1632, "ct_len": 768, "ss_len": 32, "level": 1},
+        "ML-KEM-768": {"pk_len": 1184, "sk_len": 2400, "ct_len": 1088, "ss_len": 32, "level": 3},
+        "ML-KEM-1024": {"pk_len": 1568, "sk_len": 3168, "ct_len": 1568, "ss_len": 32, "level": 5},
     }
 
     def __init__(self, algorithm: str = "ML-KEM-768"):
+        if not LIBOQS_AVAILABLE:
+            raise PQCError(
+                "liboqs not installed. Install with: pip install liboqs-python"
+            )
+
         if algorithm not in self.PARAMS:
-            raise ValueError(f"Unknown algorithm: {algorithm}")
+            raise ValueError(f"Unknown algorithm: {algorithm}. Valid: {list(self.PARAMS.keys())}")
+
         self.algorithm = algorithm
         self.params = self.PARAMS[algorithm]
-        self._private_key = None
+        self._kem = oqs.KeyEncapsulation(algorithm)
+        self._public_key: bytes | None = None
+        self._private_key: bytes | None = None
 
     def generate_keypair(self) -> bytes:
-        """Generate a new key pair. Returns public key."""
-        # In mock mode, we use random bytes
-        # Real ML-KEM has structured keys from lattice math
-        self._private_key = secrets.token_bytes(self.params["sk_len"])
-        public_key = secrets.token_bytes(self.params["pk_len"])
-        return public_key
+        """Generate a new key pair. Returns public key.
+
+        The private key is stored internally and can be accessed via
+        the private_key property.
+        """
+        self._public_key = self._kem.generate_keypair()
+        self._private_key = self._kem.export_secret_key()
+        return self._public_key
+
+    @property
+    def public_key(self) -> bytes | None:
+        """Get the public key (after generate_keypair)."""
+        return self._public_key
+
+    @property
+    def private_key(self) -> bytes | None:
+        """Get the private key (after generate_keypair)."""
+        return self._private_key
 
     def set_keypair(self, public_key: bytes, private_key: bytes) -> None:
-        """Set an existing key pair."""
+        """Set an existing key pair for decapsulation."""
+        self._public_key = public_key
         self._private_key = private_key
+        # Create new KEM instance with the secret key
+        self._kem = oqs.KeyEncapsulation(self.algorithm, secret_key=private_key)
 
     def encap_secret(self, public_key: bytes) -> tuple[bytes, bytes]:
         """Encapsulate a shared secret using the public key.
 
-        Returns (ciphertext, shared_secret).
+        Args:
+            public_key: Recipient's ML-KEM public key
+
+        Returns:
+            Tuple of (ciphertext, shared_secret)
+            - ciphertext: Send to recipient for decapsulation
+            - shared_secret: 32-byte key for symmetric encryption
         """
-        # Mock: Generate random shared secret and "ciphertext"
-        # Real ML-KEM: Lattice-based encapsulation
-        shared_secret = secrets.token_bytes(self.params["ss_len"])
-        ciphertext = secrets.token_bytes(self.params["ct_len"])
-
-        # For mock reproducibility, derive both from a seed
-        seed = hashlib.sha256(public_key + secrets.token_bytes(32)).digest()
-        shared_secret = hashlib.sha256(b"ss:" + seed).digest()
-        ciphertext = hashlib.sha256(b"ct:" + seed).digest() * (self.params["ct_len"] // 32 + 1)
-        ciphertext = ciphertext[:self.params["ct_len"]]
-
-        # Store for mock decapsulation (not how real KEM works)
-        self._last_secret = shared_secret
-        self._last_ct = ciphertext
-
+        ciphertext, shared_secret = self._kem.encap_secret(public_key)
         return ciphertext, shared_secret
 
     def decap_secret(self, ciphertext: bytes) -> bytes:
         """Decapsulate the shared secret using the private key.
 
-        Returns shared_secret.
+        Args:
+            ciphertext: The KEM ciphertext from encapsulation
+
+        Returns:
+            32-byte shared secret (same as encapsulation produced)
         """
         if self._private_key is None:
-            raise ValueError("No private key set")
+            raise PQCError("No private key set. Call set_keypair() first.")
 
-        # Mock: In real ML-KEM, this would use lattice decryption
-        # For mock, we need to track the secret (not secure, just for demo)
+        shared_secret = self._kem.decap_secret(ciphertext)
+        return shared_secret
 
-        # In real implementation:
-        # return real_mlkem_decap(self._private_key, ciphertext)
+    def get_details(self) -> dict:
+        """Get algorithm details."""
+        return {
+            "algorithm": self.algorithm,
+            "nist_level": self.params["level"],
+            "public_key_bytes": self.params["pk_len"],
+            "secret_key_bytes": self.params["sk_len"],
+            "ciphertext_bytes": self.params["ct_len"],
+            "shared_secret_bytes": self.params["ss_len"],
+            "standard": "NIST FIPS 203",
+        }
 
-        # Mock: derive deterministically from ciphertext + private key
-        # This is NOT cryptographically sound - just for API demonstration
-        seed = hashlib.sha256(ciphertext + self._private_key[:32]).digest()
-        return hashlib.sha256(b"decap:" + seed).digest()
+
+# =============================================================================
+# Real ML-DSA Implementation using liboqs
+# =============================================================================
+
+class MLDSA:
+    """Real ML-DSA implementation using liboqs.
+
+    ML-DSA (Module-Lattice-based Digital Signature Algorithm) is the
+    NIST-standardized post-quantum signature scheme (FIPS 204),
+    formerly known as Dilithium.
+
+    Security levels:
+    - ML-DSA-44: NIST Level 2 (~128-bit security)
+    - ML-DSA-65: NIST Level 3 (~192-bit security) - Recommended
+    - ML-DSA-87: NIST Level 5 (~256-bit security) - Maximum security
+    """
+
+    PARAMS = {
+        "ML-DSA-44": {"pk_len": 1312, "sk_len": 2560, "sig_len": 2420, "level": 2},
+        "ML-DSA-65": {"pk_len": 1952, "sk_len": 4032, "sig_len": 3309, "level": 3},
+        "ML-DSA-87": {"pk_len": 2592, "sk_len": 4896, "sig_len": 4627, "level": 5},
+    }
+
+    def __init__(self, algorithm: str = "ML-DSA-65"):
+        if not LIBOQS_AVAILABLE:
+            raise PQCError(
+                "liboqs not installed. Install with: pip install liboqs-python"
+            )
+
+        if algorithm not in self.PARAMS:
+            raise ValueError(f"Unknown algorithm: {algorithm}. Valid: {list(self.PARAMS.keys())}")
+
+        self.algorithm = algorithm
+        self.params = self.PARAMS[algorithm]
+        self._sig = oqs.Signature(algorithm)
+        self._public_key: bytes | None = None
+        self._private_key: bytes | None = None
+
+    def generate_keypair(self) -> bytes:
+        """Generate a new signature key pair. Returns public key."""
+        self._public_key = self._sig.generate_keypair()
+        self._private_key = self._sig.export_secret_key()
+        return self._public_key
+
+    @property
+    def public_key(self) -> bytes | None:
+        return self._public_key
+
+    @property
+    def private_key(self) -> bytes | None:
+        return self._private_key
+
+    def set_keypair(self, public_key: bytes, private_key: bytes) -> None:
+        """Set an existing key pair."""
+        self._public_key = public_key
+        self._private_key = private_key
+        self._sig = oqs.Signature(self.algorithm, secret_key=private_key)
+
+    def sign(self, message: bytes) -> bytes:
+        """Sign a message using the private key.
+
+        Args:
+            message: The message to sign
+
+        Returns:
+            The digital signature
+        """
+        if self._private_key is None:
+            raise PQCError("No private key set. Call generate_keypair() or set_keypair() first.")
+
+        return self._sig.sign(message)
+
+    def verify(self, message: bytes, signature: bytes, public_key: bytes) -> bool:
+        """Verify a signature using the public key.
+
+        Args:
+            message: The original message
+            signature: The signature to verify
+            public_key: The signer's public key
+
+        Returns:
+            True if signature is valid, False otherwise
+        """
+        try:
+            return self._sig.verify(message, signature, public_key)
+        except Exception:
+            return False
+
+    def get_details(self) -> dict:
+        """Get algorithm details."""
+        return {
+            "algorithm": self.algorithm,
+            "nist_level": self.params["level"],
+            "public_key_bytes": self.params["pk_len"],
+            "secret_key_bytes": self.params["sk_len"],
+            "signature_bytes": self.params["sig_len"],
+            "standard": "NIST FIPS 204",
+        }
 
 
-def get_mlkem(algorithm: str = "ML-KEM-768") -> MockMLKEM:
+# =============================================================================
+# Factory Functions
+# =============================================================================
+
+def get_mlkem(algorithm: str = "ML-KEM-768") -> MLKEM:
     """Get an ML-KEM instance.
 
-    In production, replace with:
-    ```
-    try:
-        import oqs
-        return oqs.KeyEncapsulation(algorithm)
-    except ImportError:
-        return MockMLKEM(algorithm)
-    ```
+    Args:
+        algorithm: One of "ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"
+
+    Returns:
+        MLKEM instance for key encapsulation
+
+    Raises:
+        PQCError: If liboqs is not installed
     """
-    return MockMLKEM(algorithm)
+    return MLKEM(algorithm)
+
+
+def get_mldsa(algorithm: str = "ML-DSA-65") -> MLDSA:
+    """Get an ML-DSA instance.
+
+    Args:
+        algorithm: One of "ML-DSA-44", "ML-DSA-65", "ML-DSA-87"
+
+    Returns:
+        MLDSA instance for digital signatures
+
+    Raises:
+        PQCError: If liboqs is not installed
+    """
+    return MLDSA(algorithm)
+
+
+def is_pqc_available() -> bool:
+    """Check if PQC operations are available."""
+    return LIBOQS_AVAILABLE
+
+
+def get_available_kem_algorithms() -> list[str]:
+    """Get list of available KEM algorithms."""
+    if not LIBOQS_AVAILABLE:
+        return []
+    return list(MLKEM.PARAMS.keys())
+
+
+def get_available_sig_algorithms() -> list[str]:
+    """Get list of available signature algorithms."""
+    if not LIBOQS_AVAILABLE:
+        return []
+    return list(MLDSA.PARAMS.keys())
 
 
 # =============================================================================
@@ -219,10 +420,20 @@ class HybridCryptoEngine:
     """Hybrid quantum-safe encryption engine.
 
     Combines classical AEAD (AES-GCM or ChaCha20-Poly1305) with
-    post-quantum Key Encapsulation Mechanism (ML-KEM/Kyber).
+    post-quantum Key Encapsulation Mechanism (ML-KEM).
 
     The hybrid approach provides security if either algorithm remains
     secure, following NIST transition guidance.
+
+    Example:
+        engine = HybridCryptoEngine(HybridMode.AES_MLKEM_768)
+        keypair = engine.generate_keypair()
+
+        # Encrypt
+        ciphertext = engine.encrypt(b"secret data", keypair.public_key, keypair.key_id)
+
+        # Decrypt
+        plaintext = engine.decrypt(ciphertext, keypair.private_key)
     """
 
     def __init__(self, mode: HybridMode = HybridMode.AES_MLKEM_768):
@@ -255,21 +466,17 @@ class HybridCryptoEngine:
         """Generate a hybrid key pair.
 
         Returns:
-            HybridKeyPair with public and private keys for both
-            classical and post-quantum algorithms.
+            HybridKeyPair with ML-KEM public and private keys
         """
         kem = get_mlkem(self._kem_algorithm)
         public_key = kem.generate_keypair()
 
-        # For the hybrid pair, we package the KEM keys
-        # In real deployment, you might also include X25519 keys for
-        # a full X25519+ML-KEM hybrid
         key_id = key_id or secrets.token_hex(16)
 
         return HybridKeyPair(
             mode=self.mode,
             public_key=public_key,
-            private_key=kem._private_key,  # Mock access
+            private_key=kem.private_key,
             key_id=key_id,
         )
 
@@ -290,7 +497,7 @@ class HybridCryptoEngine:
 
         Args:
             plaintext: Data to encrypt
-            public_key: Recipient's hybrid public key
+            public_key: Recipient's ML-KEM public key
             key_id: Key identifier for audit/rotation
             associated_data: Optional authenticated data (not encrypted)
 
@@ -335,7 +542,7 @@ class HybridCryptoEngine:
 
         Args:
             hybrid_ciphertext: The encrypted data
-            private_key: Recipient's hybrid private key
+            private_key: Recipient's ML-KEM private key
             associated_data: Optional authenticated data (must match encryption)
 
         Returns:
@@ -348,8 +555,6 @@ class HybridCryptoEngine:
         kem = get_mlkem(self._kem_algorithm)
         kem.set_keypair(b"", private_key)  # Only need private key for decap
 
-        # In real ML-KEM, decap uses ciphertext + private key
-        # Mock version needs special handling
         shared_secret = kem.decap_secret(hybrid_ciphertext.kem_ciphertext)
 
         # Step 2: Derive symmetric key
@@ -370,6 +575,53 @@ class HybridCryptoEngine:
             raise ValueError(f"Decryption failed: {e}")
 
         return plaintext
+
+
+# =============================================================================
+# Signature Engine
+# =============================================================================
+
+class PQCSignatureEngine:
+    """Post-quantum digital signature engine using ML-DSA.
+
+    Example:
+        engine = PQCSignatureEngine(SignatureAlgorithm.ML_DSA_65)
+        keypair = engine.generate_keypair()
+
+        # Sign
+        signature = engine.sign(b"message", keypair.private_key)
+
+        # Verify
+        valid = engine.verify(b"message", signature, keypair.public_key)
+    """
+
+    def __init__(self, algorithm: SignatureAlgorithm = SignatureAlgorithm.ML_DSA_65):
+        self.algorithm = algorithm
+
+    def generate_keypair(self, key_id: str | None = None) -> SignatureKeyPair:
+        """Generate a signature key pair."""
+        sig = get_mldsa(self.algorithm.value)
+        public_key = sig.generate_keypair()
+
+        key_id = key_id or secrets.token_hex(16)
+
+        return SignatureKeyPair(
+            algorithm=self.algorithm,
+            public_key=public_key,
+            private_key=sig.private_key,
+            key_id=key_id,
+        )
+
+    def sign(self, message: bytes, private_key: bytes) -> bytes:
+        """Sign a message."""
+        sig = get_mldsa(self.algorithm.value)
+        sig.set_keypair(b"", private_key)
+        return sig.sign(message)
+
+    def verify(self, message: bytes, signature: bytes, public_key: bytes) -> bool:
+        """Verify a signature."""
+        sig = get_mldsa(self.algorithm.value)
+        return sig.verify(message, signature, public_key)
 
 
 # =============================================================================
@@ -439,6 +691,46 @@ def hybrid_decrypt(
     return engine.decrypt(hybrid_ct, private_key)
 
 
+def pqc_sign(
+    message: bytes,
+    private_key: bytes,
+    algorithm: SignatureAlgorithm = SignatureAlgorithm.ML_DSA_65,
+) -> bytes:
+    """Sign a message with ML-DSA.
+
+    Args:
+        message: Message to sign
+        private_key: ML-DSA private key
+        algorithm: Signature algorithm to use
+
+    Returns:
+        Digital signature
+    """
+    engine = PQCSignatureEngine(algorithm)
+    return engine.sign(message, private_key)
+
+
+def pqc_verify(
+    message: bytes,
+    signature: bytes,
+    public_key: bytes,
+    algorithm: SignatureAlgorithm = SignatureAlgorithm.ML_DSA_65,
+) -> bool:
+    """Verify an ML-DSA signature.
+
+    Args:
+        message: Original message
+        signature: Signature to verify
+        public_key: Signer's public key
+        algorithm: Signature algorithm used
+
+    Returns:
+        True if valid, False otherwise
+    """
+    engine = PQCSignatureEngine(algorithm)
+    return engine.verify(message, signature, public_key)
+
+
 # =============================================================================
 # Key Management Helpers
 # =============================================================================
@@ -463,6 +755,26 @@ def deserialize_keypair(data: dict) -> HybridKeyPair:
     )
 
 
+def serialize_sig_keypair(keypair: SignatureKeyPair) -> dict:
+    """Serialize a signature key pair for storage."""
+    return {
+        "algorithm": keypair.algorithm.value,
+        "public_key": base64.b64encode(keypair.public_key).decode('ascii'),
+        "private_key": base64.b64encode(keypair.private_key).decode('ascii'),
+        "key_id": keypair.key_id,
+    }
+
+
+def deserialize_sig_keypair(data: dict) -> SignatureKeyPair:
+    """Deserialize a signature key pair from storage."""
+    return SignatureKeyPair(
+        algorithm=SignatureAlgorithm(data["algorithm"]),
+        public_key=base64.b64decode(data["public_key"]),
+        private_key=base64.b64decode(data["private_key"]),
+        key_id=data["key_id"],
+    )
+
+
 # =============================================================================
 # Algorithm Information
 # =============================================================================
@@ -479,6 +791,8 @@ def get_hybrid_algorithm_info(mode: HybridMode) -> dict[str, Any]:
             "nist_pqc_level": 3,
             "cnsa_compliant": True,
             "recommended_for": ["general use", "most applications", "TLS hybrid"],
+            "public_key_bytes": 1184,
+            "ciphertext_overhead_bytes": 1088 + 28,  # KEM CT + AEAD overhead
         },
         HybridMode.AES_MLKEM_1024: {
             "name": "AES-256-GCM + ML-KEM-1024",
@@ -489,6 +803,8 @@ def get_hybrid_algorithm_info(mode: HybridMode) -> dict[str, Any]:
             "nist_pqc_level": 5,
             "cnsa_compliant": True,
             "recommended_for": ["maximum security", "long-term secrets", "government"],
+            "public_key_bytes": 1568,
+            "ciphertext_overhead_bytes": 1568 + 28,
         },
         HybridMode.CHACHA_MLKEM_768: {
             "name": "ChaCha20-Poly1305 + ML-KEM-768",
@@ -499,6 +815,60 @@ def get_hybrid_algorithm_info(mode: HybridMode) -> dict[str, Any]:
             "nist_pqc_level": 3,
             "cnsa_compliant": True,
             "recommended_for": ["no AES-NI", "mobile devices", "embedded systems"],
+            "public_key_bytes": 1184,
+            "ciphertext_overhead_bytes": 1088 + 16,
         },
     }
     return info.get(mode, {})
+
+
+def get_signature_algorithm_info(algorithm: SignatureAlgorithm) -> dict[str, Any]:
+    """Get information about a signature algorithm."""
+    info = {
+        SignatureAlgorithm.ML_DSA_44: {
+            "name": "ML-DSA-44",
+            "standard": "NIST FIPS 204",
+            "security_bits": 128,
+            "nist_level": 2,
+            "public_key_bytes": 1312,
+            "signature_bytes": 2420,
+            "recommended_for": ["general use", "performance-sensitive"],
+        },
+        SignatureAlgorithm.ML_DSA_65: {
+            "name": "ML-DSA-65",
+            "standard": "NIST FIPS 204",
+            "security_bits": 192,
+            "nist_level": 3,
+            "public_key_bytes": 1952,
+            "signature_bytes": 3309,
+            "recommended_for": ["most applications", "balanced security/performance"],
+        },
+        SignatureAlgorithm.ML_DSA_87: {
+            "name": "ML-DSA-87",
+            "standard": "NIST FIPS 204",
+            "security_bits": 256,
+            "nist_level": 5,
+            "public_key_bytes": 2592,
+            "signature_bytes": 4627,
+            "recommended_for": ["maximum security", "long-term signatures"],
+        },
+        SignatureAlgorithm.FALCON_512: {
+            "name": "Falcon-512",
+            "standard": "NIST Round 3 Alternate",
+            "security_bits": 128,
+            "nist_level": 1,
+            "public_key_bytes": 897,
+            "signature_bytes": 690,  # Average, varies
+            "recommended_for": ["small signatures", "embedded systems"],
+        },
+        SignatureAlgorithm.FALCON_1024: {
+            "name": "Falcon-1024",
+            "standard": "NIST Round 3 Alternate",
+            "security_bits": 256,
+            "nist_level": 5,
+            "public_key_bytes": 1793,
+            "signature_bytes": 1330,  # Average, varies
+            "recommended_for": ["small signatures", "maximum security"],
+        },
+    }
+    return info.get(algorithm, {})

@@ -25,6 +25,9 @@ python-slugify>=8.0.0
 slowapi>=0.1.9
 pycryptodome>=3.20.0
 
+# Post-Quantum Cryptography (NIST FIPS 203/204)
+liboqs-python>=0.10.0  # ML-KEM (Kyber) and ML-DSA (Dilithium)
+
 # Monitoring
 prometheus-client>=0.19.0
 

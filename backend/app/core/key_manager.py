@@ -25,8 +25,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from app.config import get_settings
-from app.models import Key, KeyStatus
+from app.models import Key, KeyStatus, KeyType, PQCKey
 from .kms import get_kms_provider
 from .kms.base import KMSError
 
@@ -320,6 +322,166 @@ class KeyManager:
             await self._kms.close()
             self._kms = None
             self._initialized = False
+
+    # =========================================================================
+    # PQC Key Management (ML-KEM, ML-DSA)
+    # =========================================================================
+
+    async def store_pqc_key(
+        self,
+        db: AsyncSession,
+        context: str,
+        key_id: str,
+        private_key: bytes,
+        public_key: bytes,
+        algorithm: str,
+        key_type: KeyType = KeyType.PQC_KEM,
+    ) -> None:
+        """Store a PQC keypair with encrypted private key.
+
+        PQC keys cannot be derived like classical keys - they are
+        randomly generated and must be stored. The private key is
+        encrypted using AES-256-GCM with a key derived from the
+        context's master key.
+
+        Args:
+            db: Database session
+            context: Context name
+            key_id: Unique key identifier
+            private_key: Raw private key bytes
+            public_key: Raw public key bytes
+            algorithm: PQC algorithm name (e.g., "ML-KEM-768")
+            key_type: Type of PQC key (KEM or SIG)
+        """
+        # Derive encryption key for this context
+        encryption_key = await self.derive_key(context, version=1, key_size=KEY_SIZE_256)
+
+        # Generate nonce and encrypt private key
+        nonce = secrets.token_bytes(12)  # 96-bit nonce for AES-GCM
+        aesgcm = AESGCM(encryption_key)
+        encrypted_private_key = aesgcm.encrypt(
+            nonce,
+            private_key,
+            associated_data=f"{context}:{key_id}:{algorithm}".encode()
+        )
+
+        # Store in database
+        pqc_key = PQCKey(
+            id=key_id,
+            context=context,
+            key_type=key_type,
+            algorithm=algorithm,
+            public_key=public_key,
+            encrypted_private_key=encrypted_private_key,
+            private_key_nonce=nonce,
+            status=KeyStatus.ACTIVE,
+        )
+        db.add(pqc_key)
+        await db.commit()
+
+        logger.info(
+            f"Stored PQC key: id={key_id}, algorithm={algorithm}, "
+            f"context={context}, type={key_type.value}"
+        )
+
+    async def get_pqc_key(
+        self,
+        db: AsyncSession,
+        context: str,
+        key_id: str,
+    ) -> bytes | None:
+        """Retrieve and decrypt a PQC private key.
+
+        Args:
+            db: Database session
+            context: Context name (for key derivation)
+            key_id: Key identifier
+
+        Returns:
+            Decrypted private key bytes, or None if not found
+        """
+        result = await db.execute(
+            select(PQCKey).where(PQCKey.id == key_id)
+        )
+        pqc_key = result.scalar_one_or_none()
+
+        if not pqc_key:
+            logger.warning(f"PQC key not found: {key_id}")
+            return None
+
+        # Derive decryption key
+        encryption_key = await self.derive_key(context, version=1, key_size=KEY_SIZE_256)
+
+        # Decrypt private key
+        try:
+            aesgcm = AESGCM(encryption_key)
+            private_key = aesgcm.decrypt(
+                pqc_key.private_key_nonce,
+                pqc_key.encrypted_private_key,
+                associated_data=f"{context}:{key_id}:{pqc_key.algorithm}".encode()
+            )
+            return private_key
+        except Exception as e:
+            logger.error(f"Failed to decrypt PQC key {key_id}: {e}")
+            return None
+
+    async def get_pqc_public_key(
+        self,
+        db: AsyncSession,
+        key_id: str,
+    ) -> bytes | None:
+        """Retrieve a PQC public key.
+
+        Args:
+            db: Database session
+            key_id: Key identifier
+
+        Returns:
+            Public key bytes, or None if not found
+        """
+        result = await db.execute(
+            select(PQCKey).where(PQCKey.id == key_id)
+        )
+        pqc_key = result.scalar_one_or_none()
+
+        if not pqc_key:
+            return None
+
+        return pqc_key.public_key
+
+    async def list_pqc_keys(
+        self,
+        db: AsyncSession,
+        context: str,
+        key_type: KeyType | None = None,
+    ) -> list[dict]:
+        """List PQC keys for a context.
+
+        Args:
+            db: Database session
+            context: Context name
+            key_type: Optional filter by key type
+
+        Returns:
+            List of key metadata dicts
+        """
+        query = select(PQCKey).where(PQCKey.context == context)
+        if key_type:
+            query = query.where(PQCKey.key_type == key_type)
+
+        result = await db.execute(query)
+        keys = result.scalars().all()
+
+        return [
+            {
+                "id": key.id,
+                "algorithm": key.algorithm,
+                "key_type": key.key_type.value,
+                "created_at": key.created_at.isoformat(),
+                "status": key.status.value,
+            }
+            for key in keys
+        ]
 
 
 # Singleton instance

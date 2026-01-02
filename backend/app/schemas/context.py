@@ -110,6 +110,7 @@ class CipherMode(str, Enum):
     - CTR: Stream mode, parallelizable, requires separate MAC
     - CCM: Authenticated, for constrained devices
     - XTS: Disk encryption, tweakable block cipher
+    - HYBRID: Post-quantum hybrid (ML-KEM + AES-GCM)
     """
     GCM = "gcm"          # Galois/Counter Mode - AEAD, fast, hardware accelerated
     GCM_SIV = "gcm-siv"  # GCM with SIV - nonce-misuse resistant
@@ -117,6 +118,7 @@ class CipherMode(str, Enum):
     CTR = "ctr"          # Counter Mode - streaming, needs HMAC
     CCM = "ccm"          # Counter with CBC-MAC - constrained devices
     XTS = "xts"          # XEX-based Tweaked-codebook - disk encryption
+    HYBRID = "hybrid"    # Post-quantum hybrid (ML-KEM + classical AEAD)
 
 
 class KeySize(int, Enum):

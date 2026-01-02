@@ -33,6 +33,13 @@ from app.core.policy_engine import (
 )
 from app.schemas.context import AlgorithmOverride, CipherMode, EncryptionUsageContext
 from app.core.algorithm_resolver import ALGORITHMS, resolve_algorithm
+from app.core.hybrid_crypto import (
+    HybridCryptoEngine,
+    HybridMode,
+    HybridCiphertext,
+    is_pqc_available,
+    PQCError,
+)
 
 
 class CryptoError(Exception):
@@ -418,6 +425,28 @@ class CryptoEngine:
             if self._check_algorithm_policy(context, algorithm, mode, key_bits, warnings):
                 policy_violated = True
 
+            # Handle hybrid PQC mode separately
+            if mode == CipherMode.HYBRID:
+                packed, key_id, algorithm = await self._encrypt_hybrid(
+                    db, plaintext, context_name, algorithm, associated_data
+                )
+                # For hybrid, we don't have a nonce in the same sense - it's embedded
+                nonce = b""  # Nonce is internal to the hybrid ciphertext
+
+                success = True
+                return EncryptResult(
+                    ciphertext=packed,
+                    algorithm=algorithm,
+                    mode=mode,
+                    key_bits=key_bits,
+                    key_id=key_id,
+                    nonce=nonce,
+                    context=context_name,
+                    description=description,
+                    warnings=warnings,
+                )
+
+            # Classical encryption path
             # Get key for context
             key_size_bytes = key_bits // 8
             key, key_id = await key_manager.get_or_create_key(
@@ -578,9 +607,12 @@ class CryptoEngine:
                 mode = CipherMode(mode_str)
             except ValueError:
                 mode = CipherMode.GCM
+        elif "ML-KEM" in algorithm or ("+ML-KEM" in algorithm):
+            # Hybrid post-quantum algorithm
+            mode = CipherMode.HYBRID
         elif "GCM-SIV" in algorithm:
             mode = CipherMode.GCM_SIV
-        elif "GCM" in algorithm:
+        elif "GCM" in algorithm and "ML-KEM" not in algorithm:
             mode = CipherMode.GCM
         elif "CBC" in algorithm:
             mode = CipherMode.CBC
@@ -590,7 +622,7 @@ class CryptoEngine:
             mode = CipherMode.CCM
         elif "XTS" in algorithm:
             mode = CipherMode.XTS
-        elif "ChaCha20" in algorithm:
+        elif "ChaCha20" in algorithm and "ML-KEM" not in algorithm:
             mode = CipherMode.GCM  # ChaCha20-Poly1305 is similar to GCM
         else:
             mode = CipherMode.GCM
@@ -760,6 +792,13 @@ class CryptoEngine:
                 "XTS is designed for disk/storage encryption (IEEE 1619). "
                 "Use AES-256-GCM for authenticated encryption."
             )
+        elif mode == CipherMode.HYBRID:
+            # Hybrid PQC mode - handled separately in encrypt()
+            # This should not be called directly since hybrid uses different key management
+            raise UnsupportedModeError(
+                "HYBRID mode must be handled via _encrypt_hybrid(). "
+                "This is an internal error."
+            )
         else:
             return CipherFactory.encrypt_gcm(key, plaintext, nonce, associated_data)
 
@@ -802,8 +841,152 @@ class CryptoEngine:
                 "XTS mode is not supported for API encryption. "
                 "Use AES-256-GCM for authenticated encryption."
             )
+        elif mode == CipherMode.HYBRID:
+            # Hybrid PQC mode - handled separately
+            raise UnsupportedModeError(
+                "HYBRID mode must be handled via _decrypt_hybrid(). "
+                "This is an internal error."
+            )
         else:
             return CipherFactory.decrypt_gcm(key, ciphertext, nonce, associated_data)
+
+    def _is_hybrid_ciphertext(self, data: bytes) -> bool:
+        """Check if the data is a hybrid PQC ciphertext.
+
+        Both classical and hybrid ciphertexts use 2-byte length prefix + JSON header.
+        The key difference is:
+        - Hybrid has "kem_ct_len" field and mode contains ML-KEM
+        - Classical has "ctx" and "alg" fields
+        """
+        if len(data) < 10:
+            return False
+
+        try:
+            # Both formats use 2-byte header length prefix
+            header_len = int.from_bytes(data[:2], 'big')
+            if len(data) < 2 + header_len:
+                return False
+
+            header_json = data[2:2 + header_len].decode('utf-8')
+            header = json.loads(header_json)
+
+            # Hybrid ciphertexts have "kem_ct_len" field
+            if "kem_ct_len" in header:
+                return True
+
+            # Also check if mode contains ML-KEM
+            mode = header.get("mode", "")
+            if "ML-KEM" in mode or "+ML-KEM" in mode:
+                return True
+
+            return False
+        except Exception:
+            return False
+
+    def _get_hybrid_mode(self, algorithm: str) -> HybridMode:
+        """Get the hybrid mode from algorithm string."""
+        if "ML-KEM-1024" in algorithm:
+            return HybridMode.AES_MLKEM_1024
+        elif "ChaCha20" in algorithm:
+            return HybridMode.CHACHA_MLKEM_768
+        else:
+            return HybridMode.AES_MLKEM_768
+
+    async def _encrypt_hybrid(
+        self,
+        db: AsyncSession,
+        plaintext: bytes,
+        context_name: str,
+        algorithm: str,
+        associated_data: bytes | None = None,
+    ) -> tuple[bytes, str, str]:
+        """Encrypt using hybrid PQC mode (ML-KEM + classical AEAD).
+
+        This method generates a per-operation ML-KEM key pair, encrypts
+        the data, and stores the private key for later decryption.
+
+        Args:
+            db: Database session
+            plaintext: Data to encrypt
+            context_name: Encryption context name
+            algorithm: Hybrid algorithm (e.g., "AES-256-GCM+ML-KEM-768")
+            associated_data: Optional AAD
+
+        Returns:
+            Tuple of (ciphertext, key_id, algorithm)
+        """
+        if not is_pqc_available():
+            raise CryptoError(
+                "Post-quantum cryptography not available. "
+                "Install liboqs-python: pip install liboqs-python"
+            )
+
+        hybrid_mode = self._get_hybrid_mode(algorithm)
+        engine = HybridCryptoEngine(hybrid_mode)
+
+        # Generate a new key pair for this encryption
+        keypair = engine.generate_keypair()
+
+        # Encrypt using the public key
+        hybrid_ct = engine.encrypt(
+            plaintext,
+            keypair.public_key,
+            keypair.key_id,
+            associated_data,
+        )
+
+        # Store the private key for later decryption
+        # We use the key_manager to store PQC keys
+        await key_manager.store_pqc_key(
+            db,
+            context_name,
+            keypair.key_id,
+            keypair.private_key,
+            keypair.public_key,
+            hybrid_mode.value,
+        )
+
+        return hybrid_ct.serialize(), keypair.key_id, algorithm
+
+    async def _decrypt_hybrid(
+        self,
+        db: AsyncSession,
+        ciphertext: bytes,
+        context_name: str,
+        key_id: str,
+        associated_data: bytes | None = None,
+    ) -> bytes:
+        """Decrypt hybrid PQC ciphertext.
+
+        Args:
+            db: Database session
+            ciphertext: Serialized hybrid ciphertext
+            context_name: Encryption context name
+            key_id: Key identifier
+            associated_data: Optional AAD (must match encryption)
+
+        Returns:
+            Decrypted plaintext
+        """
+        if not is_pqc_available():
+            raise CryptoError(
+                "Post-quantum cryptography not available. "
+                "Install liboqs-python: pip install liboqs-python"
+            )
+
+        # Retrieve the private key
+        private_key = await key_manager.get_pqc_key(db, context_name, key_id)
+        if not private_key:
+            raise DecryptionError(f"PQC key not found: {key_id}")
+
+        # Deserialize and decrypt
+        hybrid_ct = HybridCiphertext.deserialize(ciphertext)
+        engine = HybridCryptoEngine(hybrid_ct.mode)
+
+        try:
+            return engine.decrypt(hybrid_ct, private_key, associated_data)
+        except Exception as e:
+            raise DecryptionError(f"Hybrid decryption failed: {e}")
 
     async def decrypt(
         self,
@@ -837,6 +1020,7 @@ class CryptoEngine:
         success = False
         error_message = None
         plaintext = b""
+        header = None
 
         try:
             # Validate identity has access to context
@@ -845,7 +1029,17 @@ class CryptoEngine:
                     f"Identity not authorized for context: {context_name}"
                 )
 
-            # Unpack ciphertext
+            # Check if this is a hybrid ciphertext (starts with JSON object)
+            if self._is_hybrid_ciphertext(packed_ciphertext):
+                # Deserialize to get the key_id
+                hybrid_ct = HybridCiphertext.deserialize(packed_ciphertext)
+                plaintext = await self._decrypt_hybrid(
+                    db, packed_ciphertext, context_name, hybrid_ct.key_id, associated_data
+                )
+                success = True
+                return plaintext
+
+            # Unpack classical ciphertext
             header, ciphertext = self._unpack_ciphertext(packed_ciphertext)
 
             # Validate context matches

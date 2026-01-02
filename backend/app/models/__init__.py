@@ -5,7 +5,7 @@ from app.models.organization import OrganizationSettings
 from app.models.identity import Identity, IdentityType, IdentityStatus
 from app.models.application import Application, ApplicationStatus
 from app.models.context import Context
-from app.models.key import Key, KeyStatus
+from app.models.key import Key, KeyStatus, KeyType, PQCKey
 from app.models.audit import AuditLog
 from app.models.policy import Policy, PolicyViolationLog
 from app.models.crypto_inventory import (
@@ -29,6 +29,8 @@ __all__ = [
     "Context",
     "Key",
     "KeyStatus",
+    "KeyType",
+    "PQCKey",
     "AuditLog",
     "Policy",
     "PolicyViolationLog",
