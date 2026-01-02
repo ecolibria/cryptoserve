@@ -1741,7 +1741,8 @@ def cmd_contexts():
 
         if not contexts:
             if query:
-                print(f"  {warning(f'No contexts found matching \"{query}\"')}")
+                msg = f'No contexts found matching "{query}"'
+                print(f"  {warning(msg)}")
                 print()
                 print(dim("  Try a different search term, or run without a query:"))
                 print(dim("    cryptoserve contexts"))

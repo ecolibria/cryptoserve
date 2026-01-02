@@ -306,3 +306,154 @@ class CryptoClient:
             raise ServerError(
                 f"Server error ({response.status_code}): {detail}"
             )
+
+    def hash(self, data: bytes, algorithm: str = "sha256") -> str:
+        """
+        Compute a cryptographic hash locally.
+
+        Args:
+            data: Data to hash
+            algorithm: Hash algorithm (sha256, sha384, sha512, sha3-256, blake2b)
+
+        Returns:
+            Hash as hex string
+        """
+        import hashlib
+
+        algorithm_map = {
+            "sha256": hashlib.sha256,
+            "sha384": hashlib.sha384,
+            "sha512": hashlib.sha512,
+            "sha3-256": hashlib.sha3_256,
+            "blake2b": hashlib.blake2b,
+        }
+
+        if algorithm not in algorithm_map:
+            raise CryptoServeError(
+                f"Unsupported hash algorithm: {algorithm}. "
+                f"Supported: {', '.join(algorithm_map.keys())}"
+            )
+
+        hasher = algorithm_map[algorithm]()
+        hasher.update(data)
+        return hasher.hexdigest()
+
+    def mac(self, data: bytes, key: bytes, algorithm: str = "hmac-sha256") -> str:
+        """
+        Compute a Message Authentication Code locally.
+
+        Args:
+            data: Data to authenticate
+            key: Secret key (should be 32 bytes for hmac-sha256)
+            algorithm: MAC algorithm (hmac-sha256, hmac-sha512)
+
+        Returns:
+            MAC as hex string
+        """
+        import hashlib
+        import hmac as hmac_module
+
+        algorithm_map = {
+            "hmac-sha256": hashlib.sha256,
+            "hmac-sha512": hashlib.sha512,
+        }
+
+        if algorithm not in algorithm_map:
+            raise CryptoServeError(
+                f"Unsupported MAC algorithm: {algorithm}. "
+                f"Supported: {', '.join(algorithm_map.keys())}"
+            )
+
+        digest = algorithm_map[algorithm]
+        mac = hmac_module.new(key, data, digest)
+        return mac.hexdigest()
+
+    def sign(self, data: bytes, key_id: str) -> bytes:
+        """
+        Sign data using a key managed by the server.
+
+        Args:
+            data: Data to sign
+            key_id: ID of the signing key
+
+        Returns:
+            Signature bytes
+        """
+        # Auto-refresh token if needed
+        self._ensure_valid_token()
+
+        response = self.session.post(
+            f"{self.server_url}/v1/crypto/sign",
+            json={
+                "data": base64.b64encode(data).decode("ascii"),
+                "key_id": key_id,
+            },
+            timeout=self.timeout,
+        )
+
+        # Handle 401 with retry after refresh
+        if response.status_code == 401 and self._try_refresh_and_retry():
+            response = self.session.post(
+                f"{self.server_url}/v1/crypto/sign",
+                json={
+                    "data": base64.b64encode(data).decode("ascii"),
+                    "key_id": key_id,
+                },
+                timeout=self.timeout,
+            )
+
+        self._handle_response(response, key_id)
+
+        result = response.json()
+        return base64.b64decode(result["signature"])
+
+    def verify(
+        self,
+        data: bytes,
+        signature: bytes,
+        key_id: str,
+        public_key: Optional[bytes] = None,
+    ) -> bool:
+        """
+        Verify a signature.
+
+        Args:
+            data: Original data that was signed
+            signature: Signature to verify
+            key_id: ID of the signing key
+            public_key: Optional public key bytes (if not using server key)
+
+        Returns:
+            True if signature is valid
+        """
+        # Auto-refresh token if needed
+        self._ensure_valid_token()
+
+        payload = {
+            "data": base64.b64encode(data).decode("ascii"),
+            "signature": base64.b64encode(signature).decode("ascii"),
+            "key_id": key_id,
+        }
+        if public_key:
+            payload["public_key"] = base64.b64encode(public_key).decode("ascii")
+
+        response = self.session.post(
+            f"{self.server_url}/v1/crypto/verify",
+            json=payload,
+            timeout=self.timeout,
+        )
+
+        # Handle 401 with retry after refresh
+        if response.status_code == 401 and self._try_refresh_and_retry():
+            response = self.session.post(
+                f"{self.server_url}/v1/crypto/verify",
+                json=payload,
+                timeout=self.timeout,
+            )
+
+        if response.status_code == 200:
+            return response.json().get("valid", False)
+
+        # Handle specific errors
+        self._handle_response(response, key_id)
+        return False

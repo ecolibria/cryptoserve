@@ -126,6 +126,7 @@ async def get_sdk_identity(
                             """Wrapper to make Application look like Identity for crypto endpoints."""
                             def __init__(self, app: Application):
                                 self.id = app.id
+                                self.tenant_id = app.tenant_id
                                 self.user_id = app.user_id
                                 self.type = IdentityType.SERVICE
                                 self.name = app.name

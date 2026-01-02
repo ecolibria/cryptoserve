@@ -47,11 +47,16 @@ The server is now running at `http://localhost:8001` and the dashboard at `http:
 ### Step 2: Install the SDK and Login
 
 ```bash
-pip install cryptoserve
+# Install SDK from the repository
+pip install -e crypto-serve/sdk/python/
+
+# Login (one-time setup)
 cryptoserve login
 ```
 
 This opens your browser for GitHub authentication. Your credentials are stored securely in `~/.cryptoserve/`.
+
+> **Note:** Once published, installation will be simply `pip install cryptoserve`.
 
 ### Step 3: Start Encrypting
 
@@ -99,6 +104,10 @@ That's it. Your app is automatically registered and ready to use.
 ### Installation
 
 ```bash
+# From repository (current)
+pip install -e crypto-serve/sdk/python/
+
+# From PyPI (coming soon)
 pip install cryptoserve
 ```
 

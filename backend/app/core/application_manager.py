@@ -68,6 +68,7 @@ class ApplicationManager:
         # Create application record
         application = Application(
             id=app_id,
+            tenant_id=user.tenant_id,
             user_id=user.id,
             name=name,
             description=description,

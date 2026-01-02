@@ -326,7 +326,7 @@ class CryptoServe:
         """
         try:
             response = requests.get(
-                f"{self.server_url}/api/v1/health",
+                f"{self.server_url}/health",
                 headers={"Authorization": f"Bearer {self.client._access_token}"},
                 timeout=10,
             )
