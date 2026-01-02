@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Redis (for distributed rate limiting, caching)
     redis_url: str | None = None  # e.g., redis://localhost:6379/0
 
+    # FIPS 140-2/140-3 compliance mode
+    # Options: "disabled" (default), "enabled" (strict), "preferred" (use if available)
+    fips_mode: str = "disabled"
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
     @property

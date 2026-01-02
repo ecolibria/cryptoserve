@@ -653,14 +653,37 @@ async def health_deep(db: AsyncSession = Depends(get_db)):
     - KMS provider health
     - Cryptographic operations
     - Configuration validation
+    - FIPS compliance status
     """
     from app.core.health import health_checker, HealthStatus
+    from app.core.fips import get_fips_status
     from fastapi.responses import JSONResponse
 
     report = await health_checker.deep(db)
+
+    # Add FIPS status to the report
+    fips_status = get_fips_status()
+    report_dict = report.to_dict()
+    report_dict["fips"] = fips_status.to_dict()
+
     status_code = 200 if report.status != HealthStatus.UNHEALTHY else 503
 
     return JSONResponse(
-        content=report.to_dict(),
+        content=report_dict,
         status_code=status_code,
     )
+
+
+@app.get("/health/fips")
+async def health_fips():
+    """FIPS 140-2/140-3 compliance status.
+
+    Returns current FIPS mode and compliance information.
+    """
+    from app.core.fips import get_fips_status, get_fips_approved_algorithms
+
+    status = get_fips_status()
+    return {
+        "status": status.to_dict(),
+        "approved_algorithms": get_fips_approved_algorithms(),
+    }

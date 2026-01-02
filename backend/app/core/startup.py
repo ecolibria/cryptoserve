@@ -265,6 +265,52 @@ class StartupValidator:
             critical=True,
         )
 
+    def validate_fips_mode(self, settings) -> ValidationResult:
+        """Validate FIPS 140-2/140-3 configuration."""
+        from app.core.fips import get_fips_status, FIPSMode
+
+        status = get_fips_status()
+
+        if status.mode == FIPSMode.DISABLED:
+            return self._check(
+                "fips_mode",
+                True,
+                f"FIPS mode disabled (OpenSSL: {status.openssl_version})",
+                critical=False,
+            )
+
+        if status.mode == FIPSMode.ENABLED:
+            if status.compliant:
+                return self._check(
+                    "fips_mode",
+                    True,
+                    f"FIPS mode enabled and compliant (OpenSSL: {status.openssl_version})",
+                    critical=True,
+                )
+            else:
+                return self._check(
+                    "fips_mode",
+                    False,
+                    f"FIPS mode enabled but not compliant: {status.message}",
+                    critical=True,
+                )
+
+        # PREFERRED mode
+        if status.openssl_fips_available:
+            return self._check(
+                "fips_mode",
+                True,
+                f"FIPS mode preferred and available (OpenSSL: {status.openssl_version})",
+                critical=False,
+            )
+        else:
+            return self._check(
+                "fips_mode",
+                True,
+                f"FIPS mode preferred but not available - using standard crypto",
+                critical=False,
+            )
+
     def run_all(self) -> list[ValidationResult]:
         """Run all validation checks."""
         settings = get_settings()
@@ -278,6 +324,9 @@ class StartupValidator:
         self.validate_database(settings)
         self.validate_oauth(settings)
         self.validate_kms_backend(settings)
+
+        # Compliance
+        self.validate_fips_mode(settings)
 
         return self.results
 

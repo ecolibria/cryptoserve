@@ -421,6 +421,12 @@ class CryptoEngine:
                 context, algorithm_override, warnings
             )
 
+            # Enforce FIPS compliance if enabled
+            from app.core.fips import enforce_fips_algorithm
+            # Extract cipher name (e.g., "AES" from "AES-256-GCM")
+            cipher = algorithm.split("-")[0] if "-" in algorithm else algorithm
+            enforce_fips_algorithm(cipher, mode.value, key_bits)
+
             # Check algorithm policy enforcement
             # Note: This updates the outer-scoped policy_violated for audit logging
             if self._check_algorithm_policy(context, algorithm, mode, key_bits, warnings):
