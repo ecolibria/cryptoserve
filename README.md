@@ -26,14 +26,19 @@
 
 ## What is CryptoServe?
 
-CryptoServe is a **cryptography-as-a-service platform** that eliminates the complexity of implementing encryption correctly. Download a personalized SDK with your identity embedded, then encrypt and decrypt with a single line of code:
+CryptoServe is a **cryptography-as-a-service platform** that eliminates the complexity of implementing encryption correctly. With auto-registration, your apps connect with zero configuration:
 
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
 
-# No configuration needed - identity is embedded in your SDK
-ciphertext = crypto.encrypt("sensitive data", context="user-pii")
-plaintext = crypto.decrypt(ciphertext)
+# Auto-registers your app on first use (after one-time `cryptoserve login`)
+crypto = CryptoServe(app_name="my-service", team="platform")
+
+# Full cryptographic operations
+encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
+decrypted = crypto.decrypt(encrypted, context="user-pii")
+signature = crypto.sign(b"document", key_id="signing-key")
+hash_hex = crypto.hash(b"data", algorithm="sha256")
 ```
 
 ### Why CryptoServe?
@@ -73,14 +78,15 @@ First-class support for NIST-standardized post-quantum algorithms:
 - Complete audit logging
 - FIPS 140-2/140-3 compliance modes
 
-### Self-Service Dashboard
-Web interface for:
-- Identity management
-- SDK downloads
-- Context configuration
-- Policy management
-- Audit log viewing
-- Usage analytics
+### Community Dashboard
+Self-service web interface for developers and security teams:
+- **Context Management** - Create and configure encryption contexts
+- **Key Management** - View key status, rotation history, and health
+- **Usage Analytics** - Monitor encryption/decryption operations
+- **Policy Management** - Define and enforce cryptographic policies
+- **Audit Logs** - Complete audit trail with filtering and export
+- **Algorithm Policy** - Configure allowed algorithms and FIPS compliance
+- **CBOM Scanner** - Cryptographic Bill of Materials for your codebase
 
 ## Quick Start
 
@@ -94,27 +100,37 @@ cp .env.example .env
 docker compose up -d
 ```
 
-### 2. Create an Identity
+### 2. Login (One-Time Setup)
 
-1. Open http://localhost:3001
-2. Sign in with GitHub
-3. Create a new identity
-4. Copy the SDK install command
+```bash
+pip install cryptoserve
+cryptoserve login
+# Opens browser for GitHub OAuth, stores credentials locally
+```
 
 ### 3. Use the SDK
 
-```bash
-pip install http://localhost:8001/sdk/download/YOUR_TOKEN/python
-```
-
 ```python
-from cryptoserve import crypto
+from cryptoserve import CryptoServe
 
-# Encrypt with context-aware algorithm selection
-encrypted = crypto.encrypt_string("Hello, World!", context="user-pii")
+# Auto-registers your app on first use
+crypto = CryptoServe(
+    app_name="my-service",
+    team="platform",
+    environment="development"
+)
 
-# Decrypt (context extracted from ciphertext)
-decrypted = crypto.decrypt_string(encrypted)
+# Encrypt/Decrypt
+encrypted = crypto.encrypt(b"Hello, World!", context="user-pii")
+decrypted = crypto.decrypt(encrypted, context="user-pii")
+
+# Sign/Verify
+signature = crypto.sign(b"document content", key_id="my-signing-key")
+is_valid = crypto.verify_signature(b"document content", signature, key_id="my-signing-key")
+
+# Hash and MAC
+hash_hex = crypto.hash(b"data to hash", algorithm="sha256")
+mac_hex = crypto.mac(b"message", key=secret_key, algorithm="hmac-sha256")
 ```
 
 ## Architecture

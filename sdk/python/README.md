@@ -1,59 +1,80 @@
 # CryptoServe SDK
 
-Zero-config cryptographic operations with managed keys.
+Zero-config cryptographic operations with managed keys and auto-registration.
 
 ## Installation
 
 ```bash
-# Full SDK (recommended)
 pip install cryptoserve
-
-# With framework integrations
-pip install cryptoserve[fastapi]
-pip install cryptoserve[sqlalchemy]
-pip install cryptoserve[all]
-
-# With auto-protect for third-party libraries
-pip install cryptoserve[auto]
 ```
 
-## Quick Start
+## Quick Start (Recommended)
+
+```bash
+# One-time login (stores credentials locally)
+cryptoserve login
+```
+
+```python
+from cryptoserve import CryptoServe
+
+# Initialize - auto-registers your app on first use
+crypto = CryptoServe(
+    app_name="my-service",
+    team="platform",
+    environment="development"
+)
+
+# Encrypt/Decrypt
+encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
+decrypted = crypto.decrypt(encrypted, context="user-pii")
+
+# Sign/Verify
+signature = crypto.sign(b"document", key_id="signing-key")
+is_valid = crypto.verify_signature(b"document", signature, key_id="signing-key")
+
+# Hash and MAC
+hash_hex = crypto.hash(b"data", algorithm="sha256")
+mac_hex = crypto.mac(b"message", key=secret_key, algorithm="hmac-sha256")
+```
+
+## CryptoServe Class
+
+The `CryptoServe` class provides:
+
+| Method | Description |
+|--------|-------------|
+| `encrypt(plaintext, context)` | Encrypt binary data |
+| `decrypt(ciphertext, context)` | Decrypt binary data |
+| `sign(data, key_id)` | Create digital signature |
+| `verify_signature(data, signature, key_id)` | Verify signature |
+| `hash(data, algorithm)` | Compute cryptographic hash |
+| `mac(data, key, algorithm)` | Compute MAC |
+| `health_check()` | Verify connection |
+
+## Health Check
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-service")
+
+if crypto.health_check():
+    print("Connected!")
+else:
+    print("Connection failed")
+```
+
+## Legacy Mode (Identity-Embedded SDK)
+
+For backward compatibility:
 
 ```python
 from cryptoserve import crypto
 
-# Encrypt data
-ciphertext = crypto.encrypt(b"sensitive data", context="user-pii")
-
-# Decrypt data
-plaintext = crypto.decrypt(ciphertext, context="user-pii")
-
-# String helpers
+# Requires downloading personalized SDK
 encrypted = crypto.encrypt_string("my secret", context="user-pii")
 decrypted = crypto.decrypt_string(encrypted, context="user-pii")
-```
-
-## Verify SDK
-
-```python
-from cryptoserve import crypto
-
-result = crypto.verify()
-if result:
-    print(f"SDK healthy! Identity: {result.identity_name}")
-else:
-    print(f"Error: {result.error}")
-```
-
-## Mock Mode (Development)
-
-```python
-from cryptoserve import crypto
-
-crypto.enable_mock_mode()
-
-# Now works without a server
-encrypted = crypto.encrypt(b"test", context="any-context")
 ```
 
 ## FastAPI Integration

@@ -47,6 +47,20 @@ The whitepaper covers:
 - HIPAA requirements
 - SOC 2 controls
 
+### 7. SDK Security
+- Auto-registration with OAuth tokens
+- Secure credential storage (~/.cryptoserve/)
+- JWT-based application authentication
+- Token refresh mechanism
+- Context-scoped authorization
+
+### 8. Community Dashboard Security
+- Role-based access control (RBAC)
+- Multi-tenant isolation with tenant_id scoping
+- Audit logging of all administrative operations
+- Algorithm policy enforcement
+- Key rotation visibility and controls
+
 ## Citing the Whitepaper
 
 When referencing CryptoServe's security architecture:

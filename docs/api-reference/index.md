@@ -57,7 +57,7 @@ See [Authentication](../concepts/architecture.md#authentication-layer) for token
 
     ---
 
-    Encrypt, decrypt, sign, and verify data
+    Encrypt, decrypt, sign, verify, hash, and MAC
 
     [:octicons-arrow-right-24: Crypto API](crypto.md)
 
@@ -92,6 +92,30 @@ See [Authentication](../concepts/architecture.md#authentication-layer) for token
     Administrative operations and analytics
 
     [:octicons-arrow-right-24: Admin API](admin.md)
+
+-   :material-key:{ .lg .middle } **Keys**
+
+    ---
+
+    Key management, rotation, and status
+
+    [:octicons-arrow-right-24: Keys API](keys.md)
+
+-   :material-chart-line:{ .lg .middle } **Usage**
+
+    ---
+
+    Usage statistics and analytics
+
+    [:octicons-arrow-right-24: Usage API](usage.md)
+
+-   :material-shield-lock:{ .lg .middle } **Algorithm Policy**
+
+    ---
+
+    Configure allowed algorithms and FIPS mode
+
+    [:octicons-arrow-right-24: Algorithm Policy API](algorithm-policy.md)
 
 </div>
 

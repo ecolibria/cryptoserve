@@ -1,32 +1,200 @@
 # Python SDK
 
-The official Python SDK for CryptoServe.
+The official Python SDK for CryptoServe with zero-configuration setup.
 
 ## Installation
 
 ```bash
-pip install http://localhost:8001/sdk/download/YOUR_TOKEN/python
+pip install cryptoserve
 ```
 
 ## Requirements
 
-- Python 3.8+
-- No additional dependencies (batteries included)
+- Python 3.10+
+- `requests` library (installed automatically)
 
 ---
 
-## Quick Start
+## Quick Start (Recommended)
+
+The `CryptoServe` class provides auto-registration - your app is automatically registered on first use:
+
+```python
+from cryptoserve import CryptoServe
+
+# One-time login (run once per machine)
+# $ cryptoserve login
+
+# Initialize - app auto-registers if needed
+crypto = CryptoServe(
+    app_name="my-service",
+    team="platform",
+    environment="development"
+)
+
+# Encrypt/Decrypt
+encrypted = crypto.encrypt(b"Hello World!", context="user-pii")
+decrypted = crypto.decrypt(encrypted, context="user-pii")
+
+# Sign/Verify
+signature = crypto.sign(b"document", key_id="signing-key")
+is_valid = crypto.verify_signature(b"document", signature, key_id="signing-key")
+
+# Hash and MAC
+hash_hex = crypto.hash(b"data", algorithm="sha256")
+mac_hex = crypto.mac(b"message", key=secret_key)
+
+print(decrypted)  # b"Hello World!"
+```
+
+---
+
+## CryptoServe Class Reference
+
+### Initialization
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(
+    app_name="my-service",      # Required: unique app identifier
+    team="platform",            # Optional: team/department (default: "default")
+    environment="production",   # Optional: environment (default: "development")
+    contexts=["user-pii"],      # Optional: encryption contexts to request
+    description="Backend API",  # Optional: app description
+    auto_register=True          # Optional: auto-register on init (default: True)
+)
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `app_id` | `str` | The registered application ID |
+| `client` | `CryptoClient` | Underlying API client |
+
+---
+
+## Cryptographic Operations
+
+### `encrypt(plaintext, context)`
+
+Encrypt binary data.
+
+```python
+encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `plaintext` | `bytes` | Yes | Data to encrypt |
+| `context` | `str` | Yes | Encryption context name |
+
+**Returns:** `bytes` - Ciphertext
+
+### `decrypt(ciphertext, context)`
+
+Decrypt binary data.
+
+```python
+decrypted = crypto.decrypt(encrypted, context="user-pii")
+```
+
+**Returns:** `bytes` - Plaintext
+
+### `sign(data, key_id)`
+
+Create a digital signature.
+
+```python
+signature = crypto.sign(b"document to sign", key_id="my-signing-key")
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `data` | `bytes` | Yes | Data to sign |
+| `key_id` | `str` | Yes | Signing key identifier |
+
+**Returns:** `bytes` - Signature
+
+### `verify_signature(data, signature, key_id, public_key)`
+
+Verify a digital signature.
+
+```python
+is_valid = crypto.verify_signature(
+    b"document",
+    signature,
+    key_id="my-signing-key"  # OR public_key="-----BEGIN PUBLIC KEY-----..."
+)
+```
+
+**Returns:** `bool` - True if valid
+
+### `hash(data, algorithm)`
+
+Compute a cryptographic hash.
+
+```python
+hash_hex = crypto.hash(b"data to hash", algorithm="sha256")
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `data` | `bytes` | Yes | Data to hash |
+| `algorithm` | `str` | No | Hash algorithm (default: "sha256") |
+
+**Supported algorithms:** `sha256`, `sha384`, `sha512`, `sha3-256`, `blake2b`
+
+**Returns:** `str` - Hash as hex string
+
+### `mac(data, key, algorithm)`
+
+Compute a Message Authentication Code.
+
+```python
+mac_hex = crypto.mac(b"message", key=secret_key, algorithm="hmac-sha256")
+```
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `data` | `bytes` | Yes | Data to authenticate |
+| `key` | `bytes` | Yes | Secret key |
+| `algorithm` | `str` | No | MAC algorithm (default: "hmac-sha256") |
+
+**Returns:** `str` - MAC as hex string
+
+### `health_check()`
+
+Verify the SDK connection is working.
+
+```python
+if crypto.health_check():
+    print("Connected!")
+```
+
+**Returns:** `bool` - True if connection successful
+
+---
+
+## Legacy API (Identity-Embedded SDK)
+
+For backward compatibility, the identity-embedded SDK is still supported:
 
 ```python
 from cryptoserve import crypto
 
-# Encrypt a string
+# Requires downloading personalized SDK
 encrypted = crypto.encrypt_string("Hello World!", context="user-pii")
-
-# Decrypt it back
 decrypted = crypto.decrypt_string(encrypted)
-
-print(decrypted)  # "Hello World!"
 ```
 
 ---
