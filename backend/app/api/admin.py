@@ -1147,6 +1147,129 @@ async def get_system_health(
     )
 
 
+# --- Rate Limiting ---
+
+
+class RateLimitConfigRequest(BaseModel):
+    """Request to update rate limit for a context."""
+
+    requests_per_minute: int = 500
+    burst_size: int = 100
+    enabled: bool = True
+
+
+class RateLimitConfigResponse(BaseModel):
+    """Rate limit configuration."""
+
+    context_name: str
+    requests_per_minute: int
+    burst_size: int
+    enabled: bool
+
+
+class RateLimitUsageResponse(BaseModel):
+    """Current rate limit usage for an identity."""
+
+    identity_id: str
+    ip_address: str | None
+    tokens_remaining: float
+    limit: int
+    reset_at: float
+
+
+class GlobalRateLimitsResponse(BaseModel):
+    """Global rate limit settings."""
+
+    ip_requests_per_minute: int
+    ip_burst_size: int
+    identity_requests_per_minute: int
+    identity_burst_size: int
+    context_requests_per_minute: int
+    context_burst_size: int
+
+
+@router.get("/rate-limits", response_model=GlobalRateLimitsResponse)
+async def get_rate_limits(
+    admin: Annotated[User, Depends(require_admin)],
+):
+    """Get global rate limit configuration."""
+    from app.core.rate_limiter import get_rate_limiter, RateLimitType
+
+    limiter = get_rate_limiter()
+    return GlobalRateLimitsResponse(
+        ip_requests_per_minute=limiter._limits[RateLimitType.IP].requests_per_minute,
+        ip_burst_size=limiter._limits[RateLimitType.IP].burst_size,
+        identity_requests_per_minute=limiter._limits[RateLimitType.IDENTITY].requests_per_minute,
+        identity_burst_size=limiter._limits[RateLimitType.IDENTITY].burst_size,
+        context_requests_per_minute=limiter._limits[RateLimitType.CONTEXT].requests_per_minute,
+        context_burst_size=limiter._limits[RateLimitType.CONTEXT].burst_size,
+    )
+
+
+@router.get("/rate-limits/context/{context_name}", response_model=RateLimitConfigResponse)
+async def get_context_rate_limit(
+    context_name: str,
+    admin: Annotated[User, Depends(require_admin)],
+):
+    """Get rate limit configuration for a specific context."""
+    from app.core.rate_limiter import get_rate_limiter
+
+    limiter = get_rate_limiter()
+    config = limiter.get_context_limit(context_name)
+    return RateLimitConfigResponse(
+        context_name=context_name,
+        requests_per_minute=config.requests_per_minute,
+        burst_size=config.burst_size,
+        enabled=config.enabled,
+    )
+
+
+@router.put("/rate-limits/context/{context_name}", response_model=RateLimitConfigResponse)
+async def set_context_rate_limit(
+    context_name: str,
+    config: RateLimitConfigRequest,
+    admin: Annotated[User, Depends(require_admin)],
+):
+    """Set rate limit configuration for a specific context.
+
+    This allows setting stricter limits for sensitive contexts or
+    higher limits for high-throughput contexts.
+    """
+    from app.core.rate_limiter import get_rate_limiter, RateLimitConfig
+
+    limiter = get_rate_limiter()
+    limiter.set_context_limit(
+        context_name,
+        RateLimitConfig(
+            requests_per_minute=config.requests_per_minute,
+            burst_size=config.burst_size,
+            enabled=config.enabled,
+        ),
+    )
+    return RateLimitConfigResponse(
+        context_name=context_name,
+        requests_per_minute=config.requests_per_minute,
+        burst_size=config.burst_size,
+        enabled=config.enabled,
+    )
+
+
+@router.post("/rate-limits/reset/{identity_id}")
+async def reset_identity_rate_limit(
+    identity_id: str,
+    admin: Annotated[User, Depends(require_admin)],
+):
+    """Reset rate limit for a specific identity.
+
+    Use this to clear rate limits for an identity that was mistakenly throttled.
+    """
+    from app.core.rate_limiter import get_rate_limiter
+
+    limiter = get_rate_limiter()
+    await limiter.reset_identity(identity_id)
+    return {"message": f"Rate limit reset for identity {identity_id}"}
+
+
 # --- Premium Feature Previews (OSS shows value, gates details) ---
 
 @router.get("/risk-score", response_model=RiskScoreResponse)

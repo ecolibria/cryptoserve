@@ -3,7 +3,7 @@
 import base64
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,11 @@ from app.core.crypto_engine import (
     UnsupportedModeError,
 )
 from app.core.identity_manager import identity_manager
+from app.core.rate_limiter import (
+    get_rate_limiter,
+    RateLimitResult,
+    RateLimitExceeded,
+)
 from app.schemas.context import AlgorithmOverride, CipherMode
 
 router = APIRouter(prefix="/api/v1/crypto", tags=["crypto"])
@@ -147,9 +152,55 @@ async def get_sdk_identity(
     )
 
 
+async def check_rate_limit(
+    request: Request,
+    identity: Identity,
+    context_name: str | None = None,
+) -> RateLimitResult:
+    """Check rate limits and raise exception if exceeded.
+
+    Args:
+        request: FastAPI request for client IP
+        identity: Authenticated identity
+        context_name: Optional context being accessed
+
+    Returns:
+        RateLimitResult with headers to add to response
+
+    Raises:
+        HTTPException: 429 if rate limit exceeded
+    """
+    limiter = get_rate_limiter()
+    ip_address = request.client.host if request.client else "unknown"
+
+    # Check all applicable rate limits
+    result = await limiter.check_all(
+        ip_address=ip_address,
+        identity_id=str(identity.id),
+        context_name=context_name,
+    )
+
+    if not result.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Retry after {result.retry_after} seconds.",
+            headers=result.headers,
+        )
+
+    return result
+
+
+def add_rate_limit_headers(response: Response, result: RateLimitResult) -> None:
+    """Add rate limit headers to response."""
+    for key, value in result.headers.items():
+        if value:  # Skip empty values
+            response.headers[key] = value
+
+
 @router.post("/encrypt", response_model=EncryptResponse)
 async def encrypt(
     request: Request,
+    response: Response,
     data: EncryptRequest,
     identity: Annotated[Identity, Depends(get_sdk_identity)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -159,7 +210,13 @@ async def encrypt(
     Encrypts the provided plaintext using the specified context's algorithm.
     Optionally accepts an algorithm_override to explicitly select cipher,
     mode, and key size.
+
+    Rate limits apply per identity and per context.
     """
+    # Check rate limits before expensive crypto operation
+    rate_result = await check_rate_limit(request, identity, data.context)
+    add_rate_limit_headers(response, rate_result)
+
     try:
         plaintext = base64.b64decode(data.plaintext)
     except Exception:
@@ -224,6 +281,7 @@ async def encrypt(
 @router.post("/decrypt", response_model=DecryptResponse)
 async def decrypt(
     request: Request,
+    response: Response,
     data: DecryptRequest,
     identity: Annotated[Identity, Depends(get_sdk_identity)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -232,7 +290,13 @@ async def decrypt(
 
     Decrypts the provided ciphertext using the context's key.
     If the ciphertext was encrypted with AAD, the same AAD must be provided.
+
+    Rate limits apply per identity and per context.
     """
+    # Check rate limits before expensive crypto operation
+    rate_result = await check_rate_limit(request, identity, data.context)
+    add_rate_limit_headers(response, rate_result)
+
     try:
         ciphertext = base64.b64decode(data.ciphertext)
     except Exception:

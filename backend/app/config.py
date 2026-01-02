@@ -53,8 +53,12 @@ class Settings(BaseSettings):
     default_identity_expiration_days: int = 90
 
     # Rate limiting
-    rate_limit_requests: int = 100  # requests per minute
-    rate_limit_crypto_ops: int = 500  # crypto operations per minute
+    rate_limit_requests: int = 100  # requests per minute per identity
+    rate_limit_crypto_ops: int = 500  # crypto operations per minute per context
+    rate_limit_burst: int = 20  # burst capacity
+
+    # Redis (for distributed rate limiting, caching)
+    redis_url: str | None = None  # e.g., redis://localhost:6379/0
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
