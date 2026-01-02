@@ -57,6 +57,14 @@ docs-site/node_modules/
 
 # Local database
 cryptoserve.db
+*.db
+backend/*.db
 
 # TypeScript build info
 tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
+
+# Credentials and secrets
+*.pem
+*.key
+!.env.example
