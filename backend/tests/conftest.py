@@ -113,3 +113,21 @@ async def test_context(db_session: AsyncSession, test_tenant: Tenant) -> Context
     await db_session.commit()
     await db_session.refresh(context)
     return context
+
+
+@pytest.fixture
+async def user_pii_context(db_session: AsyncSession, test_tenant: Tenant) -> Context:
+    """Create a user-pii context for hybrid encryption tests."""
+    context = Context(
+        tenant_id=test_tenant.id,
+        name="user-pii",
+        display_name="User PII",
+        description="Personal identifiable information",
+        data_examples=["email", "SSN", "phone"],
+        compliance_tags=["GDPR", "SOC2"],
+        algorithm="AES-256-GCM",
+    )
+    db_session.add(context)
+    await db_session.commit()
+    await db_session.refresh(context)
+    return context
