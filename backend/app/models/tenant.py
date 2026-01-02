@@ -12,10 +12,9 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import String, DateTime, Boolean, Text
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base, StringList, JSONType
+from app.database import Base, StringList, JSONType, GUID
 
 
 class Tenant(Base):
@@ -29,7 +28,7 @@ class Tenant(Base):
     __tablename__ = "tenants"
 
     id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         primary_key=True,
         default=lambda: str(uuid4())
     )

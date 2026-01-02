@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Download,
   CheckCircle2,
@@ -8,6 +8,11 @@ import {
   Clock,
   Filter,
   ChevronDown,
+  Lock,
+  Unlock,
+  FileSignature,
+  ShieldCheck,
+  Activity,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +25,14 @@ import { api, AuditLog } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type SuccessFilter = "all" | "success" | "failed";
+type OperationFilter = "all" | "encrypt" | "decrypt" | "sign" | "verify";
+
+const operationConfig: Record<string, { icon: typeof Lock; label: string; color: string; bgColor: string }> = {
+  encrypt: { icon: Lock, label: "Encrypt", color: "text-blue-600", bgColor: "bg-blue-100" },
+  decrypt: { icon: Unlock, label: "Decrypt", color: "text-green-600", bgColor: "bg-green-100" },
+  sign: { icon: FileSignature, label: "Sign", color: "text-purple-600", bgColor: "bg-purple-100" },
+  verify: { icon: ShieldCheck, label: "Verify", color: "text-emerald-600", bgColor: "bg-emerald-100" },
+};
 
 export default function AdminAuditPage() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -28,6 +41,7 @@ export default function AdminAuditPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [successFilter, setSuccessFilter] = useState<SuccessFilter>("all");
+  const [operationFilter, setOperationFilter] = useState<OperationFilter>("all");
   const [contextFilter, setContextFilter] = useState("");
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -38,6 +52,23 @@ export default function AdminAuditPage() {
   const [totalOps, setTotalOps] = useState(0);
   const [successOps, setSuccessOps] = useState(0);
   const [failedOps, setFailedOps] = useState(0);
+
+  // Filter logs by operation type client-side
+  const filteredLogs = useMemo(() => {
+    if (operationFilter === "all") return logs;
+    return logs.filter(log => log.operation === operationFilter);
+  }, [logs, operationFilter]);
+
+  // Operation breakdown stats
+  const operationStats = useMemo(() => {
+    const stats = { encrypt: 0, decrypt: 0, sign: 0, verify: 0 };
+    logs.forEach(log => {
+      if (log.operation in stats) {
+        stats[log.operation as keyof typeof stats]++;
+      }
+    });
+    return stats;
+  }, [logs]);
 
   const loadLogs = useCallback(async () => {
     try {
@@ -119,16 +150,20 @@ export default function AdminAuditPage() {
       key: "operation",
       header: "Operation",
       sortable: true,
-      render: (log: AuditLog) => (
-        <span className={cn(
-          "px-2 py-1 rounded text-xs font-medium",
-          log.operation === "encrypt"
-            ? "bg-blue-100 text-blue-700"
-            : "bg-green-100 text-green-700"
-        )}>
-          {log.operation}
-        </span>
-      ),
+      render: (log: AuditLog) => {
+        const config = operationConfig[log.operation] || operationConfig.encrypt;
+        const Icon = config.icon;
+        return (
+          <span className={cn(
+            "inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium",
+            config.bgColor,
+            config.color
+          )}>
+            <Icon className="h-3 w-3" />
+            {config.label}
+          </span>
+        );
+      },
     },
     {
       key: "context",
@@ -250,31 +285,69 @@ export default function AdminAuditPage() {
       }
     >
       {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard
           title="Total Operations"
           value={totalOps}
           subtitle={startDate ? `Since ${startDate}` : "All time"}
-          icon={<Clock className="h-5 w-5" />}
+          icon={<Activity className="h-5 w-5 text-blue-500" />}
         />
         <StatCard
           title="Successful"
           value={successOps}
           subtitle={`${totalOps > 0 ? Math.round((successOps / totalOps) * 100) : 0}% success rate`}
           icon={<CheckCircle2 className="h-5 w-5 text-green-500" />}
+          color="green"
         />
         <StatCard
           title="Failed"
           value={failedOps}
           subtitle={failedOps > 0 ? "Requires attention" : "All operations successful"}
           icon={<XCircle className="h-5 w-5 text-red-500" />}
+          color={failedOps > 0 ? "rose" : "default"}
         />
         <StatCard
           title="Unique Contexts"
           value={new Set(logs.map(l => l.context)).size}
           subtitle="In current view"
-          icon={<Filter className="h-5 w-5" />}
+          icon={<Filter className="h-5 w-5 text-slate-500" />}
         />
+      </div>
+
+      {/* Operation Breakdown Quick Stats */}
+      <div className="grid grid-cols-4 gap-3 mb-6">
+        {(Object.entries(operationConfig) as [string, typeof operationConfig.encrypt][]).map(([key, config]) => {
+          const Icon = config.icon;
+          const count = operationStats[key as keyof typeof operationStats] || 0;
+          const isActive = operationFilter === key;
+          return (
+            <button
+              key={key}
+              onClick={() => setOperationFilter(isActive ? "all" : key as OperationFilter)}
+              className={cn(
+                "flex items-center gap-2 p-3 rounded-lg border transition-all",
+                isActive
+                  ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                  : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
+              )}
+            >
+              <div className={cn(
+                "h-8 w-8 rounded-lg flex items-center justify-center",
+                isActive ? "bg-white/20" : config.bgColor
+              )}>
+                <Icon className={cn("h-4 w-4", isActive ? "text-white" : config.color)} />
+              </div>
+              <div className="text-left">
+                <p className={cn("text-lg font-semibold tabular-nums", isActive ? "text-white" : "text-slate-900")}>
+                  {count}
+                </p>
+                <p className={cn("text-xs", isActive ? "text-white/70" : "text-slate-500")}>
+                  {config.label}
+                </p>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Filters */}
@@ -344,13 +417,35 @@ export default function AdminAuditPage() {
 
       {/* Audit Logs Table */}
       <Card>
+        <CardHeader className="py-3 px-4 border-b border-slate-100">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-medium text-slate-700">
+              {operationFilter !== "all" && (
+                <span className="mr-2">
+                  Filtered by: <span className="font-semibold">{operationConfig[operationFilter]?.label}</span>
+                </span>
+              )}
+              {filteredLogs.length} {filteredLogs.length === 1 ? "entry" : "entries"}
+            </CardTitle>
+            {operationFilter !== "all" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setOperationFilter("all")}
+                className="text-xs h-7"
+              >
+                Clear filter
+              </Button>
+            )}
+          </div>
+        </CardHeader>
         <CardContent className="p-0">
           <DataTable
-            data={logs}
+            data={filteredLogs}
             columns={expandedColumns}
             keyField="id"
             loading={loading}
-            emptyMessage="No audit logs found"
+            emptyMessage={operationFilter !== "all" ? `No ${operationFilter} operations found` : "No audit logs found"}
           />
         </CardContent>
       </Card>
@@ -359,7 +454,7 @@ export default function AdminAuditPage() {
       {(page > 0 || hasMore) && (
         <div className="mt-4 flex items-center justify-between">
           <p className="text-sm text-slate-500">
-            Showing {page * pageSize + 1} - {page * pageSize + logs.length} logs
+            Showing {page * pageSize + 1} - {page * pageSize + filteredLogs.length} logs
           </p>
           <div className="flex gap-2">
             <Button

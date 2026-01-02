@@ -12,10 +12,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import String, DateTime, Text, ForeignKey, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base, StringList, JSONType
+from app.database import Base, StringList, JSONType, GUID
 
 
 class Context(Base):
@@ -40,7 +39,7 @@ class Context(Base):
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True

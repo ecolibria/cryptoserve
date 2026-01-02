@@ -23,6 +23,29 @@ from app.schemas.policy import (
     ViolationLogResponse,
     ViolationSummary,
 )
+from app.schemas.keys import (
+    KeyStatus,
+    KeyType,
+    KeyInfo,
+    KeyBundle,
+    KeyHistoryEntry,
+    RotateKeyRequest,
+    RotateKeyResponse,
+)
+from app.schemas.usage import (
+    ContextUsageStats,
+    ErrorSummary,
+    DailyUsageStats,
+    UsagePeriod,
+    UsageStatsResponse,
+    UsageStatsRequest,
+)
+from app.schemas.algorithm_policy import (
+    DataClassification,
+    ClassificationAlgorithmPolicy,
+    UpdateClassificationPolicyRequest,
+    AlgorithmPoliciesResponse,
+)
 
 __all__ = [
     # Context schemas
@@ -46,4 +69,24 @@ __all__ = [
     "PolicyEvaluationResult",
     "ViolationLogResponse",
     "ViolationSummary",
+    # Key schemas
+    "KeyStatus",
+    "KeyType",
+    "KeyInfo",
+    "KeyBundle",
+    "KeyHistoryEntry",
+    "RotateKeyRequest",
+    "RotateKeyResponse",
+    # Usage schemas
+    "ContextUsageStats",
+    "ErrorSummary",
+    "DailyUsageStats",
+    "UsagePeriod",
+    "UsageStatsResponse",
+    "UsageStatsRequest",
+    # Algorithm policy schemas
+    "DataClassification",
+    "ClassificationAlgorithmPolicy",
+    "UpdateClassificationPolicyRequest",
+    "AlgorithmPoliciesResponse",
 ]

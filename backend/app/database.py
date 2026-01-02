@@ -3,11 +3,31 @@
 import json
 from typing import Any
 
-from sqlalchemy import TypeDecorator, Text
+from sqlalchemy import TypeDecorator, Text, String
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import get_settings
+
+
+class GUID(TypeDecorator):
+    """Database-agnostic UUID type.
+
+    Uses CHAR(36) storage which works with both SQLite and PostgreSQL.
+    This replaces postgresql.UUID for cross-database compatibility.
+    """
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect) -> str | None:
+        if value is None:
+            return None
+        return str(value)
+
+    def process_result_value(self, value, dialect) -> str | None:
+        if value is None:
+            return None
+        return str(value)
 
 
 class StringList(TypeDecorator):
