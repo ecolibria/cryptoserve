@@ -87,6 +87,7 @@ class EncryptResult:
     context: str
     description: str | None = None
     warnings: list[str] = field(default_factory=list)
+    is_quantum_safe: bool = False
 
 
 class CipherFactory:
@@ -444,6 +445,7 @@ class CryptoEngine:
                     context=context_name,
                     description=description,
                     warnings=warnings,
+                    is_quantum_safe=True,
                 )
 
             # Classical encryption path
