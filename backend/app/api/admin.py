@@ -2680,3 +2680,143 @@ async def toggle_user_admin(
         "is_admin": user.is_admin,
         "message": f"User {'promoted to' if user.is_admin else 'demoted from'} admin",
     }
+
+
+# --- Algorithm Metrics Endpoints ---
+
+class AlgorithmMetrics(BaseModel):
+    """Algorithm usage metrics for dashboard."""
+    period: str
+    total_operations: int
+    by_cipher: dict[str, int]
+    by_mode: dict[str, int]
+    by_key_bits: dict[str, int]
+    quantum_safe_operations: int
+    policy_violations: int
+    daily_trend: list[dict]
+
+
+@router.get("/metrics/algorithms", response_model=AlgorithmMetrics)
+async def get_algorithm_metrics(
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    days: int = Query(default=30, ge=1, le=365, description="Number of days to include"),
+):
+    """Get algorithm usage metrics for the dashboard.
+
+    Returns breakdown of operations by cipher, mode, key size, and quantum-safe status.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Get total operations in period
+    total_result = await db.execute(
+        select(func.count(AuditLog.id))
+        .where(AuditLog.timestamp >= cutoff)
+    )
+    total_operations = total_result.scalar() or 0
+
+    # Count by cipher
+    cipher_result = await db.execute(
+        select(AuditLog.cipher, func.count(AuditLog.id))
+        .where(
+            and_(
+                AuditLog.timestamp >= cutoff,
+                AuditLog.cipher.isnot(None),
+                AuditLog.success == True,
+            )
+        )
+        .group_by(AuditLog.cipher)
+    )
+    by_cipher = {row[0]: row[1] for row in cipher_result.all() if row[0]}
+
+    # Count by mode
+    mode_result = await db.execute(
+        select(AuditLog.mode, func.count(AuditLog.id))
+        .where(
+            and_(
+                AuditLog.timestamp >= cutoff,
+                AuditLog.mode.isnot(None),
+                AuditLog.success == True,
+            )
+        )
+        .group_by(AuditLog.mode)
+    )
+    by_mode = {row[0]: row[1] for row in mode_result.all() if row[0]}
+
+    # Count by key bits
+    key_bits_result = await db.execute(
+        select(AuditLog.key_bits, func.count(AuditLog.id))
+        .where(
+            and_(
+                AuditLog.timestamp >= cutoff,
+                AuditLog.key_bits.isnot(None),
+                AuditLog.success == True,
+            )
+        )
+        .group_by(AuditLog.key_bits)
+    )
+    by_key_bits = {str(row[0]): row[1] for row in key_bits_result.all() if row[0]}
+
+    # Count quantum-safe operations
+    quantum_result = await db.execute(
+        select(func.count(AuditLog.id))
+        .where(
+            and_(
+                AuditLog.timestamp >= cutoff,
+                AuditLog.quantum_safe == True,
+                AuditLog.success == True,
+            )
+        )
+    )
+    quantum_safe_operations = quantum_result.scalar() or 0
+
+    # Count policy violations
+    violations_result = await db.execute(
+        select(func.count(AuditLog.id))
+        .where(
+            and_(
+                AuditLog.timestamp >= cutoff,
+                AuditLog.policy_violation == True,
+            )
+        )
+    )
+    policy_violations = violations_result.scalar() or 0
+
+    # Daily trend (last N days)
+    daily_trend = []
+    for i in range(min(days, 30)):  # Max 30 days of daily data
+        day_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) - timedelta(days=i)
+        day_end = day_start + timedelta(days=1)
+
+        day_result = await db.execute(
+            select(func.count(AuditLog.id))
+            .where(
+                and_(
+                    AuditLog.timestamp >= day_start,
+                    AuditLog.timestamp < day_end,
+                    AuditLog.success == True,
+                )
+            )
+        )
+        day_count = day_result.scalar() or 0
+
+        daily_trend.append({
+            "date": day_start.strftime("%Y-%m-%d"),
+            "operations": day_count,
+        })
+
+    # Reverse so oldest first
+    daily_trend.reverse()
+
+    return AlgorithmMetrics(
+        period=f"last_{days}_days",
+        total_operations=total_operations,
+        by_cipher=by_cipher,
+        by_mode=by_mode,
+        by_key_bits=by_key_bits,
+        quantum_safe_operations=quantum_safe_operations,
+        policy_violations=policy_violations,
+        daily_trend=daily_trend,
+    )

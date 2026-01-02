@@ -50,6 +50,39 @@ class AccessFrequency(str, Enum):
     RARE = "rare"      # < 10 ops/sec
 
 
+class PolicyEnforcement(str, Enum):
+    """Policy enforcement levels for algorithm override control."""
+    NONE = "none"      # Developer overrides allowed (current behavior)
+    WARN = "warn"      # Allow override but log warning + return in response
+    ENFORCE = "enforce"  # Reject requests that violate policy
+
+
+class AlgorithmPolicy(BaseModel):
+    """Admin-defined algorithm policy for a context.
+
+    This allows admins to constrain which algorithms developers can use,
+    regardless of any algorithm_override in the API request.
+    """
+    allowed_ciphers: list[str] = Field(
+        default_factory=lambda: ["AES", "ChaCha20"],
+        description="Allowed cipher families (e.g., AES, ChaCha20)"
+    )
+    allowed_modes: list[str] = Field(
+        default_factory=lambda: ["gcm", "gcm-siv", "ccm"],
+        description="Allowed cipher modes (e.g., gcm, cbc, ctr)"
+    )
+    min_key_bits: int = Field(
+        default=128,
+        ge=128,
+        le=512,
+        description="Minimum key size in bits"
+    )
+    require_quantum_safe: bool = Field(
+        default=False,
+        description="Require quantum-safe/hybrid algorithms"
+    )
+
+
 # =============================================================================
 # Encryption Context & Cipher Modes (Phase 1 - Core Completeness)
 # =============================================================================
@@ -417,6 +450,10 @@ class ContextUpdate(BaseModel):
     description: str | None = None
     config: ContextConfig | None = None
 
+    # Algorithm policy (admin-only)
+    algorithm_policy: AlgorithmPolicy | None = None
+    policy_enforcement: PolicyEnforcement | None = None
+
 
 class ContextResponse(BaseModel):
     """Schema for context API responses."""
@@ -433,6 +470,10 @@ class ContextResponse(BaseModel):
     algorithm: str
     compliance_tags: list[str]
     data_examples: list[str]
+
+    # Algorithm policy enforcement
+    algorithm_policy: AlgorithmPolicy | None = None
+    policy_enforcement: PolicyEnforcement = PolicyEnforcement.NONE
 
     created_at: datetime
     updated_at: datetime | None = None

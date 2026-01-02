@@ -1,5 +1,6 @@
 """Crypto Inventory models for tracking detected cryptography across apps."""
 
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -8,6 +9,12 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+def generate_scan_ref() -> str:
+    """Generate a short, human-readable scan reference ID."""
+    # Format: cbom-{short_uuid} e.g., cbom-a7b3c9d2
+    return f"cbom-{uuid.uuid4().hex[:8]}"
 
 
 class QuantumRisk(str, Enum):
@@ -31,6 +38,7 @@ class ScanSource(str, Enum):
     CICD_GATE = "cicd_gate"  # From CI/CD pipeline gate
     MANUAL_SCAN = "manual_scan"  # Manual API call
     SCHEDULED = "scheduled"  # Periodic background scan
+    CLI_SCAN = "cli_scan"  # From CLI cbom command
 
 
 class CryptoInventoryReport(Base):
@@ -45,14 +53,32 @@ class CryptoInventoryReport(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Identity that reported (links to app/developer)
-    identity_id: Mapped[str] = mapped_column(
-        String(64),
-        ForeignKey("identities.id"),
-        nullable=False,
+    # Human-readable reference ID for tracking (e.g., CBOM-A7B3C9D2)
+    scan_ref: Mapped[str] = mapped_column(
+        String(16),
+        default=generate_scan_ref,
+        unique=True,
+        index=True,
+        nullable=False
+    )
+
+    # User who uploaded (for CLI uploads without identity)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
         index=True
     )
-    identity_name: Mapped[str] = mapped_column(String(256), nullable=False)
+
+    # Identity that reported (links to app/developer)
+    # Nullable for CLI scans without a registered application
+    identity_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("identities.id"),
+        nullable=True,
+        index=True
+    )
+    identity_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     # Team/department for aggregation
     team: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
@@ -108,8 +134,13 @@ class CryptoInventoryReport(Base):
     git_branch: Mapped[str | None] = mapped_column(String(128), nullable=True)
     git_repo: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
+    # Scan name/path (for CLI scans)
+    scan_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    scan_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
     # Relationships
     identity: Mapped["Identity"] = relationship("Identity", backref="inventory_reports")
+    user: Mapped["User"] = relationship("User", backref="cbom_reports")
 
     def __repr__(self) -> str:
         return f"<CryptoInventoryReport {self.id} identity={self.identity_id} action={self.action.value}>"

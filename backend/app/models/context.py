@@ -66,6 +66,24 @@ class Context(Base):
         default="AES-256-GCM"
     )
 
+    # Algorithm policy enforcement (admin-controlled)
+    # Policy structure: {"allowed_ciphers": ["AES"], "allowed_modes": ["gcm"],
+    #                    "min_key_bits": 256, "require_quantum_safe": false}
+    algorithm_policy: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONType(),
+        nullable=True,
+        default=None,
+        comment="Admin-defined algorithm policy constraints"
+    )
+    # Enforcement level: "none" (dev override allowed), "warn" (log but allow),
+    # "enforce" (reject violations)
+    policy_enforcement: Mapped[str] = mapped_column(
+        String(16),
+        default="none",
+        nullable=False,
+        comment="Policy enforcement level: none, warn, enforce"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc)

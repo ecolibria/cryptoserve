@@ -179,10 +179,11 @@ async def get_context_stats(
         Tuple of (operation_count, hours_in_dev, unique_days)
     """
     # Get operation count for this context
+    # Note: AuditLog uses identity_id (legacy name) for application_id
     count_result = await db.execute(
         select(func.count())
         .select_from(AuditLog)
-        .where(AuditLog.application_id == app_id)
+        .where(AuditLog.identity_id == app_id)
         .where(AuditLog.context == context)
         .where(AuditLog.success == True)
     )
@@ -190,9 +191,9 @@ async def get_context_stats(
 
     # Get first operation timestamp
     first_op_result = await db.execute(
-        select(func.min(AuditLog.created_at))
+        select(func.min(AuditLog.timestamp))
         .select_from(AuditLog)
-        .where(AuditLog.application_id == app_id)
+        .where(AuditLog.identity_id == app_id)
         .where(AuditLog.context == context)
     )
     first_op = first_op_result.scalar()
@@ -207,9 +208,9 @@ async def get_context_stats(
 
     # Get unique days with operations
     unique_days_result = await db.execute(
-        select(func.count(func.distinct(func.date(AuditLog.created_at))))
+        select(func.count(func.distinct(func.date(AuditLog.timestamp))))
         .select_from(AuditLog)
-        .where(AuditLog.application_id == app_id)
+        .where(AuditLog.identity_id == app_id)
         .where(AuditLog.context == context)
     )
     unique_days = unique_days_result.scalar() or 0

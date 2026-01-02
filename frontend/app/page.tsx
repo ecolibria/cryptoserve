@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Shield, Github, Code, AlertTriangle, X, Loader2 } from "lucide-react";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const [devMode, setDevMode] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,5 +118,19 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 flex items-center justify-center p-4">
+          <Loader2 className="h-8 w-8 text-slate-400 animate-spin" />
+        </div>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
   );
 }

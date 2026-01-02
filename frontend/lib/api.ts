@@ -73,6 +73,17 @@ export interface AlgorithmOverride {
   key_bits?: number | null;
 }
 
+// Policy enforcement levels
+export type PolicyEnforcement = "none" | "warn" | "enforce";
+
+// Admin-defined algorithm policy for a context
+export interface AlgorithmPolicy {
+  allowed_ciphers: string[];
+  allowed_modes: string[];
+  min_key_bits: number;
+  require_quantum_safe: boolean;
+}
+
 // Alternative algorithm suggestion
 export interface AlgorithmAlternative {
   algorithm: string;
@@ -162,6 +173,8 @@ export interface ContextFullResponse {
   algorithm: string;
   sensitivity?: string;
   quantum_resistant?: boolean;
+  algorithm_policy?: AlgorithmPolicy | null;
+  policy_enforcement?: PolicyEnforcement;
   created_at: string;
   updated_at: string | null;
 }
@@ -327,6 +340,18 @@ export interface RecentActivity {
   failed_24h: number;
   most_used_context: string | null;
   most_used_algorithm: string | null;
+}
+
+// Algorithm Metrics (Dashboard)
+export interface AlgorithmMetrics {
+  period: string;
+  total_operations: number;
+  by_cipher: Record<string, number>;
+  by_mode: Record<string, number>;
+  by_key_bits: Record<string, number>;
+  quantum_safe_operations: number;
+  policy_violations: number;
+  daily_trend: Array<{ date: string; operations: number }>;
 }
 
 // Promotion Metrics Types
@@ -545,6 +570,7 @@ export interface SupportedFormatsResponse {
 // CBOM Report Types (CLI uploads)
 export interface CBOMReport {
   id: number;
+  scanRef: string;  // Human-readable reference ID (e.g., CBOM-A7B3C9D2)
   scannedAt: string;
   scanName: string | null;
   scanPath: string | null;
@@ -559,6 +585,7 @@ export interface CBOMReport {
 
 export interface CBOMReportDetail {
   id: number;
+  scanRef: string;  // Human-readable reference ID (e.g., CBOM-A7B3C9D2)
   scannedAt: string;
   scanName: string | null;
   scanPath: string | null;
@@ -1324,6 +1351,8 @@ export const api = {
     display_name: string;
     description: string;
     config: ContextConfig;
+    algorithm_policy?: AlgorithmPolicy | null;
+    policy_enforcement?: PolicyEnforcement;
   }) =>
     fetchApi(`/api/contexts/${name}`, {
       method: "PUT",
@@ -1670,8 +1699,9 @@ export const api = {
   listCBOMReports: (limit: number = 20) =>
     fetchApi(`/api/v1/cbom?limit=${limit}`) as Promise<CBOMReport[]>,
 
-  getCBOMReport: (reportId: number) =>
-    fetchApi(`/api/v1/cbom/${reportId}`) as Promise<CBOMReportDetail>,
+  // Accept both numeric ID (legacy) and scanRef (e.g., CBOM-A7B3C9D2)
+  getCBOMReport: (reportIdOrRef: number | string) =>
+    fetchApi(`/api/v1/cbom/${reportIdOrRef}`) as Promise<CBOMReportDetail>,
 
   // =============================================================================
   // Organization Settings & Domain Management (Admin)
@@ -1713,4 +1743,8 @@ export const api = {
       is_admin: boolean;
       message: string;
     }>,
+
+  // Algorithm Metrics
+  getAlgorithmMetrics: (days: number = 30) =>
+    fetchApi(`/api/admin/metrics/algorithms?days=${days}`) as Promise<AlgorithmMetrics>,
 };

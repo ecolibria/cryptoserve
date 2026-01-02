@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Shield,
   ShieldAlert,
@@ -16,6 +16,23 @@ import {
   Trash2,
   Save,
   X,
+  FileCheck,
+  FileWarning,
+  Settings,
+  TrendingUp,
+  Activity,
+  Lock,
+  ChevronDown,
+  ChevronUp,
+  Lightbulb,
+  GitBranch,
+  Server,
+  Code2,
+  Workflow,
+  HelpCircle,
+  Zap,
+  Eye,
+  BookOpen,
 } from "lucide-react";
 import { AdminLayout } from "@/components/admin-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +45,7 @@ import {
   Context,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { StatCard } from "@/components/ui/stat-card";
 
 type SeverityFilter = "all" | "block" | "warn" | "info";
 
@@ -71,6 +89,7 @@ export default function AdminPoliciesPage() {
   const [evalResult, setEvalResult] = useState<PolicyEvaluationResponse | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
 
   const loadData = async () => {
     setError(null);
@@ -245,6 +264,61 @@ export default function AdminPoliciesPage() {
 
   const isDefault = (policyName: string) => defaultPolicies.some((p) => p.name === policyName);
 
+  // Computed metrics for policy health overview
+  const policyMetrics = useMemo(() => {
+    const total = allPolicies.length;
+    const enabled = allPolicies.filter((p) => p.enabled).length;
+    const disabled = total - enabled;
+    const custom = policies.length;
+    const defaults = defaultPolicies.length;
+
+    // Calculate enforcement score: weighted by severity and enabled status
+    const severityWeights = { block: 3, warn: 2, info: 1 };
+    const maxScore = allPolicies.reduce((sum, p) => sum + severityWeights[p.severity as keyof typeof severityWeights], 0);
+    const actualScore = allPolicies
+      .filter((p) => p.enabled)
+      .reduce((sum, p) => sum + severityWeights[p.severity as keyof typeof severityWeights], 0);
+    const enforcementScore = maxScore > 0 ? Math.round((actualScore / maxScore) * 100) : 0;
+
+    // Context coverage - how many contexts have specific policies
+    const contextsWithPolicies = new Set<string>();
+    allPolicies.forEach((p) => p.contexts.forEach((c) => contextsWithPolicies.add(c)));
+    const contextCoverage = contexts.length > 0
+      ? Math.round((contextsWithPolicies.size / contexts.length) * 100)
+      : 100; // If no specific context targeting, assume all covered
+
+    // Security posture - based on blocking policies being enabled
+    const blockingEnabled = allPolicies.filter((p) => p.severity === "block" && p.enabled).length;
+    const totalBlocking = allPolicies.filter((p) => p.severity === "block").length;
+    const securityPosture = totalBlocking > 0 ? Math.round((blockingEnabled / totalBlocking) * 100) : 100;
+
+    return {
+      total,
+      enabled,
+      disabled,
+      custom,
+      defaults,
+      enforcementScore,
+      contextCoverage,
+      securityPosture,
+      blockingEnabled,
+      totalBlocking,
+    };
+  }, [allPolicies, policies, defaultPolicies, contexts]);
+
+  // Score color based on enforcement level
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return "text-emerald-600";
+    if (score >= 60) return "text-amber-600";
+    return "text-red-600";
+  };
+
+  const getScoreStroke = (score: number) => {
+    if (score >= 80) return "#10b981";
+    if (score >= 60) return "#f59e0b";
+    return "#ef4444";
+  };
+
   return (
     <AdminLayout
       title="Policy Management"
@@ -265,6 +339,172 @@ export default function AdminPoliciesPage() {
             </div>
           </div>
         )}
+
+        {/* How Policies Work - Expandable Explainer */}
+        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowHowItWorks(!showHowItWorks)}
+            className="w-full p-4 flex items-center justify-between text-left hover:bg-indigo-50/50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-100 rounded-lg">
+                <Lightbulb className="h-5 w-5 text-indigo-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">How Policies Work</h3>
+                <p className="text-sm text-slate-600">
+                  Policies automatically enforce cryptographic standards across your organization
+                </p>
+              </div>
+            </div>
+            {showHowItWorks ? (
+              <ChevronUp className="h-5 w-5 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 text-slate-400" />
+            )}
+          </button>
+
+          {showHowItWorks && (
+            <div className="px-4 pb-4 space-y-6">
+              {/* Quick Summary */}
+              <div className="p-4 bg-white/60 rounded-lg">
+                <p className="text-sm text-slate-700">
+                  Policies define rules that are evaluated whenever cryptographic operations occur.
+                  They check the algorithm being used, the data sensitivity, and compliance requirements
+                  to determine if the operation should be <span className="font-medium text-green-600">allowed</span>,
+                  <span className="font-medium text-amber-600"> warned</span>, or
+                  <span className="font-medium text-red-600"> blocked</span>.
+                </p>
+              </div>
+
+              {/* When Policies Are Evaluated */}
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                  <Zap className="h-4 w-4 text-amber-500" />
+                  When Policies Are Evaluated
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 bg-white rounded-lg border border-slate-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Code2 className="h-4 w-4 text-blue-500" />
+                      <span className="font-medium text-sm">SDK Initialization</span>
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      When apps start, the SDK scans for crypto libraries and reports inventory.
+                      Policies evaluate detected algorithms against your rules.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-white rounded-lg border border-slate-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <GitBranch className="h-4 w-4 text-purple-500" />
+                      <span className="font-medium text-sm">CI/CD Pipeline Gates</span>
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      Before deployment, CI/CD gates check code for crypto usage.
+                      Blocking policies can fail the build if violations are found.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-white rounded-lg border border-slate-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Server className="h-4 w-4 text-green-500" />
+                      <span className="font-medium text-sm">Runtime Operations</span>
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      Every encrypt/decrypt call is evaluated in real-time.
+                      Blocking policies prevent unauthorized algorithms from being used.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Severity Levels Explained */}
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-blue-500" />
+                  What Each Severity Level Does
+                </h4>
+                <div className="space-y-2">
+                  <div className="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-100">
+                    <Ban className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-red-900">Block</span>
+                        <span className="text-xs px-1.5 py-0.5 bg-red-100 text-red-700 rounded">Strictest</span>
+                      </div>
+                      <p className="text-sm text-red-800 mt-1">
+                        <strong>Prevents the operation entirely.</strong> Use for deprecated algorithms (DES, MD5),
+                        compliance violations, or critical security requirements. The SDK will throw an error
+                        and CI/CD gates will fail the build.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                    <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-amber-900">Warn</span>
+                        <span className="text-xs px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">Balanced</span>
+                      </div>
+                      <p className="text-sm text-amber-800 mt-1">
+                        <strong>Allows the operation but logs a warning.</strong> Ideal for quantum-vulnerable
+                        algorithms that need migration. Operations succeed, but violations appear in audit logs
+                        and dashboards for remediation planning.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                    <Eye className="h-5 w-5 text-blue-500 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-blue-900">Info</span>
+                        <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">Monitoring</span>
+                      </div>
+                      <p className="text-sm text-blue-800 mt-1">
+                        <strong>Silent observation only.</strong> Use for tracking adoption of new algorithms
+                        or gathering usage metrics. No user-visible warnings, data collected for analytics
+                        and reporting.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rule Syntax Quick Reference */}
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-indigo-500" />
+                  Rule Syntax Quick Reference
+                </h4>
+                <div className="p-3 bg-white rounded-lg border border-slate-200">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="font-medium text-slate-700 mb-2">Algorithm Properties:</p>
+                      <ul className="space-y-1 text-xs text-slate-600 font-mono">
+                        <li><code className="bg-slate-100 px-1 rounded">algorithm.name</code> - Algorithm name (AES-256-GCM)</li>
+                        <li><code className="bg-slate-100 px-1 rounded">algorithm.key_bits</code> - Key size (256, 128)</li>
+                        <li><code className="bg-slate-100 px-1 rounded">algorithm.quantum_resistant</code> - PQC status (true/false)</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-700 mb-2">Context Properties:</p>
+                      <ul className="space-y-1 text-xs text-slate-600 font-mono">
+                        <li><code className="bg-slate-100 px-1 rounded">context.sensitivity</code> - Data sensitivity level</li>
+                        <li><code className="bg-slate-100 px-1 rounded">context.pii</code> / <code className="bg-slate-100 px-1 rounded">phi</code> / <code className="bg-slate-100 px-1 rounded">pci</code> - Compliance flags</li>
+                        <li><code className="bg-slate-100 px-1 rounded">context.frameworks</code> - Compliance frameworks</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-xs text-slate-500">
+                      <strong>Example:</strong> <code className="bg-slate-100 px-1 rounded">algorithm.key_bits &gt;= 256 and context.pci == true</code>
+                      - Requires 256-bit keys for PCI data
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Action Buttons */}
         <div className="flex items-center gap-3">
@@ -592,60 +832,180 @@ export default function AdminPoliciesPage() {
               </Card>
             )}
 
-            {/* Stats */}
-            <div className="grid gap-4 md:grid-cols-4">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Policies</CardTitle>
-                  <Shield className="h-4 w-4 text-muted-foreground" />
+            {/* Policy Health Overview */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Enforcement Score Circle */}
+              <Card className="lg:col-span-3">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-slate-600">
+                    Policy Enforcement
+                  </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{allPolicies.length}</div>
-                  <p className="text-xs text-muted-foreground">
-                    {defaultPolicies.length} default, {policies.length} custom
-                  </p>
+                <CardContent className="flex flex-col items-center justify-center">
+                  <div className="relative w-32 h-32">
+                    <svg className="w-32 h-32 transform -rotate-90">
+                      <circle
+                        cx="64"
+                        cy="64"
+                        r="56"
+                        stroke="#e5e7eb"
+                        strokeWidth="12"
+                        fill="none"
+                      />
+                      <circle
+                        cx="64"
+                        cy="64"
+                        r="56"
+                        stroke={getScoreStroke(policyMetrics.enforcementScore)}
+                        strokeWidth="12"
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeDasharray={`${(policyMetrics.enforcementScore / 100) * 351.86} 351.86`}
+                        className="transition-all duration-1000 ease-out"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className={cn("text-3xl font-bold", getScoreColor(policyMetrics.enforcementScore))}>
+                        {policyMetrics.enforcementScore}%
+                      </span>
+                      <span className="text-xs text-slate-500">Active</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 text-center">
+                    <p className="text-sm text-slate-600">
+                      {policyMetrics.enabled} of {policyMetrics.total} policies enabled
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Weighted by severity level
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
 
+              {/* Stats Grid */}
+              <div className="lg:col-span-9 grid grid-cols-2 md:grid-cols-3 gap-4">
+                <StatCard
+                  title="Total Policies"
+                  value={policyMetrics.total}
+                  subtitle={`${policyMetrics.defaults} default, ${policyMetrics.custom} custom`}
+                  icon={<Shield className="h-5 w-5" />}
+                  color="blue"
+                />
+                <StatCard
+                  title="Active Policies"
+                  value={policyMetrics.enabled}
+                  subtitle={`${policyMetrics.disabled} currently disabled`}
+                  icon={<CheckCircle2 className="h-5 w-5" />}
+                  color="green"
+                />
+                <StatCard
+                  title="Custom Policies"
+                  value={policyMetrics.custom}
+                  subtitle="Organization-specific rules"
+                  icon={<Settings className="h-5 w-5" />}
+                  color="purple"
+                />
+                <StatCard
+                  title="Security Posture"
+                  value={`${policyMetrics.securityPosture}%`}
+                  subtitle={`${policyMetrics.blockingEnabled}/${policyMetrics.totalBlocking} blocking active`}
+                  icon={<Lock className="h-5 w-5" />}
+                  color={policyMetrics.securityPosture >= 80 ? "green" : policyMetrics.securityPosture >= 60 ? "amber" : "rose"}
+                />
+                <StatCard
+                  title="Context Coverage"
+                  value={policyMetrics.contextCoverage > 0 ? `${policyMetrics.contextCoverage}%` : "All"}
+                  subtitle="Contexts with policies"
+                  icon={<TrendingUp className="h-5 w-5" />}
+                  color="blue"
+                />
+                <StatCard
+                  title="Compliance Rules"
+                  value={blockCount + warnCount}
+                  subtitle={`${blockCount} blocking, ${warnCount} warnings`}
+                  icon={<FileCheck className="h-5 w-5" />}
+                  color="default"
+                />
+              </div>
+            </div>
+
+            {/* Severity Filter Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card
-                className={cn("cursor-pointer transition-colors", severityFilter === "block" && "ring-2 ring-red-500")}
+                className={cn(
+                  "cursor-pointer transition-all hover:shadow-md",
+                  severityFilter === "block" ? "ring-2 ring-red-500 bg-red-50" : "hover:border-red-300"
+                )}
                 onClick={() => setSeverityFilter(severityFilter === "block" ? "all" : "block")}
               >
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Blocking</CardTitle>
-                  <Ban className="h-4 w-4 text-red-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{blockCount}</div>
-                  <p className="text-xs text-muted-foreground">Will prevent operations</p>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-red-100">
+                        <Ban className="h-5 w-5 text-red-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-600">Blocking Policies</p>
+                        <p className="text-2xl font-bold text-red-600">{blockCount}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-500">Click to filter</p>
+                      <p className="text-xs text-red-600 font-medium">Prevents operations</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 
               <Card
-                className={cn("cursor-pointer transition-colors", severityFilter === "warn" && "ring-2 ring-amber-500")}
+                className={cn(
+                  "cursor-pointer transition-all hover:shadow-md",
+                  severityFilter === "warn" ? "ring-2 ring-amber-500 bg-amber-50" : "hover:border-amber-300"
+                )}
                 onClick={() => setSeverityFilter(severityFilter === "warn" ? "all" : "warn")}
               >
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Warnings</CardTitle>
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{warnCount}</div>
-                  <p className="text-xs text-muted-foreground">Logged but allowed</p>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-amber-100">
+                        <AlertTriangle className="h-5 w-5 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-600">Warning Policies</p>
+                        <p className="text-2xl font-bold text-amber-600">{warnCount}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-500">Click to filter</p>
+                      <p className="text-xs text-amber-600 font-medium">Logs but allows</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 
               <Card
-                className={cn("cursor-pointer transition-colors", severityFilter === "info" && "ring-2 ring-blue-500")}
+                className={cn(
+                  "cursor-pointer transition-all hover:shadow-md",
+                  severityFilter === "info" ? "ring-2 ring-blue-500 bg-blue-50" : "hover:border-blue-300"
+                )}
                 onClick={() => setSeverityFilter(severityFilter === "info" ? "all" : "info")}
               >
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Informational</CardTitle>
-                  <Info className="h-4 w-4 text-blue-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{infoCount}</div>
-                  <p className="text-xs text-muted-foreground">For monitoring</p>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-blue-100">
+                        <Info className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-600">Info Policies</p>
+                        <p className="text-2xl font-bold text-blue-600">{infoCount}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-500">Click to filter</p>
+                      <p className="text-xs text-blue-600 font-medium">Monitoring only</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -654,9 +1014,14 @@ export default function AdminPoliciesPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>
-                    {severityFilter === "all" ? "All Policies" : `${severityFilter.charAt(0).toUpperCase() + severityFilter.slice(1)} Policies`}
-                  </span>
+                  <div>
+                    <span>
+                      {severityFilter === "all" ? "All Policies" : `${severityFilter.charAt(0).toUpperCase() + severityFilter.slice(1)} Policies`}
+                    </span>
+                    <p className="text-sm font-normal text-slate-500 mt-1">
+                      Click on a policy to see details. Toggle the switch to enable/disable.
+                    </p>
+                  </div>
                   {severityFilter !== "all" && (
                     <Button variant="ghost" size="sm" onClick={() => setSeverityFilter("all")}>
                       Clear filter
@@ -666,90 +1031,162 @@ export default function AdminPoliciesPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {filteredPolicies.map((policy) => (
-                    <div
-                      key={policy.name}
-                      className={cn(
-                        "p-4 border rounded-lg",
-                        !policy.enabled && "opacity-50"
-                      )}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3">
-                          {getSeverityIcon(policy.severity)}
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-medium">{policy.name}</h3>
-                              {getSeverityBadge(policy.severity)}
-                              {isDefault(policy.name) && (
-                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700">
-                                  default
-                                </span>
-                              )}
-                              {!policy.enabled && (
-                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">
-                                  disabled
-                                </span>
-                              )}
+                  {filteredPolicies.map((policy) => {
+                    // Generate contextual "What happens" text based on severity
+                    const getWhatHappens = () => {
+                      switch (policy.severity) {
+                        case "block":
+                          return "Operations matching this rule will be blocked. SDK throws error, CI/CD fails build.";
+                        case "warn":
+                          return "Operations are allowed but logged as warnings. Visible in audit logs and dashboards.";
+                        case "info":
+                          return "Silently tracked for analytics. No warnings shown to users.";
+                        default:
+                          return "";
+                      }
+                    };
+
+                    // Generate "When applies" text
+                    const getWhenApplies = () => {
+                      if (policy.contexts.length === 0) {
+                        return "Applies to all contexts";
+                      }
+                      return `Only applies to: ${policy.contexts.join(", ")}`;
+                    };
+
+                    return (
+                      <div
+                        key={policy.name}
+                        className={cn(
+                          "border rounded-lg overflow-hidden transition-all",
+                          !policy.enabled && "opacity-60",
+                          policy.severity === "block" && policy.enabled && "border-l-4 border-l-red-400",
+                          policy.severity === "warn" && policy.enabled && "border-l-4 border-l-amber-400",
+                          policy.severity === "info" && policy.enabled && "border-l-4 border-l-blue-400",
+                        )}
+                      >
+                        {/* Policy Header */}
+                        <div className="p-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-start gap-3">
+                              <div className={cn(
+                                "p-2 rounded-lg shrink-0",
+                                policy.severity === "block" && "bg-red-50",
+                                policy.severity === "warn" && "bg-amber-50",
+                                policy.severity === "info" && "bg-blue-50",
+                              )}>
+                                {getSeverityIcon(policy.severity)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="font-medium text-slate-900">{policy.name}</h3>
+                                  {getSeverityBadge(policy.severity)}
+                                  {isDefault(policy.name) && (
+                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700">
+                                      default
+                                    </span>
+                                  )}
+                                  {!policy.enabled && (
+                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">
+                                      disabled
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-slate-600 mt-1">
+                                  {policy.description}
+                                </p>
+                              </div>
                             </div>
-                            <p className="text-sm text-slate-600 mt-1">
-                              {policy.description}
-                            </p>
-                            <p className="text-xs font-mono text-slate-400 mt-2">
-                              {policy.rule}
-                            </p>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {!isDefault(policy.name) && (
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => startEditing(policy)}
+                                    title="Edit policy"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleDeletePolicy(policy.name)}
+                                    title="Delete policy"
+                                    className="text-red-500 hover:text-red-700"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleTogglePolicy(policy)}
+                                title={policy.enabled ? "Disable policy" : "Enable policy"}
+                              >
+                                {policy.enabled ? (
+                                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-slate-400" />
+                                )}
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {policy.contexts.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mr-4">
-                              {policy.contexts.map((ctx) => (
-                                <span
-                                  key={ctx}
-                                  className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600"
-                                >
-                                  {ctx}
-                                </span>
-                              ))}
+
+                        {/* Policy Details Footer */}
+                        <div className="px-4 py-3 bg-slate-50 border-t border-slate-100">
+                          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                            {/* Rule Expression */}
+                            <div className="flex items-center gap-1.5">
+                              <Code2 className="h-3.5 w-3.5 text-slate-400" />
+                              <span className="text-slate-500">Rule:</span>
+                              <code className="font-mono text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                {policy.rule}
+                              </code>
                             </div>
-                          )}
-                          {!isDefault(policy.name) && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => startEditing(policy)}
-                                title="Edit policy"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDeletePolicy(policy.name)}
-                                title="Delete policy"
-                                className="text-red-500 hover:text-red-700"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleTogglePolicy(policy)}
-                            title={policy.enabled ? "Disable policy" : "Enable policy"}
-                          >
-                            {policy.enabled ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <XCircle className="h-4 w-4 text-slate-400" />
-                            )}
-                          </Button>
+
+                            {/* What Happens */}
+                            <div className="flex items-center gap-1.5">
+                              <Zap className="h-3.5 w-3.5 text-slate-400" />
+                              <span className="text-slate-500">Effect:</span>
+                              <span className={cn(
+                                "font-medium",
+                                policy.severity === "block" && "text-red-600",
+                                policy.severity === "warn" && "text-amber-600",
+                                policy.severity === "info" && "text-blue-600",
+                              )}>
+                                {policy.severity === "block" && "Blocks operation"}
+                                {policy.severity === "warn" && "Warns but allows"}
+                                {policy.severity === "info" && "Silent tracking"}
+                              </span>
+                            </div>
+
+                            {/* Context Scope */}
+                            <div className="flex items-center gap-1.5">
+                              <Workflow className="h-3.5 w-3.5 text-slate-400" />
+                              <span className="text-slate-500">Scope:</span>
+                              {policy.contexts.length === 0 ? (
+                                <span className="text-slate-700">All contexts</span>
+                              ) : (
+                                <div className="flex gap-1">
+                                  {policy.contexts.map((ctx) => (
+                                    <span
+                                      key={ctx}
+                                      className="px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700"
+                                    >
+                                      {ctx}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {filteredPolicies.length === 0 && (
                     <div className="text-center py-8 text-slate-500">

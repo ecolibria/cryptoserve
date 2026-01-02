@@ -148,6 +148,7 @@ class CBOMUploadResponse(BaseModel):
     """Response from CBOM upload."""
     success: bool
     report_id: int
+    scan_ref: str  # Human-readable reference ID (e.g., CBOM-A7B3C9D2)
     message: str
     quantum_readiness_score: float
     dashboard_url: str
@@ -771,9 +772,10 @@ async def upload_cbom(
     return CBOMUploadResponse(
         success=True,
         report_id=report.id,
+        scan_ref=report.scan_ref,
         message=f"CBOM uploaded successfully with {library_count} libraries",
         quantum_readiness_score=report.quantum_readiness_score,
-        dashboard_url=f"/dashboard/cbom/{report.id}",
+        dashboard_url=f"/cbom/{report.scan_ref}",
     )
 
 
@@ -802,6 +804,7 @@ async def list_cbom_reports(
     return [
         {
             "id": r.id,
+            "scanRef": r.scan_ref,
             "scannedAt": r.scanned_at.isoformat(),
             "scanName": r.scan_name,
             "scanPath": r.scan_path,
@@ -817,22 +820,43 @@ async def list_cbom_reports(
     ]
 
 
-@cbom_router.get("/{report_id}")
+@cbom_router.get("/{report_id_or_ref}")
 async def get_cbom_report(
-    report_id: int,
+    report_id_or_ref: str,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ):
     """
-    Get a specific CBOM report by ID.
+    Get a specific CBOM report by ID or reference.
+
+    Accepts either:
+    - Numeric ID: /api/v1/cbom/123
+    - Scan reference: /api/v1/cbom/cbom-a7b3c9d2 (case-insensitive)
     """
     # Normalize UUID format (handle both with and without hyphens)
     user_id_normalized = str(user.id).replace("-", "")
-    result = await db.execute(
-        select(CryptoInventoryReport)
-        .where(CryptoInventoryReport.id == report_id)
-        .where(CryptoInventoryReport.user_id.in_([str(user.id), user_id_normalized]))
-    )
+
+    # Determine if lookup is by ID or scan_ref (case-insensitive prefix check)
+    if report_id_or_ref.lower().startswith("cbom-"):
+        # Lookup by scan_ref - try both original case and lowercase for backwards compatibility
+        result = await db.execute(
+            select(CryptoInventoryReport)
+            .where(CryptoInventoryReport.scan_ref.in_([report_id_or_ref, report_id_or_ref.lower(), report_id_or_ref.upper()]))
+            .where(CryptoInventoryReport.user_id.in_([str(user.id), user_id_normalized]))
+        )
+    else:
+        # Lookup by numeric ID
+        try:
+            report_id = int(report_id_or_ref)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid report ID format")
+
+        result = await db.execute(
+            select(CryptoInventoryReport)
+            .where(CryptoInventoryReport.id == report_id)
+            .where(CryptoInventoryReport.user_id.in_([str(user.id), user_id_normalized]))
+        )
+
     report = result.scalar_one_or_none()
 
     if not report:
@@ -840,6 +864,7 @@ async def get_cbom_report(
 
     return {
         "id": report.id,
+        "scanRef": report.scan_ref,
         "scannedAt": report.scanned_at.isoformat(),
         "scanName": report.scan_name,
         "scanPath": report.scan_path,

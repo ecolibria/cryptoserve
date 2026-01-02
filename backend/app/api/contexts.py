@@ -18,6 +18,8 @@ from app.schemas.context import (
     ContextConfig,
     ContextCreate as ContextCreateSchema,
     DerivedRequirements,
+    AlgorithmPolicy,
+    PolicyEnforcement,
 )
 from app.core.algorithm_resolver import resolve_algorithm
 
@@ -40,6 +42,10 @@ class ContextResponse(BaseModel):
     data_examples: list[str] | None = None
     compliance_tags: list[str] | None = None
     algorithm: str
+
+    # Algorithm policy enforcement
+    algorithm_policy: AlgorithmPolicy | None = None
+    policy_enforcement: PolicyEnforcement = PolicyEnforcement.NONE
 
     created_at: datetime
     updated_at: datetime | None = None
@@ -76,6 +82,16 @@ class ContextCreateLegacy(BaseModel):
     algorithm: str = "AES-256-GCM"
 
 
+class ContextUpdateSchema(BaseModel):
+    """Schema for updating an existing context."""
+    name: str
+    display_name: str
+    description: str
+    config: ContextConfig
+    algorithm_policy: AlgorithmPolicy | None = None
+    policy_enforcement: PolicyEnforcement | None = None
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -96,6 +112,14 @@ def context_to_response(ctx: Context) -> dict[str, Any]:
             if ctx.derived:
                 derived = DerivedRequirements.model_validate(ctx.derived)
 
+    # Parse algorithm policy if present
+    algorithm_policy = None
+    if ctx.algorithm_policy:
+        try:
+            algorithm_policy = AlgorithmPolicy.model_validate(ctx.algorithm_policy)
+        except Exception:
+            pass
+
     # Build response
     response = {
         "name": ctx.name,
@@ -106,6 +130,8 @@ def context_to_response(ctx: Context) -> dict[str, Any]:
         "data_examples": ctx.data_examples,
         "compliance_tags": ctx.compliance_tags,
         "algorithm": ctx.algorithm,
+        "algorithm_policy": algorithm_policy,
+        "policy_enforcement": ctx.policy_enforcement or "none",
         "created_at": ctx.created_at,
         "updated_at": ctx.updated_at,
     }
@@ -236,7 +262,7 @@ async def create_context_legacy(
 @router.put("/{name}", response_model=ContextResponse)
 async def update_context(
     name: str,
-    data: ContextCreateSchema,
+    data: ContextUpdateSchema,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -262,6 +288,15 @@ async def update_context(
     context.compliance_tags = data.config.regulatory.frameworks if data.config.regulatory else []
     context.data_examples = data.config.data_identity.examples if data.config.data_identity else []
     context.updated_at = datetime.now(timezone.utc)
+
+    # Update algorithm policy fields
+    if data.algorithm_policy is not None:
+        context.algorithm_policy = data.algorithm_policy.model_dump()
+    else:
+        context.algorithm_policy = None
+
+    if data.policy_enforcement is not None:
+        context.policy_enforcement = data.policy_enforcement.value
 
     await db.commit()
     await db.refresh(context)

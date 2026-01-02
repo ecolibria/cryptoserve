@@ -151,7 +151,7 @@ export default function CBOMListPage() {
             <div className="space-y-3">
               <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Recent Scans</h2>
               {reports.map((report) => (
-                <Link key={report.id} href={`/cbom/${report.id}`}>
+                <Link key={report.id} href={`/cbom/${report.scanRef || report.id}`}>
                   <Card className="hover:border-primary/50 hover:shadow-sm transition-all cursor-pointer">
                     <CardContent className="py-4">
                       <div className="flex items-center justify-between">
@@ -160,7 +160,7 @@ export default function CBOMListPage() {
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <h3 className="font-semibold">
-                                {report.scanName || report.scanPath || `Scan #${report.id}`}
+                                {report.scanRef || report.scanName || report.scanPath || `Scan #${report.id}`}
                               </h3>
                               {getQuantumReadinessBadge(report.quantumReadinessScore)}
                               {report.hasPqc && (

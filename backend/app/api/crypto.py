@@ -83,18 +83,68 @@ async def get_sdk_identity(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Identity:
-    """Get identity from SDK token."""
+    """Get identity from SDK token (supports both identity and application tokens)."""
     token = credentials.credentials
 
+    # First, try legacy identity token
     identity = await identity_manager.get_identity_by_token(db, token)
+    if identity:
+        return identity
 
-    if not identity:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired identity token",
-        )
+    # Try application token (new Ed25519-signed tokens)
+    from app.core.token_manager import token_manager
+    from app.models.application import Application
+    from sqlalchemy import select
 
-    return identity
+    payload = token_manager.decode_token_unverified(token)
+    if payload and payload.get("type") == "access":
+        app_id = payload.get("sub")
+        if app_id:
+            result = await db.execute(
+                select(Application).where(Application.id == app_id)
+            )
+            app = result.scalar_one_or_none()
+
+            if app and app.is_active:
+                # Verify the token signature (public key may be string or bytes)
+                try:
+                    public_key = app.public_key
+                    if isinstance(public_key, str):
+                        public_key = public_key.encode('utf-8')
+                    verified_payload = token_manager.verify_access_token(token, public_key)
+                    if verified_payload:
+                        # Return a "virtual" Identity object from the Application
+                        # We create a duck-typed object that has the same interface
+                        from app.models.identity import IdentityType, IdentityStatus
+
+                        class ApplicationIdentity:
+                            """Wrapper to make Application look like Identity for crypto endpoints."""
+                            def __init__(self, app: Application):
+                                self.id = app.id
+                                self.user_id = app.user_id
+                                self.type = IdentityType.SERVICE
+                                self.name = app.name
+                                self.team = app.team
+                                self.environment = app.environment
+                                self.allowed_contexts = app.allowed_contexts
+                                self.status = IdentityStatus.ACTIVE
+                                self.created_at = app.created_at
+                                self.expires_at = app.expires_at
+                                self.last_used_at = app.last_used_at
+                                self._app = app
+
+                            @property
+                            def is_active(self):
+                                return self._app.is_active
+
+                        return ApplicationIdentity(app)
+                except Exception:
+                    pass
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired identity token",
+    )
 
 
 @router.post("/encrypt", response_model=EncryptResponse)

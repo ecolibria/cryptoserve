@@ -27,6 +27,7 @@ import {
   RiskScoreResponse,
   QuantumReadinessResponse,
   ComplianceStatusResponse,
+  AlgorithmMetrics,
 } from "@/lib/api";
 import { RiskScoreGauge } from "@/components/premium/risk-score-gauge";
 import { QuantumReadinessMeter } from "@/components/premium/quantum-readiness-meter";
@@ -56,6 +57,7 @@ export default function AdminDashboard() {
   const [riskScore, setRiskScore] = useState<RiskScoreResponse | null>(null);
   const [quantumReadiness, setQuantumReadiness] = useState<QuantumReadinessResponse | null>(null);
   const [complianceStatus, setComplianceStatus] = useState<ComplianceStatusResponse | null>(null);
+  const [algorithmMetrics, setAlgorithmMetrics] = useState<AlgorithmMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
@@ -69,6 +71,7 @@ export default function AdminDashboard() {
         riskData,
         quantumData,
         complianceData,
+        algoMetrics,
       ] = await Promise.all([
         api.getAdminDashboard(),
         api.getOperationTrends(30),
@@ -78,6 +81,7 @@ export default function AdminDashboard() {
         api.getRiskScore(),
         api.getQuantumReadiness(),
         api.getComplianceStatus(),
+        api.getAlgorithmMetrics(30),
       ]);
       setStats(statsData);
       setTrends(trendsData);
@@ -87,6 +91,7 @@ export default function AdminDashboard() {
       setRiskScore(riskData);
       setQuantumReadiness(quantumData);
       setComplianceStatus(complianceData);
+      setAlgorithmMetrics(algoMetrics);
     } catch (error) {
       console.error("Failed to load admin data:", error);
     } finally {
@@ -174,7 +179,7 @@ export default function AdminDashboard() {
           <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
           <div>
             <p className="text-sm font-medium text-amber-800">
-              {stats.expiring_soon} identit{stats.expiring_soon === 1 ? "y" : "ies"} expiring in the next 7 days
+              {stats.expiring_soon} application{stats.expiring_soon === 1 ? "" : "s"} expiring in the next 7 days
             </p>
             <p className="text-xs text-amber-600 mt-0.5">
               Review and extend or revoke expiring credentials to maintain security.
@@ -192,7 +197,7 @@ export default function AdminDashboard() {
           icon={<Users className="h-5 w-5" />}
         />
         <StatCard
-          title="Active Identities"
+          title="Active Applications"
           value={stats?.active_identities ?? 0}
           subtitle={`${stats?.total_identities ?? 0} total`}
           icon={<Key className="h-5 w-5" />}
@@ -284,6 +289,147 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Algorithm Usage */}
+      {algorithmMetrics && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="text-base">Algorithm Usage (Last 30 Days)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {/* By Cipher */}
+              <div>
+                <h4 className="text-sm font-medium text-slate-600 mb-3">By Cipher</h4>
+                <div className="space-y-2">
+                  {Object.entries(algorithmMetrics.by_cipher).length > 0 ? (
+                    Object.entries(algorithmMetrics.by_cipher)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 5)
+                      .map(([cipher, count]) => {
+                        const total = Object.values(algorithmMetrics.by_cipher).reduce((a, b) => a + b, 0);
+                        const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div key={cipher} className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <div className="flex justify-between text-sm mb-1">
+                                <span className="font-medium">{cipher}</span>
+                                <span className="text-slate-500">{percent}%</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-blue-500 rounded-full"
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <p className="text-sm text-slate-400">No data yet</p>
+                  )}
+                </div>
+              </div>
+
+              {/* By Mode */}
+              <div>
+                <h4 className="text-sm font-medium text-slate-600 mb-3">By Mode</h4>
+                <div className="space-y-2">
+                  {Object.entries(algorithmMetrics.by_mode).length > 0 ? (
+                    Object.entries(algorithmMetrics.by_mode)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 5)
+                      .map(([mode, count]) => {
+                        const total = Object.values(algorithmMetrics.by_mode).reduce((a, b) => a + b, 0);
+                        const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div key={mode} className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <div className="flex justify-between text-sm mb-1">
+                                <span className="font-medium">{mode.toUpperCase()}</span>
+                                <span className="text-slate-500">{percent}%</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-emerald-500 rounded-full"
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <p className="text-sm text-slate-400">No data yet</p>
+                  )}
+                </div>
+              </div>
+
+              {/* By Key Size */}
+              <div>
+                <h4 className="text-sm font-medium text-slate-600 mb-3">By Key Size</h4>
+                <div className="space-y-2">
+                  {Object.entries(algorithmMetrics.by_key_bits).length > 0 ? (
+                    Object.entries(algorithmMetrics.by_key_bits)
+                      .sort(([a], [b]) => parseInt(b) - parseInt(a))
+                      .map(([bits, count]) => {
+                        const total = Object.values(algorithmMetrics.by_key_bits).reduce((a, b) => a + b, 0);
+                        const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div key={bits} className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <div className="flex justify-between text-sm mb-1">
+                                <span className="font-medium">{bits}-bit</span>
+                                <span className="text-slate-500">{percent}%</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-purple-500 rounded-full"
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <p className="text-sm text-slate-400">No data yet</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Summary Stats */}
+              <div>
+                <h4 className="text-sm font-medium text-slate-600 mb-3">Summary</h4>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Total Operations</span>
+                    <span className="font-medium">{formatNumber(algorithmMetrics.total_operations)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Quantum-Safe</span>
+                    <span className={cn(
+                      "font-medium",
+                      algorithmMetrics.quantum_safe_operations > 0 ? "text-emerald-600" : "text-slate-500"
+                    )}>
+                      {formatNumber(algorithmMetrics.quantum_safe_operations)}
+                    </span>
+                  </div>
+                  {algorithmMetrics.policy_violations > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-600">Policy Violations</span>
+                      <span className="font-medium text-amber-600">
+                        {algorithmMetrics.policy_violations}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -391,9 +537,9 @@ export default function AdminDashboard() {
                   </span>
                 </div>
 
-                {/* Expiring Identities */}
+                {/* Expiring Applications */}
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Expiring identities</span>
+                  <span className="text-slate-600">Expiring applications</span>
                   <span className={cn(
                     "font-medium",
                     (health?.expiring_identities ?? 0) > 0

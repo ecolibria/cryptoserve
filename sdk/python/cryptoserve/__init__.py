@@ -1,13 +1,27 @@
 """
-CryptoServe SDK - Zero-config cryptographic operations.
+CryptoServe SDK - Zero-config cryptographic operations with auto-registration.
 
-Usage:
+NEW in v0.6.0 - Auto-registration (Recommended):
+    from cryptoserve import CryptoServe
+
+    # One-time setup: run `cryptoserve login` in terminal
+
+    # Initialize - app is auto-registered on first use
+    crypto = CryptoServe(
+        app_name="my-service",
+        team="platform",
+        environment="development"
+    )
+
+    # Use immediately - no dashboard setup needed!
+    encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
+    decrypted = crypto.decrypt(encrypted, context="user-pii")
+
+Legacy Usage (still supported):
     from cryptoserve import crypto
 
-    # Encrypt data
+    # Requires CRYPTOSERVE_TOKEN environment variable
     ciphertext = crypto.encrypt(b"sensitive data", context="user-pii")
-
-    # Decrypt data
     plaintext = crypto.decrypt(ciphertext, context="user-pii")
 
     # String helpers
@@ -39,8 +53,20 @@ from cryptoserve_client.errors import (
 )
 from cryptoserve._identity import IDENTITY, AUTO_REFRESH_ENABLED, get_refresh_token
 
-__version__ = "0.5.0"
+# New in 0.6.0: Auto-registration CryptoServe class
+from cryptoserve._auto_register import (
+    CryptoServe,
+    CryptoServeNotLoggedInError,
+    CryptoServeRegistrationError,
+)
+
+__version__ = "0.6.0"
 __all__ = [
+    # New in 0.6.0: Auto-registration SDK class
+    "CryptoServe",
+    "CryptoServeNotLoggedInError",
+    "CryptoServeRegistrationError",
+    # Legacy interface (still works)
     "crypto",
     "init",
     "InitResult",
@@ -53,7 +79,7 @@ __all__ = [
     "ContextNotFoundError",
     "TokenRefreshError",
     "auto_protect",
-    # New in 0.5.0: CBOM and PQC recommendations
+    # CBOM and PQC recommendations
     "export_cbom",
     "get_pqc_recommendations",
     "CBOMResult",
@@ -1207,6 +1233,13 @@ class CBOMResult:
         import json
         return json.dumps(self.cbom, indent=2)
 
+    def to_dict(self) -> dict:
+        """Export CBOM as dictionary."""
+        return {
+            "cbom": self.cbom,
+            "quantum_readiness": self.quantum_readiness,
+        }
+
     def save(self, filepath: str) -> None:
         """Save CBOM to file."""
         with open(filepath, "w") as f:
@@ -1313,61 +1346,89 @@ def export_cbom(
 
     libraries = _init_config.get("libraries", [])
 
-    if _is_mock_mode():
-        # Mock CBOM
-        return CBOMResult(
-            cbom={
-                "id": "cbom_mock",
-                "version": "1.0",
-                "components": [
-                    {
-                        "bom_ref": f"crypto-lib-{lib['name']}",
-                        "type": "library",
-                        "name": lib["name"],
-                        "version": lib.get("version"),
-                        "category": lib["category"],
-                        "quantum_risk": lib["quantum_risk"],
-                        "is_deprecated": lib.get("is_deprecated", False),
-                        "algorithms": lib.get("algorithms", []),
-                    }
-                    for lib in libraries
-                ],
-            },
-            format=format,
-            quantum_readiness={
-                "score": 50.0,
-                "risk_level": "medium",
-                "has_pqc": False,
-            },
-        )
+    # Generate CBOM locally from detected libraries
+    import os
+    import datetime
 
-    # Request CBOM from server
-    import requests
+    # Calculate quantum readiness metrics
+    quantum_safe = sum(1 for lib in libraries if lib.get("quantum_risk", "").lower() in ["none", "low"])
+    quantum_vulnerable = sum(1 for lib in libraries if lib.get("quantum_risk", "").lower() in ["high", "critical"])
+    has_pqc = any("pqc" in lib.get("category", "").lower() or "post-quantum" in lib.get("category", "").lower() for lib in libraries)
+    deprecated_count = sum(1 for lib in libraries if lib.get("is_deprecated", False))
 
-    try:
-        response = requests.post(
-            f"{IDENTITY['server_url']}/api/v1/inventory/cbom",
-            headers={"Authorization": f"Bearer {IDENTITY['token']}"},
-            json={
-                "identity_id": IDENTITY["identity_id"],
-                "libraries": libraries,
-                "format": format,
-            },
-            timeout=30,
-        )
+    # Calculate score (0-100)
+    total = quantum_safe + quantum_vulnerable
+    if total == 0:
+        score = 100.0  # No crypto = no risk
+    else:
+        score = (quantum_safe / total) * 100
+        if has_pqc:
+            score = min(100, score + 20)
+        if deprecated_count > 0:
+            score = max(0, score - (deprecated_count * 10))
+    score = round(score, 1)
 
-        if response.status_code == 200:
-            data = response.json()
-            return CBOMResult(
-                cbom=data.get("cbom", data),
-                format=format,
-                quantum_readiness=data.get("quantum_readiness", {}),
-            )
-        else:
-            raise CryptoServeError(f"Failed to generate CBOM: {response.text}")
+    # Determine risk level
+    if score >= 80:
+        risk_level = "low"
+    elif score >= 50:
+        risk_level = "medium"
+    else:
+        risk_level = "high"
 
-    except requests.RequestException as e:
-        raise CryptoServeError(f"CBOM request failed: {str(e)}")
+    # Collect all algorithms
+    all_algorithms = []
+    for lib in libraries:
+        for algo in lib.get("algorithms", []):
+            all_algorithms.append({
+                "name": algo,
+                "library": lib["name"],
+                "category": lib.get("category", "unknown"),
+            })
+
+    # Build CBOM structure
+    components = [
+        {
+            "bom_ref": f"crypto-lib-{lib['name']}",
+            "type": "library",
+            "name": lib["name"],
+            "version": lib.get("version"),
+            "category": lib.get("category", "unknown"),
+            "quantum_risk": lib.get("quantum_risk", "unknown"),
+            "is_deprecated": lib.get("is_deprecated", False),
+            "algorithms": lib.get("algorithms", []),
+        }
+        for lib in libraries
+    ]
+
+    cbom = {
+        "id": f"cbom_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "version": "1.0",
+        "format": format,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "components": components,
+        "algorithms": all_algorithms if include_algorithms else [],
+        "summary": {
+            "total_libraries": len(libraries),
+            "quantum_safe": quantum_safe,
+            "quantum_vulnerable": quantum_vulnerable,
+            "deprecated": deprecated_count,
+            "has_pqc": has_pqc,
+        },
+    }
+
+    return CBOMResult(
+        cbom=cbom,
+        format=format,
+        quantum_readiness={
+            "score": score,
+            "risk_level": risk_level,
+            "has_pqc": has_pqc,
+            "quantum_safe_count": quantum_safe,
+            "quantum_vulnerable_count": quantum_vulnerable,
+            "deprecated_count": deprecated_count,
+        },
+    )
 
 
 def get_pqc_recommendations(

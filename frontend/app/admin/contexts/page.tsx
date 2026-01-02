@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Shield,
+  ShieldAlert,
   Key,
   Users,
   Activity,
@@ -45,6 +46,8 @@ import {
   DataCategory,
   Adversary,
   AccessFrequency,
+  AlgorithmPolicy,
+  PolicyEnforcement,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -101,6 +104,14 @@ const defaultConfig: ContextConfig = {
   access_patterns: defaultAccessPatterns,
 };
 
+// Default algorithm policy
+const defaultAlgorithmPolicy: AlgorithmPolicy = {
+  allowed_ciphers: ["AES", "ChaCha20"],
+  allowed_modes: ["gcm", "gcm-siv", "ccm"],
+  min_key_bits: 128,
+  require_quantum_safe: false,
+};
+
 // Display mappings
 const sensitivityLabels: Record<Sensitivity, { label: string; color: string }> = {
   critical: { label: "Critical", color: "bg-red-100 text-red-700" },
@@ -154,9 +165,26 @@ const cipherModeOptions = [
   { value: "gcm-siv", label: "GCM-SIV", description: "Nonce-misuse resistant, slightly slower" },
   { value: "ctr", label: "CTR", description: "Counter mode - no authentication, needs separate MAC" },
   { value: "cbc", label: "CBC", description: "Legacy mode - avoid for new applications" },
+  { value: "ccm", label: "CCM", description: "Counter with CBC-MAC - constrained devices" },
 ];
 
 const frameworkOptions = ["GDPR", "CCPA", "PCI-DSS", "HIPAA", "SOX", "SOC2"];
+
+// Policy enforcement options
+const enforcementOptions: { value: PolicyEnforcement; label: string; description: string; color: string }[] = [
+  { value: "none", label: "None", description: "Developer overrides allowed", color: "bg-slate-100 text-slate-700" },
+  { value: "warn", label: "Warn", description: "Allow override but log warning", color: "bg-amber-100 text-amber-700" },
+  { value: "enforce", label: "Enforce", description: "Reject policy violations", color: "bg-red-100 text-red-700" },
+];
+
+// Cipher options for policy
+const cipherOptions = ["AES", "ChaCha20"];
+
+// Mode options for policy
+const modeOptions = ["gcm", "gcm-siv", "cbc", "ctr", "ccm"];
+
+// Key size options for policy
+const keySizeOptions = [128, 192, 256];
 
 // Chart colors
 const CHART_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899"];
@@ -178,12 +206,18 @@ export default function AdminContextsPage() {
   const [formDescription, setFormDescription] = useState("");
   const [formConfig, setFormConfig] = useState<ContextConfig>(defaultConfig);
 
+  // Policy form state
+  const [formAlgorithmPolicy, setFormAlgorithmPolicy] = useState<AlgorithmPolicy | null>(null);
+  const [formPolicyEnforcement, setFormPolicyEnforcement] = useState<PolicyEnforcement>("none");
+  const [policyEnabled, setPolicyEnabled] = useState(false);
+
   const steps = [
     { name: "Basic Info", icon: Shield },
     { name: "Data Identity", icon: FileWarning },
     { name: "Regulatory", icon: Globe },
     { name: "Threat Model", icon: AlertTriangle },
     { name: "Access Patterns", icon: Zap },
+    { name: "Algorithm Policy", icon: ShieldAlert },
   ];
 
   const loadContexts = useCallback(async () => {
@@ -239,6 +273,9 @@ export default function AdminContextsPage() {
     setFormDisplayName("");
     setFormDescription("");
     setFormConfig(defaultConfig);
+    setFormAlgorithmPolicy(null);
+    setFormPolicyEnforcement("none");
+    setPolicyEnabled(false);
     setCurrentStep(0);
     setEditingContext(null);
   };
@@ -255,6 +292,15 @@ export default function AdminContextsPage() {
       setFormDisplayName(detail.display_name);
       setFormDescription(detail.description);
       setFormConfig(detail.config || defaultConfig);
+      // Load policy fields
+      if (detail.algorithm_policy) {
+        setFormAlgorithmPolicy(detail.algorithm_policy);
+        setPolicyEnabled(true);
+      } else {
+        setFormAlgorithmPolicy(null);
+        setPolicyEnabled(false);
+      }
+      setFormPolicyEnforcement(detail.policy_enforcement || "none");
       setEditingContext(contextName);
       setCurrentStep(0);
       setShowModal(true);
@@ -278,6 +324,8 @@ export default function AdminContextsPage() {
           display_name: formDisplayName,
           description: formDescription,
           config: formConfig,
+          algorithm_policy: policyEnabled ? formAlgorithmPolicy : null,
+          policy_enforcement: formPolicyEnforcement,
         });
       } else {
         await api.createContext({
@@ -341,6 +389,29 @@ export default function AdminContextsPage() {
     updateThreatModel({ adversaries: updated });
   };
 
+  const updateAlgorithmPolicy = (updates: Partial<AlgorithmPolicy>) => {
+    setFormAlgorithmPolicy((prev) => ({
+      ...(prev || defaultAlgorithmPolicy),
+      ...updates,
+    }));
+  };
+
+  const togglePolicyCipher = (cipher: string) => {
+    const current = formAlgorithmPolicy?.allowed_ciphers || defaultAlgorithmPolicy.allowed_ciphers;
+    const updated = current.includes(cipher)
+      ? current.filter((c) => c !== cipher)
+      : [...current, cipher];
+    updateAlgorithmPolicy({ allowed_ciphers: updated });
+  };
+
+  const togglePolicyMode = (mode: string) => {
+    const current = formAlgorithmPolicy?.allowed_modes || defaultAlgorithmPolicy.allowed_modes;
+    const updated = current.includes(mode)
+      ? current.filter((m) => m !== mode)
+      : [...current, mode];
+    updateAlgorithmPolicy({ allowed_modes: updated });
+  };
+
   // Calculate metrics
   const totalOperations = contexts.reduce((sum, c) => sum + c.operation_count, 0);
   const totalIdentities = contexts.reduce((sum, c) => sum + c.identity_count, 0);
@@ -370,9 +441,9 @@ export default function AdminContextsPage() {
     switch (currentStep) {
       case 0:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
-              <Label htmlFor="name">Context ID</Label>
+              <Label htmlFor="name" className="text-sm font-medium text-slate-700 mb-1.5 block">Context ID</Label>
               <Input
                 id="name"
                 value={formName}
@@ -381,10 +452,10 @@ export default function AdminContextsPage() {
                 disabled={!!editingContext}
                 className="font-mono"
               />
-              <p className="text-xs text-slate-500 mt-1">Lowercase with hyphens only</p>
+              <p className="text-xs text-slate-500 mt-2">Lowercase with hyphens only. Used as the API identifier.</p>
             </div>
             <div>
-              <Label htmlFor="displayName">Display Name</Label>
+              <Label htmlFor="displayName" className="text-sm font-medium text-slate-700 mb-1.5 block">Display Name</Label>
               <Input
                 id="displayName"
                 value={formDisplayName}
@@ -393,21 +464,22 @@ export default function AdminContextsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description" className="text-sm font-medium text-slate-700 mb-1.5 block">Description</Label>
               <textarea
                 id="description"
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
                 placeholder="Describe what data this context protects..."
-                className="w-full h-24 px-3 py-2 border rounded-md text-sm resize-none"
+                className="w-full h-28 px-3 py-2.5 border border-slate-200 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              <p className="text-xs text-slate-500 mt-2">This description helps other team members understand when to use this context.</p>
             </div>
           </div>
         );
 
       case 1:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <Label>Data Category</Label>
               <select
@@ -498,7 +570,7 @@ export default function AdminContextsPage() {
 
       case 2:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <Label>Compliance Frameworks</Label>
               <div className="flex flex-wrap gap-2 mt-2">
@@ -536,7 +608,7 @@ export default function AdminContextsPage() {
 
       case 3:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <Label>Threat Actors</Label>
               <div className="flex flex-wrap gap-2 mt-2">
@@ -582,7 +654,7 @@ export default function AdminContextsPage() {
 
       case 4:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <Label>Access Frequency</Label>
               <select
@@ -690,6 +762,194 @@ export default function AdminContextsPage() {
                 </div>
               </div>
             </div>
+          </div>
+        );
+
+      case 5:
+        return (
+          <div className="space-y-6">
+            {/* Policy Enable Toggle */}
+            <div className="flex items-center justify-between p-4 border rounded-lg bg-slate-50">
+              <div>
+                <div className="font-medium text-slate-900">Algorithm Policy</div>
+                <p className="text-sm text-slate-500">
+                  {editingContext
+                    ? "Enforce algorithm constraints for this context"
+                    : "Policy can only be configured when editing an existing context"}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  if (!policyEnabled) {
+                    setFormAlgorithmPolicy(defaultAlgorithmPolicy);
+                  }
+                  setPolicyEnabled(!policyEnabled);
+                }}
+                disabled={!editingContext}
+                className={cn(
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                  policyEnabled ? "bg-blue-600" : "bg-slate-300",
+                  !editingContext && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                    policyEnabled ? "translate-x-6" : "translate-x-1"
+                  )}
+                />
+              </button>
+            </div>
+
+            {policyEnabled && (
+              <>
+                {/* Enforcement Level */}
+                <div>
+                  <Label>Enforcement Level</Label>
+                  <p className="text-xs text-slate-500 mb-2">How strictly should the policy be enforced?</p>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    {enforcementOptions.map(({ value, label, description, color }) => (
+                      <button
+                        key={value}
+                        onClick={() => setFormPolicyEnforcement(value)}
+                        className={cn(
+                          "p-3 rounded-lg border text-left transition-all",
+                          formPolicyEnforcement === value
+                            ? `${color} border-transparent ring-2 ring-offset-1 ${value === "enforce" ? "ring-red-400" : value === "warn" ? "ring-amber-400" : "ring-slate-400"}`
+                            : "bg-white hover:bg-slate-50 border-slate-200"
+                        )}
+                      >
+                        <div className="font-medium text-sm">{label}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{description}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Allowed Ciphers */}
+                <div>
+                  <Label>Allowed Ciphers</Label>
+                  <p className="text-xs text-slate-500 mb-2">Which cipher families can developers use?</p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {cipherOptions.map((cipher) => (
+                      <button
+                        key={cipher}
+                        onClick={() => togglePolicyCipher(cipher)}
+                        className={cn(
+                          "px-4 py-2 rounded-md text-sm font-medium border transition-all",
+                          (formAlgorithmPolicy?.allowed_ciphers || []).includes(cipher)
+                            ? "bg-blue-100 text-blue-700 border-blue-200"
+                            : "bg-white hover:bg-slate-50 border-slate-200"
+                        )}
+                      >
+                        {cipher}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Allowed Modes */}
+                <div>
+                  <Label>Allowed Modes</Label>
+                  <p className="text-xs text-slate-500 mb-2">Which cipher modes are permitted?</p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {modeOptions.map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => togglePolicyMode(mode)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-md text-sm border transition-all uppercase",
+                          (formAlgorithmPolicy?.allowed_modes || []).includes(mode)
+                            ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                            : "bg-white hover:bg-slate-50 border-slate-200"
+                        )}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Minimum Key Size */}
+                <div>
+                  <Label>Minimum Key Size</Label>
+                  <p className="text-xs text-slate-500 mb-2">Minimum required key size in bits</p>
+                  <div className="flex gap-2 mt-2">
+                    {keySizeOptions.map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => updateAlgorithmPolicy({ min_key_bits: size })}
+                        className={cn(
+                          "px-4 py-2 rounded-md text-sm font-medium border transition-all",
+                          (formAlgorithmPolicy?.min_key_bits || 128) === size
+                            ? "bg-purple-100 text-purple-700 border-purple-200"
+                            : "bg-white hover:bg-slate-50 border-slate-200"
+                        )}
+                      >
+                        {size}-bit
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Require Quantum Safe */}
+                <div className="flex items-center justify-between p-4 border rounded-lg">
+                  <div>
+                    <div className="font-medium text-slate-900">Require Quantum-Safe Algorithms</div>
+                    <p className="text-sm text-slate-500">
+                      Only allow post-quantum or hybrid algorithms (ML-KEM)
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => updateAlgorithmPolicy({ require_quantum_safe: !formAlgorithmPolicy?.require_quantum_safe })}
+                    className={cn(
+                      "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                      formAlgorithmPolicy?.require_quantum_safe ? "bg-purple-600" : "bg-slate-300"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                        formAlgorithmPolicy?.require_quantum_safe ? "translate-x-6" : "translate-x-1"
+                      )}
+                    />
+                  </button>
+                </div>
+
+                {/* Policy Summary */}
+                <div className="bg-slate-50 p-4 rounded-lg">
+                  <div className="font-medium text-slate-700 mb-2">Policy Summary</div>
+                  <ul className="text-sm text-slate-600 space-y-1">
+                    <li>
+                      <span className="text-slate-500">Enforcement:</span>{" "}
+                      <span className={cn(
+                        "font-medium",
+                        formPolicyEnforcement === "enforce" && "text-red-600",
+                        formPolicyEnforcement === "warn" && "text-amber-600"
+                      )}>
+                        {formPolicyEnforcement === "none" ? "Disabled" : formPolicyEnforcement === "warn" ? "Warn on violations" : "Block violations"}
+                      </span>
+                    </li>
+                    <li>
+                      <span className="text-slate-500">Ciphers:</span>{" "}
+                      {(formAlgorithmPolicy?.allowed_ciphers || []).join(", ") || "None selected"}
+                    </li>
+                    <li>
+                      <span className="text-slate-500">Modes:</span>{" "}
+                      {(formAlgorithmPolicy?.allowed_modes || []).map(m => m.toUpperCase()).join(", ") || "None selected"}
+                    </li>
+                    <li>
+                      <span className="text-slate-500">Min key size:</span>{" "}
+                      {formAlgorithmPolicy?.min_key_bits || 128} bits
+                    </li>
+                    <li>
+                      <span className="text-slate-500">Quantum-safe required:</span>{" "}
+                      {formAlgorithmPolicy?.require_quantum_safe ? "Yes" : "No"}
+                    </li>
+                  </ul>
+                </div>
+              </>
+            )}
           </div>
         );
 
@@ -1022,7 +1282,7 @@ export default function AdminContextsPage() {
             </div>
 
             {/* Content */}
-            <div className="px-6 py-6 min-h-[300px]">
+            <div className="px-6 py-8 min-h-[340px] overflow-y-auto max-h-[calc(90vh-220px)]">
               {renderStepContent()}
             </div>
 

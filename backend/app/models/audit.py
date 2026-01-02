@@ -38,5 +38,14 @@ class AuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Algorithm tracking fields (for metrics and compliance)
+    algorithm: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g., "AES-256-GCM"
+    cipher: Mapped[str | None] = mapped_column(String(32), nullable=True)     # e.g., "AES", "ChaCha20"
+    mode: Mapped[str | None] = mapped_column(String(16), nullable=True)       # e.g., "gcm", "cbc"
+    key_bits: Mapped[int | None] = mapped_column(Integer, nullable=True)      # e.g., 128, 256
+    key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)     # Which key was used
+    quantum_safe: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    policy_violation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     def __repr__(self) -> str:
         return f"<AuditLog {self.operation} {self.identity_id}>"

@@ -19,6 +19,7 @@ const toolsNavigation = [
   { name: "Code Scanner", href: "/scanner", icon: Code },
   { name: "Dependencies", href: "/dependencies", icon: Package },
   { name: "Certificates", href: "/certificates", icon: Award },
+  { name: "CBOM Reports", href: "/cbom", icon: FileText },
 ];
 
 const adminNavigation = [

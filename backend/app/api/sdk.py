@@ -129,6 +129,103 @@ async def list_sdk_contexts(authorization: Annotated[str, Header()]):
         return contexts
 
 
+@router.get("/contexts/search")
+async def search_sdk_contexts(
+    authorization: Annotated[str, Header()],
+    q: str = "",
+):
+    """Search contexts with smart matching.
+
+    Matches against:
+    - Context name (user-pii, payment-data)
+    - Description text
+    - Data examples (email, SSN, credit card)
+    - Compliance tags (HIPAA, PCI-DSS, GDPR)
+
+    Returns contexts sorted by relevance.
+    """
+    identity = await _get_identity_from_auth(authorization)
+    query = q.lower().strip()
+
+    async with get_session_maker()() as db:
+        result = await db.execute(select(Context))
+        all_contexts = result.scalars().all()
+
+        # Filter to allowed contexts
+        allowed = identity.allowed_contexts or []
+        scored_contexts = []
+
+        for ctx in all_contexts:
+            if ctx.name not in allowed and "*" not in allowed:
+                continue
+
+            # Calculate relevance score
+            score = 0
+            matches = []
+
+            # Exact name match (highest priority)
+            if query and query == ctx.name.lower():
+                score += 100
+                matches.append("name (exact)")
+            # Partial name match
+            elif query and query in ctx.name.lower():
+                score += 50
+                matches.append("name")
+
+            # Description match
+            if query and query in (ctx.description or "").lower():
+                score += 30
+                matches.append("description")
+
+            # Display name match
+            if query and query in (ctx.display_name or "").lower():
+                score += 25
+                matches.append("display_name")
+
+            # Data examples match
+            for example in (ctx.data_examples or []):
+                if query and query in example.lower():
+                    score += 20
+                    matches.append(f"example: {example}")
+                    break
+
+            # Compliance tags match
+            for tag in (ctx.compliance_tags or []):
+                if query and query in tag.lower():
+                    score += 15
+                    matches.append(f"compliance: {tag}")
+                    break
+
+            # If no query, show all (for listing)
+            if not query:
+                score = 1
+
+            if score > 0:
+                algo_info = _get_algorithm_info(ctx.algorithm)
+                scored_contexts.append({
+                    "name": ctx.name,
+                    "display_name": ctx.display_name,
+                    "description": ctx.description,
+                    "algorithm": ctx.algorithm,
+                    "speed": algo_info["speed"],
+                    "overhead_bytes": algo_info["overhead_bytes"],
+                    "quantum_safe": algo_info["quantum_safe"],
+                    "compliance": ctx.compliance_tags or [],
+                    "data_examples": ctx.data_examples or [],
+                    "score": score,
+                    "matches": matches if query else [],
+                })
+
+        # Sort by score (descending)
+        scored_contexts.sort(key=lambda x: x["score"], reverse=True)
+
+        return {
+            "query": q,
+            "total": len(scored_contexts),
+            "contexts": scored_contexts,
+        }
+
+
 @router.get("/contexts/{context_name}")
 async def get_sdk_context_info(
     context_name: str,

@@ -298,6 +298,68 @@ class CryptoInventoryScanner:
         self.detected_libraries: list[DetectedLibrary] = []
         self.detected_algorithms: list[DetectedAlgorithm] = []
 
+    def _get_library_version(self, library_name: str, module_name: str) -> str | None:
+        """
+        Get version of a library using multiple methods.
+
+        Tries in order:
+        1. importlib.metadata (for installed packages)
+        2. Module __version__ attribute
+        3. Module VERSION attribute
+        4. OpenSSL version for ssl module
+
+        Args:
+            library_name: Name of the library (e.g., 'cryptography')
+            module_name: Name of the imported module
+
+        Returns:
+            Version string or None if not found
+        """
+        # Try importlib.metadata first (works for pip-installed packages)
+        try:
+            from importlib.metadata import version as get_version
+            # Map library names to package names
+            package_names = {
+                "pynacl": "PyNaCl",
+                "pyjwt": "PyJWT",
+                "python_jose": "python-jose",
+                "argon2_cffi": "argon2-cffi",
+                "pyOpenSSL": "pyOpenSSL",
+                "liboqs": "liboqs-python",
+            }
+            pkg_name = package_names.get(library_name, library_name)
+            return get_version(pkg_name)
+        except Exception:
+            pass
+
+        # Try module __version__ attribute
+        module = sys.modules.get(module_name)
+        if module:
+            version = getattr(module, "__version__", None)
+            if version:
+                return str(version)
+            version = getattr(module, "VERSION", None)
+            if version:
+                return str(version)
+
+        # Special case: ssl module - get OpenSSL version
+        if library_name == "ssl":
+            try:
+                import ssl
+                # Extract version number from string like "OpenSSL 3.0.2 15 Mar 2022"
+                openssl_ver = ssl.OPENSSL_VERSION
+                match = re.search(r'(\d+\.\d+\.\d+)', openssl_ver)
+                if match:
+                    return f"OpenSSL {match.group(1)}"
+            except Exception:
+                pass
+
+        # Special case: hashlib - it's part of stdlib, use Python version
+        if library_name == "hashlib":
+            return f"stdlib (Python {sys.version_info.major}.{sys.version_info.minor})"
+
+        return None
+
     def scan_imports(self) -> list[DetectedLibrary]:
         """
         Scan sys.modules for imported crypto libraries.
@@ -318,12 +380,7 @@ class CryptoInventoryScanner:
                         lib_info = CRYPTO_LIBRARIES[library_name]
 
                         # Get version if available
-                        version = None
-                        module = sys.modules.get(module_name)
-                        if module:
-                            version = getattr(module, "__version__", None)
-                            if not version:
-                                version = getattr(module, "VERSION", None)
+                        version = self._get_library_version(library_name, module_name)
 
                         # Avoid duplicates
                         if not any(d.name == library_name for d in detected):

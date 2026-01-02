@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryptoserve"
-version = "0.3.0"
-description = "CryptoServe SDK - Zero-config cryptographic operations"
+version = "0.6.0"
+description = "CryptoServe SDK - Zero-config cryptographic operations with auto-registration"
 readme = "README.md"
 license = {text = "AGPL-3.0"}
 requires-python = ">=3.9"

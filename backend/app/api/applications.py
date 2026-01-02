@@ -43,6 +43,31 @@ class ApplicationCreate(BaseModel):
     expires_in_days: int = Field(90, ge=1, le=365)
 
 
+class SDKRegisterRequest(BaseModel):
+    """SDK self-registration request.
+
+    Used by the SDK to auto-register applications on first use.
+    If an app with the same name+environment exists, returns existing credentials.
+    """
+    app_name: str = Field(..., min_length=1, max_length=256)
+    team: str = Field("default", min_length=1, max_length=64)
+    environment: str = Field("development", max_length=32)
+    contexts: list[str] = Field(default_factory=lambda: ["default"])
+    description: str | None = Field(None, max_length=1024)
+
+
+class SDKRegisterResponse(BaseModel):
+    """SDK self-registration response."""
+    app_id: str
+    app_name: str
+    environment: str
+    access_token: str
+    refresh_token: str
+    contexts: list[str]
+    is_new: bool  # True if newly created, False if existing app
+    message: str
+
+
 class ApplicationUpdate(BaseModel):
     """Application update schema."""
     name: str | None = Field(None, min_length=1, max_length=256)
@@ -425,3 +450,111 @@ async def revoke_tokens(
         )
 
     await application_manager.revoke_tokens(db, application)
+
+
+# ============================================================================
+# SDK Self-Registration Endpoint
+# ============================================================================
+
+
+@router.post("/sdk/register", response_model=SDKRegisterResponse)
+async def sdk_register(
+    data: SDKRegisterRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """SDK self-registration endpoint.
+
+    This endpoint allows the SDK to automatically register applications
+    on first use. If an application with the same name and environment
+    already exists for this user, it returns a new access token for
+    the existing application.
+
+    Flow:
+    1. User runs `cryptoserve login` once (stores auth token locally)
+    2. SDK imports and initializes with app_name, team, etc.
+    3. SDK calls this endpoint to register or retrieve credentials
+    4. Credentials are stored locally by SDK for future use
+
+    This enables zero-friction developer experience:
+    ```python
+    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(
+        app_name="my-service",
+        team="platform",
+        environment="development"
+    )
+    # App is auto-registered, ready to use!
+    ```
+    """
+    # Check if app with same name+environment already exists for this user
+    result = await db.execute(
+        select(Application)
+        .where(Application.user_id == user.id)
+        .where(Application.name == data.app_name)
+        .where(Application.environment == data.environment)
+    )
+    existing_app = result.scalar_one_or_none()
+
+    if existing_app:
+        # App exists - generate new access token and return
+        if existing_app.status != ApplicationStatus.ACTIVE.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Application '{data.app_name}' exists but is {existing_app.status}. "
+                       "Please revoke it from the dashboard and try again.",
+            )
+
+        # Import token_manager for generating tokens
+        from app.core.token_manager import token_manager
+
+        # Decrypt private key and generate new access token
+        private_key_pem = token_manager.decrypt_private_key(
+            existing_app.private_key_encrypted
+        )
+        access_token, _ = token_manager.create_access_token(
+            app_id=existing_app.id,
+            app_name=existing_app.name,
+            team=existing_app.team,
+            environment=existing_app.environment,
+            contexts=existing_app.allowed_contexts,
+            private_key_pem=private_key_pem,
+        )
+
+        # Rotate refresh token
+        refresh_token = await application_manager.rotate_refresh_token(db, existing_app)
+
+        return SDKRegisterResponse(
+            app_id=existing_app.id,
+            app_name=existing_app.name,
+            environment=existing_app.environment,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            contexts=existing_app.allowed_contexts or [],
+            is_new=False,
+            message=f"Connected to existing application '{data.app_name}' ({data.environment})",
+        )
+
+    # Create new application
+    application, access_token, refresh_token = await application_manager.create_application(
+        db=db,
+        user=user,
+        name=data.app_name,
+        description=data.description,
+        team=data.team,
+        environment=data.environment,
+        allowed_contexts=data.contexts,
+        expires_in_days=90,  # Default 90 days
+    )
+
+    return SDKRegisterResponse(
+        app_id=application.id,
+        app_name=application.name,
+        environment=application.environment,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        contexts=application.allowed_contexts or [],
+        is_new=True,
+        message=f"Application '{data.app_name}' registered successfully",
+    )
