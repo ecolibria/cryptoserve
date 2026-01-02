@@ -11,10 +11,10 @@ from app.models import Identity, IdentityType, IdentityStatus, User, Context
 @pytest.mark.asyncio
 async def test_key_derivation():
     """Test that key derivation is deterministic."""
-    key1 = key_manager.derive_key("test-context", 1)
-    key2 = key_manager.derive_key("test-context", 1)
-    key3 = key_manager.derive_key("test-context", 2)
-    key4 = key_manager.derive_key("other-context", 1)
+    key1 = await key_manager.derive_key("test-context", 1)
+    key2 = await key_manager.derive_key("test-context", 1)
+    key3 = await key_manager.derive_key("test-context", 2)
+    key4 = await key_manager.derive_key("other-context", 1)
 
     assert key1 == key2  # Same context and version = same key
     assert key1 != key3  # Different version = different key

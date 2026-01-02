@@ -3,13 +3,20 @@ CryptoServe API Client - Works Like Magic
 
 Simple, intuitive cryptography for developers who don't want to think about it.
 Every operation has sensible defaults - just call and go.
+
+Features:
+- Automatic token refresh
+- Retry with exponential backoff
+- Circuit breaker for fault tolerance
+- Batch operations for bulk processing
 """
 
 import base64
 import json
 import threading
+import time
 from datetime import datetime, timezone
-from typing import Any, BinaryIO, Optional
+from typing import Any, BinaryIO, Callable, Optional
 
 import requests
 
@@ -21,6 +28,16 @@ from cryptoserve_client.errors import (
     ServerError,
     RateLimitError,
     TokenRefreshError,
+)
+from cryptoserve_client.resilience import (
+    RetryConfig,
+    CircuitBreakerConfig,
+    CircuitBreaker,
+    CircuitOpenError,
+    BatchProcessor,
+    BatchResult,
+    calculate_delay,
+    create_production_config,
 )
 
 
@@ -49,6 +66,9 @@ class CryptoClient:
         auto_refresh: bool = True,
         timeout: float = 30.0,
         user_agent: str | None = None,
+        retry_config: RetryConfig | None = None,
+        circuit_config: CircuitBreakerConfig | None = None,
+        enable_resilience: bool = False,
     ):
         """
         Initialize the client.
@@ -60,6 +80,9 @@ class CryptoClient:
             auto_refresh: Enable automatic token refresh (default: True)
             timeout: Request timeout (default: 30s)
             user_agent: Optional custom user agent
+            retry_config: Retry configuration (None to use defaults when enabled)
+            circuit_config: Circuit breaker configuration (None to use defaults when enabled)
+            enable_resilience: Enable retry and circuit breaker with production defaults
         """
         self.server_url = server_url.rstrip("/")
         self._access_token = token
@@ -73,6 +96,13 @@ class CryptoClient:
 
         # Thread safety for token refresh
         self._refresh_lock = threading.Lock()
+
+        # Resilience configuration
+        if enable_resilience and not retry_config and not circuit_config:
+            retry_config, circuit_config = create_production_config()
+
+        self._retry_config = retry_config
+        self._circuit_breaker = CircuitBreaker(circuit_config) if circuit_config else None
 
         self._session = requests.Session()
         self._session.headers.update({
@@ -1069,6 +1099,101 @@ class CryptoClient:
         return self._request("GET", "/v1/dependencies/known-packages", params=params)
 
     # ==========================================================================
+    # Batch Operations - Process multiple items efficiently
+    # ==========================================================================
+
+    def encrypt_batch(
+        self,
+        items: list[tuple[bytes, str]],
+        stop_on_error: bool = False,
+    ) -> BatchResult[bytes]:
+        """
+        Encrypt multiple items in a batch.
+
+        More efficient than individual calls for bulk operations.
+
+        Args:
+            items: List of (plaintext, context) tuples
+            stop_on_error: Stop processing on first error
+
+        Returns:
+            BatchResult with encrypted data for each item
+
+        Example:
+            items = [
+                (b"secret1", "user-pii"),
+                (b"secret2", "user-pii"),
+                (b"secret3", "payment-data"),
+            ]
+            result = client.encrypt_batch(items)
+            if result.all_succeeded:
+                ciphertexts = result.results()
+        """
+        def encrypt_item(item: tuple[bytes, str]) -> bytes:
+            plaintext, context = item
+            return self.encrypt(plaintext, context)
+
+        processor = BatchProcessor(
+            process_func=encrypt_item,
+            retry_config=self._retry_config,
+            stop_on_error=stop_on_error,
+        )
+        return processor.process(items)
+
+    def decrypt_batch(
+        self,
+        items: list[tuple[bytes, str]],
+        stop_on_error: bool = False,
+    ) -> BatchResult[bytes]:
+        """
+        Decrypt multiple items in a batch.
+
+        Args:
+            items: List of (ciphertext, context) tuples
+            stop_on_error: Stop processing on first error
+
+        Returns:
+            BatchResult with decrypted data for each item
+        """
+        def decrypt_item(item: tuple[bytes, str]) -> bytes:
+            ciphertext, context = item
+            return self.decrypt(ciphertext, context)
+
+        processor = BatchProcessor(
+            process_func=decrypt_item,
+            retry_config=self._retry_config,
+            stop_on_error=stop_on_error,
+        )
+        return processor.process(items)
+
+    def hash_batch(
+        self,
+        items: list[bytes],
+        algorithm: str = "sha256",
+        stop_on_error: bool = False,
+    ) -> BatchResult[str]:
+        """
+        Hash multiple items in a batch.
+
+        Args:
+            items: List of data to hash
+            algorithm: Hash algorithm
+            stop_on_error: Stop processing on first error
+
+        Returns:
+            BatchResult with hex hashes for each item
+        """
+        def hash_item(data: bytes) -> str:
+            return self.hash(data, algorithm)
+
+        processor = BatchProcessor(
+            process_func=hash_item,
+            retry_config=self._retry_config,
+            stop_on_error=stop_on_error,
+        )
+        return processor.process(items)
+
+    # ==========================================================================
     # Utilities
     # ==========================================================================
 
@@ -1091,18 +1216,60 @@ class CryptoClient:
     # ==========================================================================
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
-        """Make authenticated request with auto-refresh support."""
+        """Make authenticated request with auto-refresh and resilience support."""
         # Auto-refresh token if needed
         self._ensure_valid_token()
-
         kwargs.setdefault("timeout", self.timeout)
-        response = self._session.request(method, f"{self.server_url}{path}", **kwargs)
 
-        # Handle 401 with retry after refresh
-        if response.status_code == 401 and self._try_refresh_and_retry():
+        def make_request():
             response = self._session.request(method, f"{self.server_url}{path}", **kwargs)
 
-        return self._handle_response(response, path)
+            # Handle 401 with retry after refresh
+            if response.status_code == 401 and self._try_refresh_and_retry():
+                response = self._session.request(method, f"{self.server_url}{path}", **kwargs)
+
+            return self._handle_response(response, path)
+
+        # Apply resilience patterns
+        if self._circuit_breaker:
+            try:
+                if self._retry_config:
+                    return self._circuit_breaker.execute(
+                        lambda: self._with_retry(make_request)
+                    )
+                else:
+                    return self._circuit_breaker.execute(make_request)
+            except CircuitOpenError:
+                raise
+        elif self._retry_config:
+            return self._with_retry(make_request)
+        else:
+            return make_request()
+
+    def _with_retry(self, func: Callable) -> Any:
+        """Execute function with retry logic."""
+        config = self._retry_config
+        last_error = None
+
+        for attempt in range(config.max_retries + 1):
+            try:
+                return func()
+
+            except RateLimitError as e:
+                if not config.retry_on_rate_limit or attempt >= config.max_retries:
+                    raise
+                delay = e.retry_after if e.retry_after else calculate_delay(attempt, config)
+                time.sleep(delay)
+                last_error = e
+
+            except config.retryable_errors as e:
+                if attempt >= config.max_retries:
+                    raise
+                delay = calculate_delay(attempt, config)
+                time.sleep(delay)
+                last_error = e
+
+        raise last_error or CryptoServeError("Retry failed")
 
     def _handle_response(self, response: requests.Response, path: str) -> dict:
         """Handle API response."""

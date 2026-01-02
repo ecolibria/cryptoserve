@@ -1,10 +1,16 @@
 """Test configuration and fixtures."""
 
 import asyncio
+import os
 import pytest
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Set up test environment variables BEFORE importing app modules
+os.environ.setdefault("CRYPTOSERVE_MASTER_KEY", "test-master-key-for-testing-only-32chars")
+os.environ.setdefault("CRYPTOSERVE_HKDF_SALT", "test-hkdf-salt-for-tests")
+os.environ.setdefault("KMS_BACKEND", "local")
 
 from app.database import Base
 from app.models import User, Context
@@ -16,6 +22,21 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def reset_kms_provider():
+    """Reset KMS provider between tests to ensure clean state."""
+    from app.core.kms.factory import reset_kms_provider
+    from app.core.key_manager import key_manager
+
+    reset_kms_provider()
+    key_manager._initialized = False
+    key_manager._kms = None
+    yield
+    reset_kms_provider()
+    key_manager._initialized = False
+    key_manager._kms = None
 
 
 @pytest.fixture(scope="function")

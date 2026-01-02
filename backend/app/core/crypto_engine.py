@@ -380,6 +380,7 @@ class CryptoEngine:
         error_message = None
         packed = b""
         warnings: list[str] = []
+        policy_violated = False
 
         try:
             # Validate context exists
@@ -411,6 +412,11 @@ class CryptoEngine:
             algorithm, mode, key_bits, description = self._resolve_algorithm(
                 context, algorithm_override, warnings
             )
+
+            # Check algorithm policy enforcement
+            # Note: This updates the outer-scoped policy_violated for audit logging
+            if self._check_algorithm_policy(context, algorithm, mode, key_bits, warnings):
+                policy_violated = True
 
             # Get key for context
             key_size_bytes = key_bits // 8
@@ -468,6 +474,37 @@ class CryptoEngine:
             latency_ms = int(
                 (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             )
+
+            # Extract algorithm details for metrics (if available)
+            audit_algorithm = None
+            audit_cipher = None
+            audit_mode = None
+            audit_key_bits = None
+            audit_key_id = None
+            audit_quantum_safe = False
+
+            if success:
+                # Get values from local variables set during encryption
+                audit_algorithm = algorithm  # e.g., "AES-256-GCM"
+                audit_mode = mode.value if hasattr(mode, 'value') else str(mode)
+                audit_key_bits = key_bits
+                audit_key_id = key_id
+
+                # Extract cipher from algorithm name (e.g., "AES" from "AES-256-GCM")
+                if "ChaCha20" in algorithm:
+                    audit_cipher = "ChaCha20"
+                elif "AES" in algorithm:
+                    audit_cipher = "AES"
+                elif "ML-KEM" in algorithm or "Kyber" in algorithm:
+                    audit_cipher = "ML-KEM"
+                else:
+                    audit_cipher = algorithm.split("-")[0] if "-" in algorithm else algorithm
+
+                # Check if quantum-safe algorithm
+                audit_quantum_safe = any(
+                    pqc in algorithm for pqc in ["ML-KEM", "Kyber", "Dilithium", "SPHINCS"]
+                )
+
             audit = AuditLog(
                 operation="encrypt",
                 context=context_name,
@@ -481,6 +518,14 @@ class CryptoEngine:
                 latency_ms=latency_ms,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                # Algorithm tracking fields (for metrics and compliance)
+                algorithm=audit_algorithm,
+                cipher=audit_cipher,
+                mode=audit_mode,
+                key_bits=audit_key_bits,
+                key_id=audit_key_id,
+                quantum_safe=audit_quantum_safe,
+                policy_violation=policy_violated,
             )
             db.add(audit)
             await db.commit()
@@ -554,6 +599,84 @@ class CryptoEngine:
         props = ALGORITHMS.get(algorithm, {})
 
         return algorithm, mode, key_bits, props.get("description")
+
+    def _check_algorithm_policy(
+        self,
+        context: Context,
+        algorithm: str,
+        mode: CipherMode,
+        key_bits: int,
+        warnings: list[str],
+    ) -> bool:
+        """Check if the resolved algorithm violates the context's policy.
+
+        Args:
+            context: The encryption context with policy settings
+            algorithm: Resolved algorithm name (e.g., "AES-256-GCM")
+            mode: Resolved cipher mode
+            key_bits: Resolved key size in bits
+            warnings: List to append warnings to
+
+        Returns:
+            True if policy was violated (for audit logging)
+
+        Raises:
+            CryptoError: If policy_enforcement is "enforce" and policy is violated
+        """
+        # No policy defined - allow everything
+        if not context.algorithm_policy:
+            return False
+
+        policy = context.algorithm_policy
+        enforcement = context.policy_enforcement or "none"
+        violations = []
+
+        # Check allowed ciphers
+        allowed_ciphers = policy.get("allowed_ciphers", [])
+        if allowed_ciphers:
+            cipher_allowed = False
+            for allowed in allowed_ciphers:
+                if allowed.upper() in algorithm.upper():
+                    cipher_allowed = True
+                    break
+            if not cipher_allowed:
+                violations.append(f"Cipher not in allowed list: {allowed_ciphers}")
+
+        # Check allowed modes
+        allowed_modes = policy.get("allowed_modes", [])
+        if allowed_modes:
+            mode_str = mode.value if hasattr(mode, 'value') else str(mode)
+            if mode_str.lower() not in [m.lower() for m in allowed_modes]:
+                violations.append(f"Mode '{mode_str}' not in allowed list: {allowed_modes}")
+
+        # Check minimum key bits
+        min_key_bits = policy.get("min_key_bits", 0)
+        if min_key_bits and key_bits < min_key_bits:
+            violations.append(f"Key size {key_bits} bits below minimum {min_key_bits}")
+
+        # Check quantum-safe requirement
+        require_quantum = policy.get("require_quantum_safe", False)
+        if require_quantum:
+            is_quantum_safe = any(
+                pqc in algorithm for pqc in ["ML-KEM", "Kyber", "Dilithium", "SPHINCS"]
+            )
+            if not is_quantum_safe:
+                violations.append("Algorithm is not quantum-safe (required by policy)")
+
+        if not violations:
+            return False
+
+        # Handle based on enforcement level
+        violation_msg = "; ".join(violations)
+
+        if enforcement == "enforce":
+            raise CryptoError(f"Algorithm policy violation: {violation_msg}")
+        elif enforcement == "warn":
+            warnings.append(f"Algorithm policy warning: {violation_msg}")
+            return True
+        else:
+            # enforcement == "none" - no action
+            return False
 
     def _get_key_size_from_algorithm(self, algorithm: str) -> int:
         """Extract key size in bytes from algorithm name.
@@ -629,13 +752,14 @@ class CryptoEngine:
         elif mode == CipherMode.CCM:
             return CipherFactory.encrypt_ccm(key, plaintext, nonce, associated_data)
         elif mode == CipherMode.XTS:
-            # XTS is for disk encryption and doesn't use AAD
-            if associated_data:
-                raise UnsupportedModeError(
-                    "XTS mode does not support AAD. Use GCM for data encryption with AAD."
-                )
-            # XTS requires special handling - fallback to GCM for now
-            return CipherFactory.encrypt_gcm(key, plaintext, nonce, None)
+            # XTS (IEEE 1619) is designed for disk/storage encryption, not API crypto.
+            # It requires sector-based data units and doesn't provide authentication.
+            # For API-based encryption, GCM is strongly recommended.
+            raise UnsupportedModeError(
+                "XTS mode is not supported for API encryption. "
+                "XTS is designed for disk/storage encryption (IEEE 1619). "
+                "Use AES-256-GCM for authenticated encryption."
+            )
         else:
             return CipherFactory.encrypt_gcm(key, plaintext, nonce, associated_data)
 
@@ -673,7 +797,11 @@ class CryptoEngine:
         elif mode == CipherMode.CCM:
             return CipherFactory.decrypt_ccm(key, ciphertext, nonce, associated_data)
         elif mode == CipherMode.XTS:
-            return CipherFactory.decrypt_gcm(key, ciphertext, nonce, None)
+            # XTS not supported - see _encrypt_with_mode for rationale
+            raise UnsupportedModeError(
+                "XTS mode is not supported for API encryption. "
+                "Use AES-256-GCM for authenticated encryption."
+            )
         else:
             return CipherFactory.decrypt_gcm(key, ciphertext, nonce, associated_data)
 
@@ -775,6 +903,48 @@ class CryptoEngine:
             latency_ms = int(
                 (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             )
+
+            # Extract algorithm details for metrics (if available from header)
+            audit_algorithm = None
+            audit_cipher = None
+            audit_mode = None
+            audit_key_bits = None
+            audit_key_id = None
+            audit_quantum_safe = False
+
+            # Try to extract from header (set during unpack if we got that far)
+            try:
+                if 'header' in dir() and header:
+                    audit_algorithm = header.get("alg")
+                    audit_mode = header.get("mode")
+                    audit_key_id = header.get("kid")
+
+                    if audit_algorithm:
+                        # Extract cipher from algorithm name
+                        if "ChaCha20" in audit_algorithm:
+                            audit_cipher = "ChaCha20"
+                        elif "AES" in audit_algorithm:
+                            audit_cipher = "AES"
+                        elif "ML-KEM" in audit_algorithm or "Kyber" in audit_algorithm:
+                            audit_cipher = "ML-KEM"
+                        else:
+                            audit_cipher = audit_algorithm.split("-")[0] if "-" in audit_algorithm else audit_algorithm
+
+                        # Extract key bits from algorithm name
+                        if "128" in audit_algorithm:
+                            audit_key_bits = 128
+                        elif "192" in audit_algorithm:
+                            audit_key_bits = 192
+                        elif "256" in audit_algorithm:
+                            audit_key_bits = 256
+
+                        # Check if quantum-safe algorithm
+                        audit_quantum_safe = any(
+                            pqc in audit_algorithm for pqc in ["ML-KEM", "Kyber", "Dilithium", "SPHINCS"]
+                        )
+            except Exception:
+                pass  # If we can't extract header info, use None values
+
             audit = AuditLog(
                 operation="decrypt",
                 context=context_name,
@@ -788,6 +958,14 @@ class CryptoEngine:
                 latency_ms=latency_ms,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                # Algorithm tracking fields (for metrics and compliance)
+                algorithm=audit_algorithm,
+                cipher=audit_cipher,
+                mode=audit_mode,
+                key_bits=audit_key_bits,
+                key_id=audit_key_id,
+                quantum_safe=audit_quantum_safe,
+                policy_violation=False,
             )
             db.add(audit)
             await db.commit()

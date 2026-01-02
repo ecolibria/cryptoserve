@@ -1,24 +1,39 @@
 """Key derivation and management.
 
+Integrates with KMS abstraction layer for production HSM support.
 Supports variable key sizes for different algorithm families:
 - AES-128: 16 bytes
 - AES-192: 24 bytes
 - AES-256: 32 bytes (default)
 - XTS: 64 bytes (two 256-bit keys)
+
+In production:
+- Master key stored in HSM (AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault)
+- Envelope encryption: DEKs encrypted by KEK in HSM
+- Key rotation creates new key version without re-encrypting existing data
+
+In development:
+- Master key from environment variable (CRYPTOSERVE_MASTER_KEY)
+- Keys derived using HKDF from master key
 """
 
 import secrets
-import hashlib
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models import Key, KeyStatus
+from .kms import get_kms_provider
+from .kms.base import KMSError
 
+if TYPE_CHECKING:
+    from .kms.base import KMSProvider
+
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Standard key sizes in bytes
@@ -29,21 +44,51 @@ KEY_SIZE_XTS = 64  # XTS uses two 256-bit keys
 
 
 class KeyManager:
-    """Manages encryption key derivation and rotation."""
+    """Manages encryption key derivation and rotation.
+
+    Uses the KMS abstraction layer for all key operations:
+    - In production: HSM-backed keys via AWS KMS, GCP KMS, etc.
+    - In development: Local key derivation via HKDF
+
+    Key hierarchy:
+    - Master Key (KEK): Stored in HSM, never leaves the HSM
+    - Data Encryption Keys (DEKs): Generated per context, encrypted by KEK
+
+    This implementation uses deterministic key derivation by default
+    for backward compatibility. Production deployments can enable
+    envelope encryption for stronger security.
+    """
 
     def __init__(self):
-        self.master_key = settings.cryptoserve_master_key.encode()
+        self._kms: "KMSProvider | None" = None
+        self._initialized = False
 
-    def derive_key(
+    async def _ensure_initialized(self) -> "KMSProvider":
+        """Lazy initialization of KMS provider."""
+        if not self._initialized:
+            try:
+                self._kms = get_kms_provider()
+                await self._kms.initialize()
+                self._initialized = True
+                logger.info(
+                    f"KeyManager initialized with KMS backend: "
+                    f"{self._kms.config.backend.value}"
+                )
+            except KMSError as e:
+                logger.error(f"Failed to initialize KMS: {e}")
+                raise
+        return self._kms
+
+    async def derive_key(
         self,
         context: str,
         version: int = 1,
         key_size: int = KEY_SIZE_256,
     ) -> bytes:
-        """Derive a key for a context using HKDF.
+        """Derive a key for a context using the KMS provider.
 
-        Uses a configurable salt from settings to prevent precomputation attacks.
-        The salt should be unique per deployment.
+        Uses deterministic key derivation for consistent keys across
+        restarts. The actual derivation method depends on the KMS backend.
 
         Args:
             context: Context name for key derivation
@@ -53,11 +98,24 @@ class KeyManager:
         Returns:
             Derived key material of specified size
         """
-        # Include key size in info for proper key separation
-        # This ensures different key sizes produce different keys
-        info = f"{context}:{version}:{key_size}".encode()
+        kms = await self._ensure_initialized()
+        return await kms.derive_key(context, version, key_size)
 
-        # Use configurable salt from settings (unique per deployment)
+    def derive_key_sync(
+        self,
+        context: str,
+        version: int = 1,
+        key_size: int = KEY_SIZE_256,
+    ) -> bytes:
+        """Synchronous key derivation for backward compatibility.
+
+        WARNING: This bypasses the KMS layer and uses direct HKDF.
+        Use derive_key() async method for production code.
+        """
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+
+        info = f"{context}:{version}:{key_size}".encode()
         salt = settings.hkdf_salt.encode()
 
         hkdf = HKDF(
@@ -67,7 +125,50 @@ class KeyManager:
             info=info,
         )
 
-        return hkdf.derive(self.master_key)
+        return hkdf.derive(settings.cryptoserve_master_key.encode())
+
+    async def generate_data_key(
+        self,
+        context: str,
+        key_size: int = KEY_SIZE_256,
+    ) -> tuple[bytes, bytes]:
+        """Generate a new data encryption key (DEK) with envelope encryption.
+
+        In production (AWS KMS, etc.):
+        - DEK generated and encrypted by HSM
+        - Plaintext DEK returned for immediate use
+        - Encrypted DEK stored with ciphertext
+
+        In development (local):
+        - DEK generated locally
+        - Encrypted with derived KEK
+
+        Args:
+            context: Encryption context for key binding
+            key_size: Key size in bytes
+
+        Returns:
+            Tuple of (plaintext_dek, encrypted_dek)
+        """
+        kms = await self._ensure_initialized()
+        return await kms.generate_data_key(context, key_size)
+
+    async def decrypt_data_key(
+        self,
+        encrypted_dek: bytes,
+        context: str,
+    ) -> bytes:
+        """Decrypt a data encryption key.
+
+        Args:
+            encrypted_dek: Encrypted DEK from ciphertext header
+            context: Encryption context (must match original)
+
+        Returns:
+            Plaintext DEK for decryption
+        """
+        kms = await self._ensure_initialized()
+        return await kms.decrypt_data_key(encrypted_dek, context)
 
     async def get_or_create_key(
         self,
@@ -108,7 +209,7 @@ class KeyManager:
             await db.refresh(key_record)
 
         # Derive actual key material with specified size
-        key = self.derive_key(context, key_record.version, key_size)
+        key = await self.derive_key(context, key_record.version, key_size)
 
         return key, key_record.id
 
@@ -134,7 +235,7 @@ class KeyManager:
         if not key_record:
             return None
 
-        return self.derive_key(key_record.context, key_record.version, key_size)
+        return await self.derive_key(key_record.context, key_record.version, key_size)
 
     async def rotate_key(
         self,
@@ -176,8 +277,49 @@ class KeyManager:
         db.add(new_key)
         await db.commit()
 
-        key = self.derive_key(context, new_version, key_size)
+        key = await self.derive_key(context, new_version, key_size)
+
+        logger.info(
+            f"Key rotated for context '{context}': "
+            f"v{new_version - 1 if new_version > 1 else 0} -> v{new_version}"
+        )
+
         return key, key_id
+
+    async def rotate_master_key(self) -> str:
+        """Rotate the master key in the KMS.
+
+        In production (AWS KMS):
+        - Enables automatic key rotation on the CMK
+        - Old versions remain available for decryption
+        - New operations use the new key version
+
+        In development (local):
+        - Increments the local key version
+
+        Returns:
+            New master key version ID
+        """
+        kms = await self._ensure_initialized()
+        new_version = await kms.rotate_master_key()
+        logger.info(f"Master key rotated: {new_version}")
+        return new_version
+
+    async def get_kms_health(self) -> dict:
+        """Get KMS provider health status.
+
+        Returns:
+            Health status dict with backend info, latency, etc.
+        """
+        kms = await self._ensure_initialized()
+        return await kms.verify_health()
+
+    async def close(self) -> None:
+        """Close KMS connections."""
+        if self._kms:
+            await self._kms.close()
+            self._kms = None
+            self._initialized = False
 
 
 # Singleton instance
