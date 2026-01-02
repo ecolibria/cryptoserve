@@ -1747,4 +1747,210 @@ export const api = {
   // Algorithm Metrics
   getAlgorithmMetrics: (days: number = 30) =>
     fetchApi(`/api/admin/metrics/algorithms?days=${days}`) as Promise<AlgorithmMetrics>,
+
+  // =============================================================================
+  // Unified Key Bundle Management API (Community Dashboard)
+  // =============================================================================
+
+  // Key Bundle for a context
+  getKeyBundle: (contextId: string) =>
+    fetchApi(`/api/v1/contexts/${contextId}/keys`) as Promise<KeyBundle>,
+
+  getKeyHistory: (contextId: string) =>
+    fetchApi(`/api/v1/contexts/${contextId}/keys/history`) as Promise<KeyHistoryEntry[]>,
+
+  rotateKey: (contextId: string, data: RotateKeyRequest) =>
+    fetchApi(`/api/v1/contexts/${contextId}/keys/rotate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<KeyBundle>,
+
+  updateKeySchedule: (contextId: string, keyType: KeyType, data: { rotationScheduleDays: number }) =>
+    fetchApi(`/api/v1/contexts/${contextId}/keys/${keyType}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }) as Promise<KeyInfo>,
+
+  // Algorithm Policies by Classification (Admin)
+  getAlgorithmPolicies: () =>
+    fetchApi("/api/v1/admin/algorithm-policies").then((r: { policies: ClassificationAlgorithmPolicy[] }) => r.policies) as Promise<ClassificationAlgorithmPolicy[]>,
+
+  getAlgorithmPolicyByClassification: (classification: DataClassification) =>
+    fetchApi(`/api/v1/admin/algorithm-policies/${classification}`) as Promise<ClassificationAlgorithmPolicy>,
+
+  updateAlgorithmPolicyByClassification: (classification: DataClassification, data: Partial<ClassificationAlgorithmPolicy>) =>
+    fetchApi(`/api/v1/admin/algorithm-policies/${classification}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }) as Promise<ClassificationAlgorithmPolicy>,
+
+  // Usage Statistics
+  getUsageStats: (params?: { startDate?: string; endDate?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.startDate) query.set("start_date", params.startDate);
+    if (params?.endDate) query.set("end_date", params.endDate);
+    return fetchApi(`/api/v1/usage/stats?${query}`) as Promise<UsageStatsResponse>;
+  },
+
+  getErrorSummary: (params?: { startDate?: string; endDate?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.startDate) query.set("start_date", params.startDate);
+    if (params?.endDate) query.set("end_date", params.endDate);
+    return fetchApi(`/api/v1/usage/errors?${query}`) as Promise<ErrorSummary[]>;
+  },
+
+  // Enhanced Audit Log for Community Dashboard
+  getAuditLogPaginated: (params?: AuditLogQuery) => {
+    const query = new URLSearchParams();
+    if (params?.startDate) query.set("start_date", params.startDate);
+    if (params?.endDate) query.set("end_date", params.endDate);
+    if (params?.contextId) query.set("context_id", params.contextId);
+    if (params?.action) query.set("action", params.action);
+    if (params?.userId) query.set("user_id", params.userId);
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    return fetchApi(`/api/v1/audit-log?${query}`) as Promise<AuditLogPaginatedResponse>;
+  },
 };
+
+// =============================================================================
+// Unified Key Bundle Types (Community Dashboard)
+// =============================================================================
+
+export type DataClassification = "PUBLIC" | "INTERNAL" | "SENSITIVE" | "CRITICAL";
+export type KeyType = "ENCRYPTION" | "MAC" | "SIGNING";
+export type KeyStatus = "ACTIVE" | "RETIRING" | "RETIRED";
+
+export interface KeyInfo {
+  id: string;
+  algorithm: string;
+  version: number;
+  status: KeyStatus;
+  createdAt: string;
+  expiresAt: string;
+  rotationScheduleDays: number;
+  lastRotatedAt: string;
+}
+
+export interface KeyBundle {
+  id: string;
+  contextId: string;
+  version: number;
+  status: KeyStatus;
+  createdAt: string;
+  encryptionKey: KeyInfo;
+  macKey: KeyInfo;
+  signingKey: KeyInfo;
+}
+
+export interface KeyHistoryEntry {
+  id: string;
+  contextId: string;
+  keyType: KeyType;
+  version: number;
+  algorithm: string;
+  createdAt: string;
+  retiredAt: string | null;
+  status: KeyStatus;
+  rotatedBy: string;
+  rotationReason: string;
+}
+
+export interface RotateKeyRequest {
+  keyType: KeyType;
+  reason: string;
+  reencryptExistingData: boolean;
+}
+
+// Algorithm Policy by Classification
+export interface ClassificationAlgorithmPolicy {
+  classification: DataClassification;
+  defaultEncryptionAlgorithm: string;
+  defaultMacAlgorithm: string;
+  defaultSigningAlgorithm: string | null;
+  minKeyBits: number;
+  keyRotationDays: number;
+  requireQuantumSafe: boolean;
+  allowedCiphers: string[];
+  allowedModes: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+// Usage Statistics Types
+export interface ContextUsageStats {
+  contextId: string;
+  contextName: string;
+  encryptCalls: number;
+  decryptCalls: number;
+  signCalls: number;
+  verifyCalls: number;
+}
+
+export interface DailyUsageStats {
+  date: string;
+  totalCalls: number;
+}
+
+export interface ErrorSummary {
+  contextName: string;
+  errorType: string;
+  count: number;
+  lastOccurred: string;
+}
+
+export interface UsageStatsResponse {
+  orgId: string;
+  period: {
+    start: string;
+    end: string;
+  };
+  totalCalls: number;
+  byContext: ContextUsageStats[];
+  errors: ErrorSummary[];
+  dailyBreakdown: DailyUsageStats[];
+}
+
+// Enhanced Audit Log Types
+export type AuditAction =
+  | "CONTEXT_CREATED"
+  | "CONTEXT_UPDATED"
+  | "CONTEXT_DELETED"
+  | "KEY_ROTATED"
+  | "KEY_SCHEDULE_UPDATED"
+  | "POLICY_UPDATED"
+  | "ENCRYPT_CALL"
+  | "DECRYPT_CALL"
+  | "SIGN_CALL"
+  | "VERIFY_CALL";
+
+export interface AuditLogEntry {
+  id: string;
+  orgId: string;
+  timestamp: string;
+  userId: string;
+  userEmail: string;
+  action: AuditAction;
+  contextId?: string;
+  contextName?: string;
+  details: Record<string, unknown>;
+  ipAddress: string;
+  userAgent: string;
+}
+
+export interface AuditLogQuery {
+  startDate?: string;
+  endDate?: string;
+  contextId?: string;
+  action?: AuditAction;
+  userId?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AuditLogPaginatedResponse {
+  entries: AuditLogEntry[];
+  total: number;
+  page: number;
+  totalPages: number;
+}

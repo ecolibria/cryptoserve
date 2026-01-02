@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
-import { Shield, Key, FileText, LogOut, Menu, X, Settings, Compass, Code, Package, Award, Search, AppWindow } from "lucide-react";
+import { Shield, Key, FileText, LogOut, Menu, X, Settings, Compass, Code, Package, Award, Search, AppWindow, Lock, BarChart3 } from "lucide-react";
 import { api, User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 const baseNavigation = [
   { name: "Dashboard", href: "/dashboard", icon: Shield },
   { name: "My Applications", href: "/applications", icon: AppWindow },
+  { name: "My Contexts", href: "/dashboard/contexts", icon: Lock },
+  { name: "Usage Stats", href: "/dashboard/usage", icon: BarChart3 },
   { name: "Audit Log", href: "/audit", icon: FileText },
 ];
 

@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   ClipboardCheck,
   Play,
+  Cpu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -46,6 +47,7 @@ const adminNavItems = [
   { href: "/admin/cbom", label: "CBOM Reports", icon: FileText },
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/admin/playground", label: "Playground", icon: Play },
+  { href: "/admin/settings/algorithm-policy", label: "Algorithm Policy", icon: Cpu },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 

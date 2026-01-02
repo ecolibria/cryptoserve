@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   Shield,
   ShieldAlert,
@@ -26,6 +27,7 @@ import {
   ArrowRightLeft,
   Cpu,
   Radio,
+  KeyRound,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -190,6 +192,7 @@ const keySizeOptions = [128, 192, 256];
 const CHART_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899"];
 
 export default function AdminContextsPage() {
+  const router = useRouter();
   const [contexts, setContexts] = useState<AdminContextStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [rotating, setRotating] = useState<string | null>(null);
@@ -1154,14 +1157,26 @@ export default function AdminContextsPage() {
                           <div className="text-xs text-slate-500 font-mono">{context.name}</div>
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEditModal(context.name)}
-                        className="h-8 w-8 p-0"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => router.push(`/admin/contexts/${context.name}/keys`)}
+                          className="h-8 w-8 p-0"
+                          title="Manage Keys"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditModal(context.name)}
+                          className="h-8 w-8 p-0"
+                          title="Edit Context"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
 
                     {/* Compliance Tags */}

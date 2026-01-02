@@ -236,7 +236,88 @@ class CryptoServe:
         """
         return self.client.decrypt(ciphertext, context)
 
-    def verify(self) -> bool:
+    def sign(self, data: bytes, key_id: str) -> bytes:
+        """
+        Sign data using a signing key.
+
+        Args:
+            data: Data to sign
+            key_id: ID of the signing key
+
+        Returns:
+            Signature bytes
+
+        Example:
+            ```python
+            signature = crypto.sign(b"document", key_id="my-key-id")
+            ```
+        """
+        return self.client.sign(data, key_id)
+
+    def verify_signature(
+        self,
+        data: bytes,
+        signature: bytes,
+        key_id: str | None = None,
+        public_key: str | None = None
+    ) -> bool:
+        """
+        Verify a signature.
+
+        Args:
+            data: Original data that was signed
+            signature: Signature to verify
+            key_id: ID of the signing key (if using server-managed keys)
+            public_key: Public key PEM (if verifying external signature)
+
+        Returns:
+            True if signature is valid, False otherwise
+
+        Example:
+            ```python
+            is_valid = crypto.verify_signature(b"document", signature, key_id="my-key-id")
+            ```
+        """
+        return self.client.verify(data, signature, key_id, public_key)
+
+    def hash(self, data: bytes, algorithm: str = "sha256") -> str:
+        """
+        Compute a cryptographic hash.
+
+        Args:
+            data: Data to hash
+            algorithm: Hash algorithm (sha256, sha384, sha512, sha3-256, blake2b)
+
+        Returns:
+            Hash as hex string
+
+        Example:
+            ```python
+            hash_hex = crypto.hash(b"hello world")
+            ```
+        """
+        return self.client.hash(data, algorithm)
+
+    def mac(self, data: bytes, key: bytes, algorithm: str = "hmac-sha256") -> str:
+        """
+        Compute a Message Authentication Code.
+
+        Args:
+            data: Data to authenticate
+            key: Secret key
+            algorithm: MAC algorithm (hmac-sha256, hmac-sha512)
+
+        Returns:
+            MAC as hex string
+
+        Example:
+            ```python
+            mac_hex = crypto.mac(b"message", key)
+            ```
+        """
+        return self.client.mac(data, key, algorithm)
+
+    def health_check(self) -> bool:
         """
         Verify the SDK connection is working.
 
@@ -244,7 +325,6 @@ class CryptoServe:
             True if connection is successful
         """
         try:
-            # Try a simple operation to verify connectivity
             response = requests.get(
                 f"{self.server_url}/api/v1/health",
                 headers={"Authorization": f"Bearer {self.client._access_token}"},

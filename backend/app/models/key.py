@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as SQLEnum, LargeBinary
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.database import Base, GUID
 
 
 class KeyStatus(str, Enum):
@@ -33,7 +32,7 @@ class Key(Base):
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True
@@ -77,7 +76,7 @@ class PQCKey(Base):
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True

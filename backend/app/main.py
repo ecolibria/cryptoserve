@@ -58,6 +58,9 @@ from app.api.public import router as public_router
 from app.api.ceremony import router as ceremony_router
 from app.api.compliance import router as compliance_router
 from app.api.rbac import router as rbac_router
+from app.api.keys import router as keys_router
+from app.api.usage import router as usage_router
+from app.api.algorithm_policies import router as algorithm_policies_router
 from app.models import Context
 from app.schemas.context import (
     ContextConfig,
@@ -666,6 +669,9 @@ app.include_router(public_router)
 app.include_router(ceremony_router)
 app.include_router(compliance_router)
 app.include_router(rbac_router)
+app.include_router(keys_router)
+app.include_router(usage_router)
+app.include_router(algorithm_policies_router)
 
 
 @app.get("/")

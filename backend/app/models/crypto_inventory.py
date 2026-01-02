@@ -6,10 +6,9 @@ from enum import Enum
 
 from sqlalchemy import String, DateTime, ForeignKey, Integer, Boolean, Text, JSON
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, GUID
 
 
 def generate_scan_ref() -> str:
@@ -56,7 +55,7 @@ class CryptoInventoryReport(Base):
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True
@@ -206,7 +205,7 @@ class CryptoLibraryUsage(Base):
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True

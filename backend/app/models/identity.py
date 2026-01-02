@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base, StringList
+from app.database import Base, StringList, GUID
 
 
 class IdentityType(str, Enum):
@@ -32,14 +31,14 @@ class Identity(Base):
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True
     )
 
     user_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("users.id"),
         nullable=False
     )

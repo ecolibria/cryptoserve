@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import String, DateTime, Boolean, Integer, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.database import Base, GUID
 
 
 class AuditLog(Base):
@@ -16,14 +15,14 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         primary_key=True,
         default=lambda: str(uuid4())
     )
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True

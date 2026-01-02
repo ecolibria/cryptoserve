@@ -5,10 +5,9 @@ from uuid import uuid4
 from typing import TYPE_CHECKING
 
 from sqlalchemy import String, DateTime, BigInteger, Boolean, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, GUID
 
 if TYPE_CHECKING:
     from app.core.rbac import Role, Permission
@@ -20,14 +19,14 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         primary_key=True,
         default=lambda: str(uuid4())
     )
 
     # Tenant isolation
     tenant_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+        GUID(),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True
