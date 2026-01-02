@@ -312,6 +312,11 @@ class TestContextTenantIsolation:
         db_session.add(context_1)
         await db_session.commit()
 
+        # Expunge context_1 from the session to avoid identity map conflict
+        # when we try to add context_2 with the same primary key
+        await db_session.refresh(context_1)  # Ensure it's fully loaded
+        db_session.expunge(context_1)
+
         # Try to create duplicate in same tenant
         context_2 = Context(
             tenant_id=tenant_a.id,
@@ -322,7 +327,7 @@ class TestContextTenantIsolation:
         )
         db_session.add(context_2)
 
-        # Should fail due to unique constraint
+        # Should fail due to unique constraint (name is primary key)
         with pytest.raises(Exception):  # IntegrityError
             await db_session.commit()
 
