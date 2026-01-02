@@ -260,79 +260,13 @@ class LocalKeyProvider(KeyProvider):
         return self._key_cache.get(key_id)
 
 
-class HSMKeyProvider(KeyProvider):
-    """Base class for HSM-backed key providers.
-
-    This is a premium feature. The actual implementations for
-    AWS CloudHSM, Azure HSM, etc. would extend this class.
-    """
-
-    def __init__(self, hsm_config: dict):
-        """Initialize HSM provider with configuration.
-
-        Args:
-            hsm_config: HSM-specific configuration
-        """
-        self._config = hsm_config
-        self._connected = False
-
-    @property
-    def provider_type(self) -> KeyProviderType:
-        return KeyProviderType.CUSTOM
-
-    async def connect(self) -> None:
-        """Connect to the HSM.
-
-        Should be overridden by specific implementations.
-        """
-        raise NotImplementedError(
-            "HSM integration is a premium feature. "
-            "Contact sales@cryptoserve.io for enterprise licensing."
-        )
-
-    async def derive_key(
-        self,
-        context: str,
-        version: int,
-        key_size: int = 32,
-    ) -> bytes:
-        """Derive key using HSM."""
-        raise NotImplementedError("HSM key derivation requires premium license.")
-
-    async def generate_key(
-        self,
-        key_size: int = 32,
-        algorithm: str = "AES",
-    ) -> tuple[bytes, str]:
-        """Generate key in HSM."""
-        raise NotImplementedError("HSM key generation requires premium license.")
-
-    async def get_key_metadata(self, key_id: str) -> Optional[KeyMetadata]:
-        """Get HSM key metadata."""
-        raise NotImplementedError("HSM metadata access requires premium license.")
-
-    async def wrap_key(
-        self,
-        key: bytes,
-        wrapping_key_id: str,
-    ) -> WrappedKey:
-        """Wrap key using HSM."""
-        raise NotImplementedError("HSM key wrapping requires premium license.")
-
-    async def unwrap_key(
-        self,
-        wrapped_key: WrappedKey,
-    ) -> bytes:
-        """Unwrap key using HSM."""
-        raise NotImplementedError("HSM key unwrapping requires premium license.")
-
-
 # Factory function to get the appropriate provider
+# Note: For cloud KMS (AWS, GCP, Azure), use the kms/ module instead:
+#   from app.core.kms import create_kms_provider, KMSProviderType
 def create_key_provider(
     provider_type: KeyProviderType = KeyProviderType.LOCAL,
     master_key: Optional[bytes] = None,
     salt: Optional[bytes] = None,
-    hsm_config: Optional[dict] = None,
 ) -> KeyProvider:
     """Create a key provider instance.
 
@@ -340,10 +274,14 @@ def create_key_provider(
         provider_type: Type of provider to create
         master_key: Master key for local provider
         salt: Salt for local provider
-        hsm_config: Configuration for HSM providers
 
     Returns:
         Configured KeyProvider instance
+
+    Note:
+        For cloud KMS providers (AWS, GCP, Azure), use the kms/ module instead:
+        >>> from app.core.kms import create_kms_provider, KMSProviderType
+        >>> provider = create_kms_provider(KMSProviderType.AWS)
     """
     if provider_type == KeyProviderType.LOCAL:
         if not master_key or not salt:
@@ -356,9 +294,10 @@ def create_key_provider(
         KeyProviderType.GOOGLE_HSM,
         KeyProviderType.VAULT,
     ]:
-        if not hsm_config:
-            raise ValueError("hsm_config required for HSM providers")
-        return HSMKeyProvider(hsm_config)
+        raise ValueError(
+            f"For {provider_type.value}, use the kms/ module instead: "
+            "from app.core.kms import create_kms_provider"
+        )
 
     else:
         raise ValueError(f"Unknown provider type: {provider_type}")
