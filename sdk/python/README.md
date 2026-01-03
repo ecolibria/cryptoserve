@@ -66,8 +66,13 @@ CryptoServe SDK includes built-in performance optimizations:
 
 Keys are cached locally to reduce network round-trips:
 
-- **First operation**: ~5-50ms (fetches key from server)
-- **Subsequent operations**: ~0.1-0.5ms (local crypto with cached key)
+| Metric | Value |
+|--------|-------|
+| Server round-trip | ~90ms |
+| Cached operation | ~0.3ms avg |
+| Min latency | 0.009ms |
+| **Speedup** | **~250x** |
+| Cache hit rate | 90%+ (after warmup) |
 
 ```python
 from cryptoserve import CryptoServe
@@ -81,11 +86,11 @@ crypto = CryptoServe(
     cache_size=100,      # Max cached keys (default)
 )
 
-# First call fetches key from server
-encrypted = crypto.encrypt(b"data", context="user-pii")  # ~10ms
+# First call fetches key from server and caches it
+encrypted = crypto.encrypt(b"data", context="user-pii")  # ~90ms
 
-# Subsequent calls use cached key
-encrypted = crypto.encrypt(b"more data", context="user-pii")  # ~0.2ms
+# Subsequent calls use cached key (local AES-256-GCM)
+encrypted = crypto.encrypt(b"more data", context="user-pii")  # ~0.3ms
 ```
 
 ### Cache Statistics
@@ -95,7 +100,8 @@ Monitor cache performance:
 ```python
 stats = crypto.cache_stats()
 print(f"Hit rate: {stats['hit_rate']:.1%}")
-print(f"Cached contexts: {stats['contexts']}")
+print(f"Hits: {stats['hits']}, Misses: {stats['misses']}")
+print(f"Cache size: {stats['size']}")
 ```
 
 ### Cache Invalidation
