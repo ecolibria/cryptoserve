@@ -2,10 +2,27 @@
 
 Provides endpoints for compliance status, framework adherence,
 and regulatory reporting for enterprise audits.
+
+Community Edition Features:
+- Overall compliance status dashboard
+- Single framework status view
+- Basic data inventory (counts only)
+- Simple risk score (aggregate only)
+- JSON/CSV export
+
+Premium Features (Enterprise License):
+- Multi-framework compliance reports with detailed requirements
+- Auditor-ready evidence packages with tamper-evident signing
+- Per-context risk scoring with detailed breakdown
+- Crypto-shredding for data retention compliance
+- Real-time compliance alerting
+- Historical trend analysis
+- PDF report generation with executive summaries
 """
 
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
+from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -108,6 +125,130 @@ class ComplianceExport(BaseModel):
 
 
 # =============================================================================
+# Data Inventory Models (Community - Limited)
+# =============================================================================
+
+class DataClassification(str, Enum):
+    """Data classification levels."""
+    PII = "pii"
+    PHI = "phi"
+    PCI = "pci"
+    CONFIDENTIAL = "confidential"
+    INTERNAL = "internal"
+    PUBLIC = "public"
+
+
+class DataInventoryItem(BaseModel):
+    """Summary of a data type in the inventory (Community Edition)."""
+    context_name: str
+    data_classification: list[str] = Field(default_factory=list)
+    frameworks: list[str] = Field(default_factory=list)
+    algorithm: str
+    quantum_safe: bool = False
+    operations_30d: int = 0
+
+
+class DataInventorySummary(BaseModel):
+    """Data inventory summary (Community Edition - limited details)."""
+    total_contexts: int
+    total_data_types: int
+    pii_count: int
+    phi_count: int
+    pci_count: int
+    quantum_safe_count: int
+    items: list[DataInventoryItem]
+    generated_at: datetime
+
+    # Premium upsell
+    premium_features_available: list[str] = Field(
+        default_factory=lambda: [
+            "Full data lineage tracking",
+            "Detailed field-level inventory",
+            "Data residency mapping",
+            "Retention policy management",
+            "Crypto-shredding automation",
+        ]
+    )
+
+
+# =============================================================================
+# Risk Score Models (Community - Aggregate Only)
+# =============================================================================
+
+class RiskLevel(str, Enum):
+    """Risk severity levels."""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class RiskScoreSummary(BaseModel):
+    """Simplified risk score (Community Edition - aggregate only)."""
+    overall_score: int = Field(ge=0, le=100, description="Overall risk 0-100 (lower is better)")
+    risk_level: RiskLevel
+    high_risk_contexts: int = Field(description="Number of contexts with high risk")
+    key_findings: list[str] = Field(default_factory=list, description="Top 3 risk findings")
+    assessed_at: datetime
+
+    # Premium upsell
+    premium_features_available: list[str] = Field(
+        default_factory=lambda: [
+            "Per-context risk breakdown",
+            "Risk component analysis (algorithm, key age, access patterns)",
+            "Historical risk trending",
+            "Risk remediation recommendations",
+            "Compliance impact scoring",
+        ]
+    )
+
+
+# =============================================================================
+# Premium Feature Indicators
+# =============================================================================
+
+class PremiumFeature(BaseModel):
+    """A premium feature not available in Community Edition."""
+    name: str
+    description: str
+    category: str
+
+
+PREMIUM_FEATURES = [
+    PremiumFeature(
+        name="Evidence Packages",
+        description="Generate auditor-ready evidence packages with tamper-evident signatures",
+        category="audit",
+    ),
+    PremiumFeature(
+        name="Crypto-Shredding",
+        description="Securely destroy encryption keys to make data permanently unrecoverable",
+        category="retention",
+    ),
+    PremiumFeature(
+        name="Detailed Risk Scoring",
+        description="Per-context risk analysis with component breakdown and recommendations",
+        category="risk",
+    ),
+    PremiumFeature(
+        name="Compliance Alerting",
+        description="Real-time alerts for compliance violations and policy breaches",
+        category="monitoring",
+    ),
+    PremiumFeature(
+        name="PDF Reports",
+        description="Executive-ready compliance reports with visualizations",
+        category="reporting",
+    ),
+    PremiumFeature(
+        name="Historical Trends",
+        description="Track compliance posture over time with trending analysis",
+        category="analytics",
+    ),
+]
+
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -119,7 +260,7 @@ async def get_framework_status(
     """Get compliance status for a specific framework."""
 
     # Count contexts using this framework
-    query = select(func.count(Context.id)).where(
+    query = select(func.count(Context.name)).where(
         Context.compliance_tags.contains([framework])
     )
     if tenant_id:
@@ -179,7 +320,7 @@ async def get_algorithm_compliance(db: AsyncSession) -> AlgorithmCompliance:
 
     # Count quantum-safe contexts
     result = await db.execute(
-        select(func.count(Context.id)).where(
+        select(func.count(Context.name)).where(
             Context.algorithm.ilike("%ML-KEM%") |
             Context.algorithm.ilike("%Kyber%") |
             Context.algorithm.ilike("%Dilithium%")
@@ -208,13 +349,20 @@ async def get_algorithm_compliance(db: AsyncSession) -> AlgorithmCompliance:
                 deprecated.append(alg)
                 break
 
+    # Flatten the approved algorithms dict into a list
+    approved_algs_dict = get_fips_approved_algorithms()
+    approved_algs_list = []
+    for category_algs in approved_algs_dict.values():
+        if isinstance(category_algs, list):
+            approved_algs_list.extend(category_algs)
+
     return AlgorithmCompliance(
         fips_mode=fips_status.mode.value,
         fips_compliant=fips_status.compliant,
         quantum_safe_available=True,  # liboqs is installed
         quantum_safe_contexts=quantum_safe_count,
         deprecated_algorithms_in_use=deprecated,
-        approved_algorithms=get_fips_approved_algorithms(),
+        approved_algorithms=approved_algs_list,
     )
 
 
@@ -314,7 +462,7 @@ async def get_tenant_compliance(
 
     # Count contexts
     result = await db.execute(
-        select(func.count(Context.id)).where(Context.tenant_id == tenant.id)
+        select(func.count(Context.name)).where(Context.tenant_id == tenant.id)
     )
     context_count = result.scalar() or 0
 
@@ -656,3 +804,378 @@ async def get_audit_summary(
         "algorithm_usage": algorithm_usage,
         "top_contexts": top_contexts,
     }
+
+
+# =============================================================================
+# Data Inventory Endpoints (Community - Limited)
+# =============================================================================
+
+@router.get("/data-inventory", response_model=DataInventorySummary)
+async def get_data_inventory(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Get data inventory summary (Community Edition).
+
+    Returns a summary of data types protected by CryptoServe,
+    including classifications, frameworks, and algorithms.
+
+    Note: Detailed field-level inventory, data lineage, and
+    crypto-shredding features require Enterprise license.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required for data inventory",
+        )
+
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+
+    # Get all contexts with their configurations
+    result = await db.execute(select(Context))
+    contexts = result.scalars().all()
+
+    items = []
+    pii_count = 0
+    phi_count = 0
+    pci_count = 0
+    quantum_safe_count = 0
+
+    for ctx in contexts:
+        # Determine data classifications
+        classifications = []
+        if getattr(ctx, 'pii', False) or (ctx.data_examples and any('pii' in str(e).lower() for e in ctx.data_examples)):
+            classifications.append("pii")
+            pii_count += 1
+        if getattr(ctx, 'phi', False) or (ctx.compliance_tags and 'HIPAA' in ctx.compliance_tags):
+            classifications.append("phi")
+            phi_count += 1
+        if getattr(ctx, 'pci', False) or (ctx.compliance_tags and 'PCI-DSS' in ctx.compliance_tags):
+            classifications.append("pci")
+            pci_count += 1
+
+        # Check quantum safety
+        quantum_safe = False
+        if ctx.algorithm:
+            quantum_patterns = ['ML-KEM', 'Kyber', 'Dilithium', 'SPHINCS', 'hybrid']
+            quantum_safe = any(p.lower() in ctx.algorithm.lower() for p in quantum_patterns)
+            if quantum_safe:
+                quantum_safe_count += 1
+
+        # Get operation count for this context
+        op_result = await db.execute(
+            select(func.count(AuditLog.id)).where(
+                and_(
+                    AuditLog.context == ctx.name,
+                    AuditLog.timestamp >= thirty_days_ago,
+                )
+            )
+        )
+        ops_count = op_result.scalar() or 0
+
+        items.append(DataInventoryItem(
+            context_name=ctx.name,
+            data_classification=classifications,
+            frameworks=ctx.compliance_tags or [],
+            algorithm=ctx.algorithm or "AES-256-GCM",
+            quantum_safe=quantum_safe,
+            operations_30d=ops_count,
+        ))
+
+    return DataInventorySummary(
+        total_contexts=len(contexts),
+        total_data_types=len(items),
+        pii_count=pii_count,
+        phi_count=phi_count,
+        pci_count=pci_count,
+        quantum_safe_count=quantum_safe_count,
+        items=items,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+# =============================================================================
+# Risk Score Endpoints (Community - Aggregate Only)
+# =============================================================================
+
+@router.get("/risk-score", response_model=RiskScoreSummary)
+async def get_risk_score(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Get aggregate risk score (Community Edition).
+
+    Returns an overall risk assessment based on algorithm usage,
+    key management practices, and compliance posture.
+
+    Note: Per-context risk breakdown, component analysis, and
+    remediation recommendations require Enterprise license.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required for risk scoring",
+        )
+
+    score = 0  # Start at 0 (best), add points for risks
+    findings = []
+    high_risk_count = 0
+
+    # Check key rotation status
+    ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
+    result = await db.execute(
+        select(func.count(Key.id)).where(Key.created_at < ninety_days_ago)
+    )
+    old_keys = result.scalar() or 0
+    if old_keys > 0:
+        score += min(20, old_keys * 2)
+        findings.append(f"{old_keys} keys older than 90 days need rotation")
+
+    # Check for deprecated algorithms
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    result = await db.execute(
+        select(AuditLog.algorithm).where(
+            and_(
+                AuditLog.timestamp >= thirty_days_ago,
+                AuditLog.algorithm.isnot(None),
+            )
+        ).distinct()
+    )
+    used_algorithms = [r[0] for r in result.fetchall() if r[0]]
+
+    deprecated_patterns = ["DES", "3DES", "RC4", "MD5", "SHA1"]
+    deprecated_in_use = []
+    for alg in used_algorithms:
+        for dep in deprecated_patterns:
+            if dep.lower() in alg.lower():
+                deprecated_in_use.append(alg)
+                break
+
+    if deprecated_in_use:
+        score += 30
+        findings.append(f"Deprecated algorithms in use: {', '.join(deprecated_in_use[:3])}")
+
+    # Check policy violations
+    result = await db.execute(
+        select(func.count(AuditLog.id)).where(
+            and_(
+                AuditLog.timestamp >= thirty_days_ago,
+                AuditLog.policy_violation == True,
+            )
+        )
+    )
+    violations = result.scalar() or 0
+    if violations > 0:
+        score += min(25, violations)
+        findings.append(f"{violations} policy violations in last 30 days")
+
+    # Check contexts without quantum-safe algorithms
+    result = await db.execute(select(Context))
+    contexts = result.scalars().all()
+
+    non_quantum_sensitive = 0
+    for ctx in contexts:
+        # Check if context has sensitive data requiring long-term protection
+        is_sensitive = (
+            (ctx.compliance_tags and any(f in ctx.compliance_tags for f in ['HIPAA', 'PCI-DSS', 'GDPR'])) or
+            getattr(ctx, 'pii', False) or
+            getattr(ctx, 'phi', False)
+        )
+        # Check if not quantum-safe
+        is_quantum_safe = ctx.algorithm and any(
+            p.lower() in ctx.algorithm.lower()
+            for p in ['ML-KEM', 'Kyber', 'hybrid']
+        )
+
+        if is_sensitive and not is_quantum_safe:
+            non_quantum_sensitive += 1
+            high_risk_count += 1
+
+    if non_quantum_sensitive > 0:
+        score += min(15, non_quantum_sensitive * 3)
+        findings.append(f"{non_quantum_sensitive} sensitive contexts lack quantum-safe encryption")
+
+    # Check HSM backing
+    import os
+    kms_backend = os.environ.get("KMS_BACKEND", "local")
+    if kms_backend == "local":
+        score += 10
+        findings.append("Keys not backed by HSM - consider cloud KMS for production")
+
+    # Cap score at 100
+    score = min(100, score)
+
+    # Determine risk level
+    if score >= 50:
+        risk_level = RiskLevel.CRITICAL
+    elif score >= 30:
+        risk_level = RiskLevel.HIGH
+    elif score >= 15:
+        risk_level = RiskLevel.MEDIUM
+    else:
+        risk_level = RiskLevel.LOW
+
+    return RiskScoreSummary(
+        overall_score=score,
+        risk_level=risk_level,
+        high_risk_contexts=high_risk_count,
+        key_findings=findings[:3],  # Top 3 findings only in Community
+        assessed_at=datetime.now(timezone.utc),
+    )
+
+
+# =============================================================================
+# Premium Feature Discovery
+# =============================================================================
+
+@router.get("/premium-features")
+async def get_premium_features(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Discover premium compliance features available with Enterprise license.
+
+    Returns a list of advanced compliance features that provide:
+    - Auditor-ready evidence packages
+    - Crypto-shredding for data retention
+    - Per-context risk analysis
+    - Real-time compliance alerting
+    - And more...
+    """
+    return {
+        "edition": "community",
+        "premium_features": PREMIUM_FEATURES,
+        "upgrade_info": {
+            "contact": "sales@cryptoserve.io",
+            "documentation": "https://docs.cryptoserve.io/enterprise",
+            "features_comparison": "https://cryptoserve.io/pricing",
+        },
+    }
+
+
+@router.post("/evidence-package")
+async def create_evidence_package(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Generate an auditor-ready evidence package.
+
+    ⚠️ PREMIUM FEATURE - Requires Enterprise License
+
+    Evidence packages include:
+    - Encryption key inventory with rotation history
+    - Algorithm compliance documentation
+    - Audit log excerpts with integrity verification
+    - Policy configuration snapshots
+    - Tamper-evident digital signature
+    """
+    raise HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "error": "premium_feature_required",
+            "feature": "Evidence Packages",
+            "message": "Generating auditor-ready evidence packages requires an Enterprise license.",
+            "upgrade_url": "https://cryptoserve.io/enterprise",
+            "contact": "sales@cryptoserve.io",
+        },
+    )
+
+
+@router.post("/crypto-shred")
+async def crypto_shred(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Perform crypto-shredding to destroy data irrecoverably.
+
+    ⚠️ PREMIUM FEATURE - Requires Enterprise License
+
+    Crypto-shredding permanently destroys encryption keys,
+    making all associated data permanently unrecoverable.
+    This is required for GDPR Article 17 (Right to Erasure)
+    and other data retention compliance.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "error": "premium_feature_required",
+            "feature": "Crypto-Shredding",
+            "message": "Crypto-shredding for compliance requires an Enterprise license.",
+            "upgrade_url": "https://cryptoserve.io/enterprise",
+            "contact": "sales@cryptoserve.io",
+        },
+    )
+
+
+@router.get("/risk-score/{context_name}")
+async def get_context_risk_score(
+    context_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Get detailed risk score for a specific context.
+
+    ⚠️ PREMIUM FEATURE - Requires Enterprise License
+
+    Per-context risk scoring provides:
+    - Component-level risk breakdown (algorithm, key age, access patterns)
+    - Specific remediation recommendations
+    - Compliance impact analysis
+    - Historical risk trending
+    """
+    raise HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "error": "premium_feature_required",
+            "feature": "Detailed Risk Scoring",
+            "message": f"Per-context risk analysis for '{context_name}' requires an Enterprise license.",
+            "alternative": "Use GET /api/compliance/risk-score for aggregate risk score (free)",
+            "upgrade_url": "https://cryptoserve.io/enterprise",
+        },
+    )
+
+
+@router.get("/alerts")
+async def get_compliance_alerts(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Get real-time compliance alerts.
+
+    ⚠️ PREMIUM FEATURE - Requires Enterprise License
+
+    Compliance alerting provides:
+    - Real-time notifications for policy violations
+    - Key rotation reminders
+    - Algorithm deprecation warnings
+    - Configurable alert policies with webhooks
+    """
+    raise HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "error": "premium_feature_required",
+            "feature": "Compliance Alerting",
+            "message": "Real-time compliance alerting requires an Enterprise license.",
+            "upgrade_url": "https://cryptoserve.io/enterprise",
+        },
+    )
+
+
+@router.get("/trends")
+async def get_compliance_trends(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Get historical compliance trends.
+
+    ⚠️ PREMIUM FEATURE - Requires Enterprise License
+
+    Historical trending provides:
+    - Compliance score over time
+    - Risk trajectory analysis
+    - Key rotation compliance history
+    - Algorithm migration progress
+    """
+    raise HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={
+            "error": "premium_feature_required",
+            "feature": "Historical Trends",
+            "message": "Historical compliance trending requires an Enterprise license.",
+            "upgrade_url": "https://cryptoserve.io/enterprise",
+        },
+    )
