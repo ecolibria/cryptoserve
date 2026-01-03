@@ -21,6 +21,7 @@ from app.api.dependencies import router as dependencies_router
 from app.api.inventory import router as inventory_router, cbom_router
 from app.api.dashboard import router as dashboard_router
 from app.api.promotion import router as promotion_router
+from app.api.compliance import router as compliance_router
 
 __all__ = [
     "identities_router",
@@ -45,4 +46,5 @@ __all__ = [
     "cbom_router",
     "dashboard_router",
     "promotion_router",
+    "compliance_router",
 ]

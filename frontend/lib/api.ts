@@ -1029,6 +1029,66 @@ export interface ComplianceStatusResponse {
   premium_required: boolean;
 }
 
+// Data Inventory Types (OSS - Limited)
+export interface DataInventoryItem {
+  context_name: string;
+  data_classification: string[];
+  frameworks: string[];
+  algorithm: string;
+  quantum_safe: boolean;
+  operations_30d: number;
+}
+
+export interface DataInventorySummary {
+  total_contexts: number;
+  total_data_types: number;
+  pii_count: number;
+  phi_count: number;
+  pci_count: number;
+  quantum_safe_count: number;
+  items: DataInventoryItem[];
+  generated_at: string;
+  premium_features_available: string[];
+}
+
+// Risk Score Types (OSS - Aggregate Only)
+export type RiskLevel = "critical" | "high" | "medium" | "low";
+
+export interface RiskScoreSummary {
+  overall_score: number;
+  risk_level: RiskLevel;
+  high_risk_contexts: number;
+  key_findings: string[];
+  assessed_at: string;
+  premium_features_available: string[];
+}
+
+// Premium Feature Types
+export interface PremiumFeature {
+  name: string;
+  description: string;
+  category: string;
+}
+
+export interface PremiumFeaturesResponse {
+  edition: string;
+  premium_features: PremiumFeature[];
+  upgrade_info: {
+    contact: string;
+    documentation: string;
+    features_comparison: string;
+  };
+}
+
+export interface PremiumFeatureError {
+  error: string;
+  feature: string;
+  message: string;
+  upgrade_url: string;
+  contact?: string;
+  alternative?: string;
+}
+
 // Organization Settings Types
 export interface OrganizationSettingsResponse {
   allowed_domains: string[];
@@ -1375,6 +1435,16 @@ export const api = {
   getRiskScore: () => fetchApi("/api/admin/risk-score") as Promise<RiskScoreResponse>,
   getQuantumReadiness: () => fetchApi("/api/admin/quantum-readiness") as Promise<QuantumReadinessResponse>,
   getComplianceStatus: () => fetchApi("/api/admin/compliance-status") as Promise<ComplianceStatusResponse>,
+
+  // Compliance Dashboard (OSS Features)
+  getComplianceReport: () => fetchApi("/api/compliance/status") as Promise<unknown>,
+  getDataInventory: () => fetchApi("/api/compliance/data-inventory") as Promise<DataInventorySummary>,
+  getComplianceRiskScore: () => fetchApi("/api/compliance/risk-score") as Promise<RiskScoreSummary>,
+  getPremiumFeatures: () => fetchApi("/api/compliance/premium-features") as Promise<PremiumFeaturesResponse>,
+  getAuditSummary: (days: number = 30) =>
+    fetchApi(`/api/compliance/audit-summary?days=${days}`) as Promise<unknown>,
+  exportComplianceReport: (format: "json" | "csv" = "json") =>
+    fetchApi(`/api/compliance/export?format=${format}`) as Promise<unknown>,
 
   // Admin - Security Command Center
   getSecurityAlerts: () =>
