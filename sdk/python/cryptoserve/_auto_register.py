@@ -255,7 +255,7 @@ class CryptoServe:
             ```
         """
         # Try local encryption with cached key
-        if self._enable_cache and self._cache and self._local_crypto:
+        if self._enable_cache and self._cache is not None and self._local_crypto:
             cached = self._cache.get(context, "encrypt")
             if cached:
                 result = self._local_crypto.encrypt(
@@ -303,7 +303,7 @@ class CryptoServe:
             ```
         """
         # Try local decryption with cached key
-        if self._enable_cache and self._cache and self._local_crypto:
+        if self._enable_cache and self._cache is not None and self._local_crypto:
             cached = self._cache.get(context, "decrypt")
             if cached:
                 # Verify the cached key matches the ciphertext's key ID
@@ -331,7 +331,7 @@ class CryptoServe:
         This is called after a successful server operation to enable
         future local operations.
         """
-        if not self._enable_cache or not self._cache:
+        if not self._enable_cache or self._cache is None:
             return
 
         try:
@@ -561,7 +561,7 @@ class CryptoServe:
             print(f"Cache hit rate: {stats['hit_rate']:.1%}")
             ```
         """
-        if not self._cache:
+        if self._cache is None:
             return {
                 "enabled": False,
                 "reason": "Cache disabled or cryptography library not available",
@@ -590,7 +590,7 @@ class CryptoServe:
             crypto.invalidate_cache()
             ```
         """
-        if not self._cache:
+        if self._cache is None:
             return 0
 
         if context:

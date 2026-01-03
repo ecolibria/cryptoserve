@@ -190,13 +190,19 @@ class CryptoClient:
         except TokenRefreshError:
             return False
 
-    def encrypt(self, plaintext: bytes, context: str) -> bytes:
+    def encrypt(
+        self,
+        plaintext: bytes,
+        context: str,
+        associated_data: Optional[bytes] = None,
+    ) -> bytes:
         """
         Encrypt data.
 
         Args:
             plaintext: Data to encrypt
             context: Crypto context name
+            associated_data: Optional authenticated but unencrypted data
 
         Returns:
             Encrypted ciphertext
@@ -210,12 +216,16 @@ class CryptoClient:
         # Auto-refresh token if needed
         self._ensure_valid_token()
 
+        payload = {
+            "plaintext": base64.b64encode(plaintext).decode("ascii"),
+            "context": context,
+        }
+        if associated_data:
+            payload["aad"] = base64.b64encode(associated_data).decode("ascii")
+
         response = self.session.post(
             f"{self.server_url}/v1/crypto/encrypt",
-            json={
-                "plaintext": base64.b64encode(plaintext).decode("ascii"),
-                "context": context,
-            },
+            json=payload,
             timeout=self.timeout,
         )
 
@@ -223,10 +233,7 @@ class CryptoClient:
         if response.status_code == 401 and self._try_refresh_and_retry():
             response = self.session.post(
                 f"{self.server_url}/v1/crypto/encrypt",
-                json={
-                    "plaintext": base64.b64encode(plaintext).decode("ascii"),
-                    "context": context,
-                },
+                json=payload,
                 timeout=self.timeout,
             )
 
@@ -235,13 +242,19 @@ class CryptoClient:
         data = response.json()
         return base64.b64decode(data["ciphertext"])
 
-    def decrypt(self, ciphertext: bytes, context: str) -> bytes:
+    def decrypt(
+        self,
+        ciphertext: bytes,
+        context: str,
+        associated_data: Optional[bytes] = None,
+    ) -> bytes:
         """
         Decrypt data.
 
         Args:
             ciphertext: Encrypted data
             context: Crypto context name
+            associated_data: Optional authenticated data (must match encryption)
 
         Returns:
             Decrypted plaintext
@@ -255,12 +268,16 @@ class CryptoClient:
         # Auto-refresh token if needed
         self._ensure_valid_token()
 
+        payload = {
+            "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+            "context": context,
+        }
+        if associated_data:
+            payload["aad"] = base64.b64encode(associated_data).decode("ascii")
+
         response = self.session.post(
             f"{self.server_url}/v1/crypto/decrypt",
-            json={
-                "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
-                "context": context,
-            },
+            json=payload,
             timeout=self.timeout,
         )
 
@@ -268,10 +285,7 @@ class CryptoClient:
         if response.status_code == 401 and self._try_refresh_and_retry():
             response = self.session.post(
                 f"{self.server_url}/v1/crypto/decrypt",
-                json={
-                    "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
-                    "context": context,
-                },
+                json=payload,
                 timeout=self.timeout,
             )
 
