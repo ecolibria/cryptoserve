@@ -8,8 +8,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User
+from app.database import get_db
+from app.models import User, SecurityScan, SecurityFinding, ScanType, SeverityLevel
 from app.core.code_scanner import (
     CodeScanner,
     CodeScannerError,
@@ -28,6 +30,8 @@ class CodeScanRequest(BaseModel):
     code: str = Field(..., description="Source code to analyze")
     language: str | None = Field(default=None, description="Language: python, javascript, go, java")
     filename: str | None = Field(default=None, description="Optional filename for context")
+    persist: bool = Field(default=False, description="Persist results to security dashboard")
+    target_name: str | None = Field(default=None, description="Target name for dashboard (e.g., 'crypto-serve-backend')")
 
 
 class CryptoUsageResponse(BaseModel):
@@ -110,6 +114,7 @@ class QuickAnalysisResponse(BaseModel):
 async def scan_code(
     data: CodeScanRequest,
     user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """Scan source code for cryptographic usage.
 
@@ -120,6 +125,7 @@ async def scan_code(
     - Quantum vulnerability assessment
     - Generates a Cryptographic Bill of Materials (CBOM)
 
+    Set persist=true to save results to the security dashboard.
     Supported languages: Python (AST), JavaScript, TypeScript, Go, Java, C/C++
     """
     language = None
@@ -140,6 +146,99 @@ async def scan_code(
         )
     except CodeScannerError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Persist to SecurityScan/SecurityFinding tables if requested
+    if data.persist:
+        target_name = data.target_name or data.filename or "code-scan"
+
+        # Count by severity
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for f in result.findings:
+            sev = f.severity.value.lower()
+            if sev in severity_counts:
+                severity_counts[sev] += 1
+
+        # Count quantum vulnerable/safe from usages
+        quantum_vulnerable = sum(1 for u in result.usages if u.quantum_risk.value in ["high", "critical"])
+        quantum_safe = sum(1 for u in result.usages if u.quantum_risk.value in ["none", "low"])
+
+        # Create SecurityScan record
+        scan_record = SecurityScan(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            scan_type=ScanType.CODE,
+            target_name=target_name,
+            target_type=data.language or "auto",
+            total_findings=len(result.findings),
+            critical_count=severity_counts["critical"],
+            high_count=severity_counts["high"],
+            medium_count=severity_counts["medium"],
+            low_count=severity_counts["low"],
+            quantum_vulnerable_count=quantum_vulnerable,
+            quantum_safe_count=quantum_safe,
+            weak_crypto_count=sum(1 for u in result.usages if u.is_weak),
+            results={
+                "cbom": {
+                    "algorithms": result.cbom.algorithms,
+                    "libraries": result.cbom.libraries,
+                    "quantum_summary": result.cbom.quantum_summary,
+                },
+                "files_scanned": result.files_scanned,
+                "scan_time_ms": result.scan_time_ms,
+            }
+        )
+        db.add(scan_record)
+        await db.flush()
+
+        # Create SecurityFinding records for each finding
+        for f in result.findings:
+            sev_str = f.severity.value.lower()
+            try:
+                severity = SeverityLevel(sev_str)
+            except ValueError:
+                severity = SeverityLevel.LOW
+
+            finding_record = SecurityFinding(
+                scan_id=scan_record.id,
+                severity=severity,
+                title=f.title,
+                description=f.description,
+                file_path=f.file_path,
+                line_number=f.line_number,
+                algorithm=f.algorithm,
+                cwe=f.cwe,
+                recommendation=f.recommendation,
+            )
+            db.add(finding_record)
+
+        # Also create findings for weak/deprecated usages
+        for u in result.usages:
+            if u.is_weak:
+                qr = u.quantum_risk.value.lower()
+                if qr in ["critical"]:
+                    severity = SeverityLevel.CRITICAL
+                elif qr in ["high"]:
+                    severity = SeverityLevel.HIGH
+                else:
+                    severity = SeverityLevel.MEDIUM
+
+                finding_record = SecurityFinding(
+                    scan_id=scan_record.id,
+                    severity=severity,
+                    title=f"Weak crypto: {u.algorithm}",
+                    description=u.weakness_reason or f"Weak cryptographic algorithm detected: {u.algorithm}",
+                    file_path=u.file_path,
+                    line_number=u.line_number,
+                    algorithm=u.algorithm,
+                    library=u.library,
+                    quantum_risk=u.quantum_risk.value,
+                    is_weak=True,
+                    cwe=u.cwe,
+                    recommendation=u.recommendation,
+                )
+                db.add(finding_record)
+
+        await db.commit()
 
     return CodeScanResponse(
         usages=[

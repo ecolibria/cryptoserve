@@ -7,8 +7,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User
+from app.database import get_db
+from app.models import User, SecurityScan, SecurityFinding, ScanType, SeverityLevel
 from app.core.dependency_scanner import (
     DependencyScanner,
     DependencyScannerError,
@@ -29,6 +31,8 @@ class DependencyScanRequest(BaseModel):
         default=None,
         description="Filename for auto-detection (package.json, requirements.txt, go.mod, Cargo.toml)"
     )
+    persist: bool = Field(default=False, description="Persist results to security dashboard")
+    target_name: str | None = Field(default=None, description="Target name for dashboard")
 
 
 class CryptoDependencyResponse(BaseModel):
@@ -71,6 +75,7 @@ class QuickDependencyScanResponse(BaseModel):
 async def scan_dependencies(
     data: DependencyScanRequest,
     user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """Scan a package file for cryptographic dependencies.
 
@@ -79,6 +84,8 @@ async def scan_dependencies(
     - requirements.txt (PyPI)
     - go.mod (Go)
     - Cargo.toml (Rust)
+
+    Set persist=true to save results to the security dashboard.
 
     Returns:
     - All crypto dependencies found
@@ -93,6 +100,66 @@ async def scan_dependencies(
         )
     except DependencyScannerError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Persist to SecurityScan/SecurityFinding tables if requested
+    if data.persist:
+        target_name = data.target_name or data.filename or "dependency-scan"
+
+        # Create SecurityScan record
+        scan_record = SecurityScan(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            scan_type=ScanType.DEPENDENCY,
+            target_name=target_name,
+            target_type=result.package_type.value,
+            total_findings=result.deprecated_count + result.quantum_vulnerable_count,
+            critical_count=result.deprecated_count,  # Deprecated = critical
+            high_count=result.quantum_vulnerable_count,  # Quantum vulnerable = high
+            medium_count=0,
+            low_count=0,
+            quantum_vulnerable_count=result.quantum_vulnerable_count,
+            quantum_safe_count=result.crypto_packages - result.quantum_vulnerable_count,
+            deprecated_count=result.deprecated_count,
+            results={
+                "total_packages": result.total_packages,
+                "crypto_packages": result.crypto_packages,
+                "recommendations": result.recommendations,
+            }
+        )
+        db.add(scan_record)
+        await db.flush()
+
+        # Create findings for deprecated packages
+        for dep in result.dependencies:
+            if dep.is_deprecated:
+                finding_record = SecurityFinding(
+                    scan_id=scan_record.id,
+                    severity=SeverityLevel.CRITICAL,
+                    title=f"Deprecated package: {dep.name}",
+                    description=dep.deprecation_reason or f"The package {dep.name} is deprecated",
+                    algorithm=", ".join(dep.algorithms) if dep.algorithms else None,
+                    library=dep.name,
+                    quantum_risk=dep.quantum_risk.value,
+                    is_deprecated=True,
+                    recommendation=f"Replace with: {dep.recommended_replacement}" if dep.recommended_replacement else "Find a modern alternative",
+                )
+                db.add(finding_record)
+
+            elif dep.quantum_risk.value in ["high", "critical"]:
+                finding_record = SecurityFinding(
+                    scan_id=scan_record.id,
+                    severity=SeverityLevel.HIGH,
+                    title=f"Quantum-vulnerable: {dep.name}",
+                    description=f"Package {dep.name} uses algorithms vulnerable to quantum computing",
+                    algorithm=", ".join(dep.algorithms) if dep.algorithms else None,
+                    library=dep.name,
+                    quantum_risk=dep.quantum_risk.value,
+                    is_weak=False,
+                    recommendation="Plan migration to post-quantum cryptography",
+                )
+                db.add(finding_record)
+
+        await db.commit()
 
     return DependencyScanResponse(
         dependencies=[
