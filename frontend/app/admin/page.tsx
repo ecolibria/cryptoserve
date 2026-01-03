@@ -29,9 +29,7 @@ import {
   ComplianceStatusResponse,
   AlgorithmMetrics,
 } from "@/lib/api";
-import { RiskScoreGauge } from "@/components/premium/risk-score-gauge";
-import { QuantumReadinessMeter } from "@/components/premium/quantum-readiness-meter";
-import { ComplianceBadges } from "@/components/premium/compliance-badges";
+// Premium components moved to crypto-serve-premium repo
 import { cn } from "@/lib/utils";
 
 function formatBytes(bytes: number): string {
@@ -234,11 +232,41 @@ export default function AdminDashboard() {
         />
       </div>
 
-      {/* Premium Insights Row */}
+      {/* Security Insights Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        {riskScore && <RiskScoreGauge data={riskScore} />}
-        {quantumReadiness && <QuantumReadinessMeter data={quantumReadiness} />}
-        {complianceStatus && <ComplianceBadges data={complianceStatus} />}
+        {riskScore && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Risk Score</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-slate-900">{riskScore.score}</div>
+              <div className="text-sm text-slate-500 capitalize">{riskScore.grade} ({riskScore.trend})</div>
+            </CardContent>
+          </Card>
+        )}
+        {quantumReadiness && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Quantum Readiness</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-slate-900">{quantumReadiness.readiness_percent}%</div>
+              <div className="text-sm text-slate-500">{quantumReadiness.quantum_ready_contexts} PQC-protected contexts</div>
+            </CardContent>
+          </Card>
+        )}
+        {complianceStatus && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Compliance</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-slate-900">{complianceStatus.overall_score}%</div>
+              <div className="text-sm text-slate-500">{complianceStatus.frameworks.length} frameworks tracked</div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Charts Row */}

@@ -149,7 +149,7 @@ class DataInventoryItem(BaseModel):
 
 
 class DataInventorySummary(BaseModel):
-    """Data inventory summary (Community Edition - limited details)."""
+    """Data inventory summary."""
     total_contexts: int
     total_data_types: int
     pii_count: int
@@ -158,17 +158,6 @@ class DataInventorySummary(BaseModel):
     quantum_safe_count: int
     items: list[DataInventoryItem]
     generated_at: datetime
-
-    # Premium upsell
-    premium_features_available: list[str] = Field(
-        default_factory=lambda: [
-            "Full data lineage tracking",
-            "Detailed field-level inventory",
-            "Data residency mapping",
-            "Retention policy management",
-            "Crypto-shredding automation",
-        ]
-    )
 
 
 # =============================================================================
@@ -184,23 +173,12 @@ class RiskLevel(str, Enum):
 
 
 class RiskScoreSummary(BaseModel):
-    """Simplified risk score (Community Edition - aggregate only)."""
+    """Risk score summary."""
     overall_score: int = Field(ge=0, le=100, description="Overall risk 0-100 (lower is better)")
     risk_level: RiskLevel
     high_risk_contexts: int = Field(description="Number of contexts with high risk")
-    key_findings: list[str] = Field(default_factory=list, description="Top 3 risk findings")
+    key_findings: list[str] = Field(default_factory=list, description="Key risk findings")
     assessed_at: datetime
-
-    # Premium upsell
-    premium_features_available: list[str] = Field(
-        default_factory=lambda: [
-            "Per-context risk breakdown",
-            "Risk component analysis (algorithm, key age, access patterns)",
-            "Historical risk trending",
-            "Risk remediation recommendations",
-            "Compliance impact scoring",
-        ]
-    )
 
 
 # =============================================================================

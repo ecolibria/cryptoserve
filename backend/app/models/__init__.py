@@ -17,6 +17,13 @@ from app.models.crypto_inventory import (
     EnforcementAction,
     ScanSource,
 )
+from app.models.security_scan import (
+    SecurityScan,
+    SecurityFinding,
+    CertificateInventory,
+    ScanType,
+    SeverityLevel,
+)
 
 __all__ = [
     # Multi-tenancy
@@ -50,4 +57,10 @@ __all__ = [
     "QuantumRisk",
     "EnforcementAction",
     "ScanSource",
+    # Security Scanning
+    "SecurityScan",
+    "SecurityFinding",
+    "CertificateInventory",
+    "ScanType",
+    "SeverityLevel",
 ]

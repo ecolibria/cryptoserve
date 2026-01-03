@@ -990,10 +990,78 @@ export interface PlaygroundResponse {
   error: string | null;
 }
 
-// Premium Feature Types
+// Security Dashboard Types
 export interface RiskScoreFactor {
   name: string;
   category: string;
+}
+
+// Security Scan Dashboard Types (proactive scanning)
+export type ScanType = "code" | "dependency" | "certificate";
+export type SeverityLevel = "critical" | "high" | "medium" | "low";
+
+export interface ScanSummary {
+  scan_id: string;
+  scan_type: ScanType;
+  target_name: string;
+  scanned_at: string;
+  total_findings: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  quantum_vulnerable_count: number;
+}
+
+export interface ScanDashboardStats {
+  total_scans_30d: number;
+  code_scans_30d: number;
+  dependency_scans_30d: number;
+  certificate_scans_30d: number;
+  total_findings_30d: number;
+  critical_findings: number;
+  high_findings: number;
+  medium_findings: number;
+  low_findings: number;
+  quantum_vulnerable_total: number;
+  quantum_safe_total: number;
+  findings_trend: "improving" | "stable" | "worsening";
+  scan_frequency: "daily" | "weekly" | "infrequent";
+  expiring_soon: number;
+  expired: number;
+}
+
+export interface FindingSummary {
+  id: number;
+  severity: SeverityLevel;
+  title: string;
+  scan_type: ScanType;
+  algorithm: string | null;
+  quantum_risk: string | null;
+  file_path: string | null;
+  recommendation: string | null;
+  scanned_at: string;
+}
+
+export interface CertificateSummary {
+  id: number;
+  common_name: string;
+  issuer_cn: string | null;
+  not_after: string;
+  days_until_expiry: number;
+  key_type: string;
+  key_size: number | null;
+  is_expired: boolean;
+  is_weak_key: boolean;
+  quantum_vulnerable: boolean;
+}
+
+export interface ScanTrendPoint {
+  date: string;
+  code_scans: number;
+  dependency_scans: number;
+  certificate_scans: number;
+  findings: number;
 }
 
 export interface RiskScoreResponse {
@@ -1048,7 +1116,6 @@ export interface DataInventorySummary {
   quantum_safe_count: number;
   items: DataInventoryItem[];
   generated_at: string;
-  premium_features_available: string[];
 }
 
 // Risk Score Types (OSS - Aggregate Only)
@@ -1060,33 +1127,6 @@ export interface RiskScoreSummary {
   high_risk_contexts: number;
   key_findings: string[];
   assessed_at: string;
-  premium_features_available: string[];
-}
-
-// Premium Feature Types
-export interface PremiumFeature {
-  name: string;
-  description: string;
-  category: string;
-}
-
-export interface PremiumFeaturesResponse {
-  edition: string;
-  premium_features: PremiumFeature[];
-  upgrade_info: {
-    contact: string;
-    documentation: string;
-    features_comparison: string;
-  };
-}
-
-export interface PremiumFeatureError {
-  error: string;
-  feature: string;
-  message: string;
-  upgrade_url: string;
-  contact?: string;
-  alternative?: string;
 }
 
 // Organization Settings Types
@@ -1431,7 +1471,7 @@ export const api = {
   // Admin - Health
   getSystemHealth: () => fetchApi("/api/admin/health") as Promise<HealthStatus>,
 
-  // Admin - Premium Features (OSS Preview)
+  // Admin - Security Dashboard
   getRiskScore: () => fetchApi("/api/admin/risk-score") as Promise<RiskScoreResponse>,
   getQuantumReadiness: () => fetchApi("/api/admin/quantum-readiness") as Promise<QuantumReadinessResponse>,
   getComplianceStatus: () => fetchApi("/api/admin/compliance-status") as Promise<ComplianceStatusResponse>,
@@ -1440,7 +1480,6 @@ export const api = {
   getComplianceReport: () => fetchApi("/api/compliance/status") as Promise<unknown>,
   getDataInventory: () => fetchApi("/api/compliance/data-inventory") as Promise<DataInventorySummary>,
   getComplianceRiskScore: () => fetchApi("/api/compliance/risk-score") as Promise<RiskScoreSummary>,
-  getPremiumFeatures: () => fetchApi("/api/compliance/premium-features") as Promise<PremiumFeaturesResponse>,
   getAuditSummary: (days: number = 30) =>
     fetchApi(`/api/compliance/audit-summary?days=${days}`) as Promise<unknown>,
   exportComplianceReport: (format: "json" | "csv" = "json") =>
@@ -1453,6 +1492,51 @@ export const api = {
     fetchApi("/api/admin/security/metrics") as Promise<SecurityMetrics>,
   getBlastRadius: () =>
     fetchApi("/api/admin/security/blast-radius") as Promise<BlastRadiusItem[]>,
+
+  // Security Scan Dashboard (proactive scanning aggregation)
+  getScanDashboardStats: () =>
+    fetchApi("/api/admin/security-dashboard/stats") as Promise<ScanDashboardStats>,
+
+  listSecurityScans: (params?: {
+    scan_type?: ScanType;
+    days?: number;
+    limit?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.scan_type) query.set("scan_type", params.scan_type);
+    if (params?.days) query.set("days", String(params.days));
+    if (params?.limit) query.set("limit", String(params.limit));
+    return fetchApi(`/api/admin/security-dashboard/scans?${query}`) as Promise<ScanSummary[]>;
+  },
+
+  listSecurityFindings: (params?: {
+    severity?: SeverityLevel;
+    scan_type?: ScanType;
+    days?: number;
+    limit?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.severity) query.set("severity", params.severity);
+    if (params?.scan_type) query.set("scan_type", params.scan_type);
+    if (params?.days) query.set("days", String(params.days));
+    if (params?.limit) query.set("limit", String(params.limit));
+    return fetchApi(`/api/admin/security-dashboard/findings?${query}`) as Promise<FindingSummary[]>;
+  },
+
+  listTrackedCertificates: (params?: {
+    expiring_only?: boolean;
+    include_expired?: boolean;
+    limit?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.expiring_only) query.set("expiring_only", "true");
+    if (params?.include_expired) query.set("include_expired", "true");
+    if (params?.limit) query.set("limit", String(params.limit));
+    return fetchApi(`/api/admin/security-dashboard/certificates?${query}`) as Promise<CertificateSummary[]>;
+  },
+
+  getScanTrends: (days: number = 30) =>
+    fetchApi(`/api/admin/security-dashboard/trends?days=${days}`) as Promise<ScanTrendPoint[]>,
 
   // Playground
   playground: (data: PlaygroundRequest) =>
