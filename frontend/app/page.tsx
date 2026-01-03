@@ -24,7 +24,7 @@ function LoginPageContent() {
     // Check dev mode status
     fetch("/auth/status")
       .then((res) => res.json())
-      .then((data) => setDevMode(data.devMode))
+      .then((data) => setDevMode(data.dev_mode || data.devMode))
       .catch(() => setDevMode(false));
   }, [searchParams]);
 
