@@ -23,14 +23,7 @@ import {
   BarChart3,
   Database,
   Atom,
-  Sparkles,
-  Crown,
-  Zap,
   ShieldAlert,
-  Trash2,
-  Bell,
-  LineChart as LineChartIcon,
-  Package,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,7 +36,6 @@ import {
   AdminContextStats,
   DataInventorySummary,
   RiskScoreSummary,
-  PremiumFeaturesResponse,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -163,23 +155,20 @@ export default function CompliancePage() {
   // New OSS compliance features
   const [dataInventory, setDataInventory] = useState<DataInventorySummary | null>(null);
   const [riskScore, setRiskScore] = useState<RiskScoreSummary | null>(null);
-  const [premiumFeatures, setPremiumFeatures] = useState<PremiumFeaturesResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "risk" | "premium">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "risk">("overview");
 
   const loadData = useCallback(async () => {
     try {
-      const [complianceData, contextData, inventoryData, riskData, premiumData] = await Promise.all([
+      const [complianceData, contextData, inventoryData, riskData] = await Promise.all([
         api.getComplianceStatus(),
         api.getContextsWithStats(),
         api.getDataInventory().catch(() => null),
         api.getComplianceRiskScore().catch(() => null),
-        api.getPremiumFeatures().catch(() => null),
       ]);
       setCompliance(complianceData);
       setContexts(contextData);
       setDataInventory(inventoryData);
       setRiskScore(riskData);
-      setPremiumFeatures(premiumData);
     } catch (error) {
       console.error("Failed to load compliance data:", error);
     } finally {
@@ -335,21 +324,6 @@ export default function CompliancePage() {
         >
           <ShieldAlert className="h-4 w-4 inline mr-2" />
           Risk Assessment
-        </button>
-        <button
-          onClick={() => setActiveTab("premium")}
-          className={cn(
-            "px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-            activeTab === "premium"
-              ? "bg-amber-100 text-amber-700"
-              : "text-slate-600 hover:bg-slate-100"
-          )}
-        >
-          <Crown className="h-4 w-4" />
-          Premium Features
-          <Badge className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] px-1.5">
-            PRO
-          </Badge>
         </button>
       </div>
 
@@ -962,36 +936,6 @@ export default function CompliancePage() {
             </CardContent>
           </Card>
 
-          {/* Premium Features Available */}
-          {dataInventory?.premium_features_available && (
-            <Card className="border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-amber-100 rounded-lg">
-                    <Crown className="h-5 w-5 text-amber-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-medium text-amber-900">Unlock Premium Data Inventory Features</h4>
-                    <ul className="mt-2 text-sm text-amber-700 space-y-1">
-                      {dataInventory.premium_features_available.map((feature, i) => (
-                        <li key={i} className="flex items-center gap-2">
-                          <Sparkles className="h-3 w-3" />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <Button
-                    size="sm"
-                    className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white"
-                    onClick={() => setActiveTab("premium")}
-                  >
-                    Upgrade
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
       )}
 
@@ -1099,211 +1043,9 @@ export default function CompliancePage() {
             </Card>
           </div>
 
-          {/* Premium Risk Features */}
-          {riskScore?.premium_features_available && (
-            <Card className="border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-amber-100 rounded-lg">
-                    <Crown className="h-5 w-5 text-amber-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-medium text-amber-900">Unlock Premium Risk Analysis</h4>
-                    <ul className="mt-2 text-sm text-amber-700 space-y-1">
-                      {riskScore.premium_features_available.map((feature, i) => (
-                        <li key={i} className="flex items-center gap-2">
-                          <Sparkles className="h-3 w-3" />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <Button
-                    size="sm"
-                    className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white"
-                    onClick={() => setActiveTab("premium")}
-                  >
-                    Upgrade
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
       )}
 
-      {/* Premium Features Tab */}
-      {activeTab === "premium" && (
-        <div className="space-y-6">
-          {/* Premium Header */}
-          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 rounded-xl p-6 text-white">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-white/20 rounded-xl">
-                <Crown className="h-8 w-8" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold">Enterprise Compliance Features</h2>
-                <p className="text-white/80 mt-1">
-                  Unlock powerful compliance tools for auditors, regulators, and enterprise security teams
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Feature Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* Evidence Packages */}
-            <Card className="border-2 border-dashed border-amber-200 hover:border-amber-300 transition-colors">
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <Package className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-slate-900">Evidence Packages</h4>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Generate auditor-ready evidence packages with tamper-evident digital signatures
-                    </p>
-                    <Badge className="mt-3 bg-amber-100 text-amber-700 border-amber-200">
-                      Enterprise
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Crypto-Shredding */}
-            <Card className="border-2 border-dashed border-amber-200 hover:border-amber-300 transition-colors">
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-red-100 rounded-lg">
-                    <Trash2 className="h-5 w-5 text-red-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-slate-900">Crypto-Shredding</h4>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Permanently destroy encryption keys for GDPR Article 17 compliance
-                    </p>
-                    <Badge className="mt-3 bg-amber-100 text-amber-700 border-amber-200">
-                      Enterprise
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Detailed Risk Scoring */}
-            <Card className="border-2 border-dashed border-amber-200 hover:border-amber-300 transition-colors">
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-orange-100 rounded-lg">
-                    <ShieldAlert className="h-5 w-5 text-orange-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-slate-900">Detailed Risk Scoring</h4>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Per-context risk analysis with component breakdown and recommendations
-                    </p>
-                    <Badge className="mt-3 bg-amber-100 text-amber-700 border-amber-200">
-                      Enterprise
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Compliance Alerting */}
-            <Card className="border-2 border-dashed border-amber-200 hover:border-amber-300 transition-colors">
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-purple-100 rounded-lg">
-                    <Bell className="h-5 w-5 text-purple-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-slate-900">Compliance Alerting</h4>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Real-time alerts for policy violations with webhook integrations
-                    </p>
-                    <Badge className="mt-3 bg-amber-100 text-amber-700 border-amber-200">
-                      Enterprise
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Historical Trends */}
-            <Card className="border-2 border-dashed border-amber-200 hover:border-amber-300 transition-colors">
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <LineChartIcon className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-slate-900">Historical Trends</h4>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Track compliance posture over time with trending analysis
-                    </p>
-                    <Badge className="mt-3 bg-amber-100 text-amber-700 border-amber-200">
-                      Enterprise
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* PDF Reports */}
-            <Card className="border-2 border-dashed border-amber-200 hover:border-amber-300 transition-colors">
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-slate-100 rounded-lg">
-                    <FileText className="h-5 w-5 text-slate-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-slate-900">PDF Reports</h4>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Executive-ready compliance reports with visualizations
-                    </p>
-                    <Badge className="mt-3 bg-amber-100 text-amber-700 border-amber-200">
-                      Enterprise
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* CTA */}
-          <Card className="bg-slate-900 text-white">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">Ready to upgrade?</h3>
-                  <p className="text-slate-400 mt-1">
-                    Contact our sales team to learn more about enterprise features
-                  </p>
-                </div>
-                <div className="flex gap-3">
-                  <a
-                    href="https://cryptoserve.io/pricing"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Button variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-800">
-                      View Pricing
-                    </Button>
-                  </a>
-                  <a href="mailto:sales@cryptoserve.io">
-                    <Button className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600">
-                      Contact Sales
-                    </Button>
-                  </a>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </AdminLayout>
   );
 }

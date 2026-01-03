@@ -24,6 +24,11 @@ import {
   BarChart3,
   PieChart,
   XCircle,
+  FileCode,
+  Package,
+  Award,
+  Search,
+  Bug,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminLayout } from "@/components/admin-layout";
@@ -37,32 +42,62 @@ import {
   BlastRadiusItem,
   RiskScoreResponse,
   TrendDataPoint,
+  ScanDashboardStats,
+  ScanSummary,
+  FindingSummary,
+  CertificateSummary,
+  ScanTrendPoint,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
+type TabType = "runtime" | "scanning";
+
 export default function SecurityCommandCenter() {
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabType>("runtime");
+
+  // Runtime security state
   const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
   const [metrics, setMetrics] = useState<SecurityMetrics | null>(null);
   const [blastRadius, setBlastRadius] = useState<BlastRadiusItem[]>([]);
   const [riskScore, setRiskScore] = useState<RiskScoreResponse | null>(null);
   const [trends, setTrends] = useState<TrendDataPoint[]>([]);
 
+  // Scan dashboard state
+  const [scanStats, setScanStats] = useState<ScanDashboardStats | null>(null);
+  const [scans, setScans] = useState<ScanSummary[]>([]);
+  const [findings, setFindings] = useState<FindingSummary[]>([]);
+  const [certificates, setCertificates] = useState<CertificateSummary[]>([]);
+  const [scanTrends, setScanTrends] = useState<ScanTrendPoint[]>([]);
+
   const loadData = useCallback(async () => {
     try {
-      const [alertsData, metricsData, blastData, riskData, trendsData] = await Promise.all([
+      const [
+        alertsData, metricsData, blastData, riskData, trendsData,
+        scanStatsData, scansData, findingsData, certsData, scanTrendsData
+      ] = await Promise.all([
         api.getSecurityAlerts(),
         api.getSecurityMetrics(),
         api.getBlastRadius(),
         api.getRiskScore(),
         api.getOperationTrends(14),
+        api.getScanDashboardStats().catch(() => null),
+        api.listSecurityScans({ limit: 20 }).catch(() => []),
+        api.listSecurityFindings({ limit: 50 }).catch(() => []),
+        api.listTrackedCertificates({ limit: 30 }).catch(() => []),
+        api.getScanTrends(30).catch(() => []),
       ]);
       setAlerts(alertsData);
       setMetrics(metricsData);
       setBlastRadius(blastData);
       setRiskScore(riskData);
       setTrends(trendsData);
+      setScanStats(scanStatsData);
+      setScans(scansData);
+      setFindings(findingsData);
+      setCertificates(certsData);
+      setScanTrends(scanTrendsData);
     } catch (error) {
       console.error("Failed to load security data:", error);
     } finally {
@@ -155,6 +190,34 @@ export default function SecurityCommandCenter() {
     );
   }
 
+  // Transform scan trends for chart
+  const scanTrendData = scanTrends.map((t) => ({
+    date: new Date(t.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    code: t.code_scans,
+    dependency: t.dependency_scans,
+    certificate: t.certificate_scans,
+    findings: t.findings,
+  }));
+
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case "critical": return "text-red-600 bg-red-50";
+      case "high": return "text-orange-600 bg-orange-50";
+      case "medium": return "text-amber-600 bg-amber-50";
+      case "low": return "text-blue-600 bg-blue-50";
+      default: return "text-slate-600 bg-slate-50";
+    }
+  };
+
+  const getScanTypeIcon = (type: string) => {
+    switch (type) {
+      case "code": return <FileCode className="h-4 w-4" />;
+      case "dependency": return <Package className="h-4 w-4" />;
+      case "certificate": return <Award className="h-4 w-4" />;
+      default: return <Search className="h-4 w-4" />;
+    }
+  };
+
   return (
     <AdminLayout
       title="Security Command Center"
@@ -162,6 +225,47 @@ export default function SecurityCommandCenter() {
       onRefresh={loadData}
       refreshInterval={30}
     >
+      {/* Tab Navigation */}
+      <div className="mb-6 border-b">
+        <nav className="-mb-px flex gap-6">
+          <button
+            onClick={() => setActiveTab("runtime")}
+            className={cn(
+              "py-3 px-1 text-sm font-medium border-b-2 transition-colors",
+              activeTab === "runtime"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Runtime Security
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab("scanning")}
+            className={cn(
+              "py-3 px-1 text-sm font-medium border-b-2 transition-colors",
+              activeTab === "scanning"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              Scan Results
+              {scanStats && scanStats.critical_findings > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-700">
+                  {scanStats.critical_findings}
+                </span>
+              )}
+            </div>
+          </button>
+        </nav>
+      </div>
+
+      {activeTab === "runtime" && (
+        <>
       {/* Top Row: Security Score + Key Metrics */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
         {/* Security Score Card - Large */}
@@ -616,6 +720,338 @@ export default function SecurityCommandCenter() {
           href="/admin/compliance"
         />
       </div>
+        </>
+      )}
+
+      {activeTab === "scanning" && (
+        <>
+          {/* Scan Dashboard Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
+            <StatCard
+              title="Total Scans"
+              value={scanStats?.total_scans_30d?.toString() || "0"}
+              subtitle="Last 30 days"
+              icon={<Search className="h-5 w-5" />}
+            />
+            <StatCard
+              title="Code Scans"
+              value={scanStats?.code_scans_30d?.toString() || "0"}
+              subtitle="Crypto patterns"
+              icon={<FileCode className="h-5 w-5" />}
+              color="blue"
+            />
+            <StatCard
+              title="Dependency Scans"
+              value={scanStats?.dependency_scans_30d?.toString() || "0"}
+              subtitle="Vulnerable libs"
+              icon={<Package className="h-5 w-5" />}
+              color="purple"
+            />
+            <StatCard
+              title="Critical Findings"
+              value={scanStats?.critical_findings?.toString() || "0"}
+              subtitle={`${scanStats?.high_findings || 0} high`}
+              icon={<Bug className="h-5 w-5" />}
+              color={scanStats?.critical_findings ? "rose" : "green"}
+            />
+            <StatCard
+              title="Quantum Vulnerable"
+              value={scanStats?.quantum_vulnerable_total?.toString() || "0"}
+              subtitle={`${scanStats?.quantum_safe_total || 0} safe`}
+              icon={<Zap className="h-5 w-5" />}
+              color={scanStats?.quantum_vulnerable_total ? "amber" : "green"}
+            />
+            <StatCard
+              title="Certs Expiring"
+              value={scanStats?.expiring_soon?.toString() || "0"}
+              subtitle={`${scanStats?.expired || 0} expired`}
+              icon={<Award className="h-5 w-5" />}
+              color={scanStats?.expiring_soon ? "amber" : "default"}
+            />
+          </div>
+
+          {/* Scan Trends Chart */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-blue-500" />
+                  Scan Activity (30 Days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {scanTrendData.length > 0 ? (
+                  <LineChart
+                    data={scanTrendData}
+                    xAxisKey="date"
+                    lines={[
+                      { dataKey: "code", name: "Code", color: "#3b82f6" },
+                      { dataKey: "dependency", name: "Dependency", color: "#8b5cf6" },
+                      { dataKey: "certificate", name: "Certificate", color: "#f59e0b" },
+                    ]}
+                    height={220}
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-slate-500 text-sm">
+                    No scan data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Bug className="h-5 w-5 text-red-500" />
+                  Findings Trend
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {scanTrendData.length > 0 ? (
+                  <LineChart
+                    data={scanTrendData}
+                    xAxisKey="date"
+                    lines={[
+                      { dataKey: "findings", name: "Findings", color: "#ef4444", strokeWidth: 2 },
+                    ]}
+                    height={220}
+                    showLegend={false}
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-slate-500 text-sm">
+                    No findings data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Recent Scans Table */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Search className="h-5 w-5 text-blue-500" />
+                    Recent Scans
+                  </CardTitle>
+                  <span className="text-sm text-slate-500">{scans.length} total</span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {scans.length > 0 ? (
+                  <div className="space-y-2 max-h-[320px] overflow-y-auto">
+                    {scans.slice(0, 10).map((scan) => (
+                      <div
+                        key={scan.scan_id}
+                        className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "p-2 rounded-lg",
+                            scan.scan_type === "code" ? "bg-blue-100 text-blue-600" :
+                            scan.scan_type === "dependency" ? "bg-purple-100 text-purple-600" :
+                            "bg-amber-100 text-amber-600"
+                          )}>
+                            {getScanTypeIcon(scan.scan_type)}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900 text-sm">{scan.target_name}</p>
+                            <p className="text-xs text-slate-500">
+                              {new Date(scan.scanned_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {scan.critical_count > 0 && (
+                            <span className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 text-red-700">
+                              {scan.critical_count} critical
+                            </span>
+                          )}
+                          {scan.high_count > 0 && (
+                            <span className="px-2 py-0.5 text-xs font-medium rounded bg-orange-100 text-orange-700">
+                              {scan.high_count} high
+                            </span>
+                          )}
+                          {scan.quantum_vulnerable_count > 0 && (
+                            <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">
+                              {scan.quantum_vulnerable_count} quantum
+                            </span>
+                          )}
+                          {scan.critical_count === 0 && scan.high_count === 0 && scan.quantum_vulnerable_count === 0 && (
+                            <span className="px-2 py-0.5 text-xs font-medium rounded bg-green-100 text-green-700">
+                              Clean
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-slate-500">
+                    <Search className="h-12 w-12 mx-auto mb-2 text-slate-300" />
+                    <p>No scans recorded yet</p>
+                    <p className="text-sm mt-1">Use the Code Scanner or Dependency Analyzer tools</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Critical Findings */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-red-500" />
+                    Top Findings
+                  </CardTitle>
+                  <span className="text-sm text-slate-500">{findings.length} total</span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {findings.length > 0 ? (
+                  <div className="space-y-2 max-h-[320px] overflow-y-auto">
+                    {findings.slice(0, 10).map((finding) => (
+                      <div
+                        key={finding.id}
+                        className="p-3 border rounded-lg"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className={cn(
+                                "px-2 py-0.5 text-xs font-medium rounded capitalize",
+                                getSeverityColor(finding.severity)
+                              )}>
+                                {finding.severity}
+                              </span>
+                              <span className="text-xs text-slate-500 capitalize">{finding.scan_type}</span>
+                            </div>
+                            <p className="font-medium text-slate-900 text-sm mt-1">{finding.title}</p>
+                            {finding.file_path && (
+                              <p className="text-xs text-slate-500 mt-0.5 truncate">{finding.file_path}</p>
+                            )}
+                            {finding.algorithm && (
+                              <p className="text-xs text-slate-600 mt-1">
+                                Algorithm: <code className="bg-slate-100 px-1 rounded">{finding.algorithm}</code>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-slate-500">
+                    <ShieldCheck className="h-12 w-12 mx-auto mb-2 text-green-300" />
+                    <p className="font-medium text-slate-700">No Findings</p>
+                    <p className="text-sm">Your scans are clean</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Certificate Inventory */}
+          <Card className="mb-8">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Award className="h-5 w-5 text-amber-500" />
+                  Certificate Inventory
+                </CardTitle>
+                <span className="text-sm text-slate-500">{certificates.length} tracked</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {certificates.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-3 px-4 font-medium text-slate-600">Common Name</th>
+                        <th className="text-left py-3 px-4 font-medium text-slate-600">Issuer</th>
+                        <th className="text-right py-3 px-4 font-medium text-slate-600">Days Until Expiry</th>
+                        <th className="text-left py-3 px-4 font-medium text-slate-600">Key Type</th>
+                        <th className="text-center py-3 px-4 font-medium text-slate-600">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {certificates.map((cert) => (
+                        <tr key={cert.id} className="border-b last:border-0 hover:bg-slate-50">
+                          <td className="py-3 px-4 font-medium text-slate-900">{cert.common_name}</td>
+                          <td className="py-3 px-4 text-slate-600">{cert.issuer_cn || "-"}</td>
+                          <td className="text-right py-3 px-4">
+                            <span className={cn(
+                              "font-medium",
+                              cert.is_expired ? "text-red-600" :
+                              cert.days_until_expiry <= 30 ? "text-amber-600" :
+                              "text-slate-900"
+                            )}>
+                              {cert.is_expired ? "Expired" : cert.days_until_expiry}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">
+                              {cert.key_type} {cert.key_size && `(${cert.key_size})`}
+                            </code>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center justify-center gap-1">
+                              {cert.is_expired && (
+                                <span className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 text-red-700">Expired</span>
+                              )}
+                              {cert.is_weak_key && (
+                                <span className="px-2 py-0.5 text-xs font-medium rounded bg-orange-100 text-orange-700">Weak</span>
+                              )}
+                              {cert.quantum_vulnerable && (
+                                <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Quantum</span>
+                              )}
+                              {!cert.is_expired && !cert.is_weak_key && !cert.quantum_vulnerable && (
+                                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-500">
+                  <Award className="h-12 w-12 mx-auto mb-2 text-slate-300" />
+                  <p>No certificates tracked yet</p>
+                  <p className="text-sm mt-1">Use the Certificate Analyzer tool to scan certificates</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Quick Actions for Scanning */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <QuickActionCard
+              icon={<FileCode className="h-5 w-5 text-blue-600" />}
+              label="Code Scanner"
+              href="/dev/scanner"
+            />
+            <QuickActionCard
+              icon={<Package className="h-5 w-5 text-purple-600" />}
+              label="Dependencies"
+              href="/dev/dependencies"
+            />
+            <QuickActionCard
+              icon={<Award className="h-5 w-5 text-amber-600" />}
+              label="Certificates"
+              href="/dev/certificates"
+            />
+            <QuickActionCard
+              icon={<Shield className="h-5 w-5 text-green-600" />}
+              label="Compliance"
+              href="/admin/compliance"
+            />
+          </div>
+        </>
+      )}
     </AdminLayout>
   );
 }

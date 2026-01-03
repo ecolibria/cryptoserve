@@ -62,6 +62,7 @@ from app.api.keys import router as keys_router
 from app.api.usage import router as usage_router
 from app.api.algorithm_policies import router as algorithm_policies_router
 from app.api.teams import router as teams_router
+from app.api.security_dashboard import router as security_dashboard_router
 from app.models import Context
 from app.schemas.context import (
     ContextConfig,
@@ -674,6 +675,7 @@ app.include_router(keys_router)
 app.include_router(usage_router)
 app.include_router(algorithm_policies_router)
 app.include_router(teams_router)
+app.include_router(security_dashboard_router)
 
 
 @app.get("/")
