@@ -346,3 +346,104 @@ async def decrypt(
     return DecryptResponse(
         plaintext=base64.b64encode(plaintext).decode("ascii"),
     )
+
+
+# ============================================================================
+# Key Bundle Endpoint (for SDK local caching)
+# ============================================================================
+
+
+class KeyBundleRequest(BaseModel):
+    """Request for encryption key bundle."""
+    context: str = Field(..., description="Encryption context name")
+
+
+class KeyBundleResponse(BaseModel):
+    """Response containing encryption key for local caching."""
+    key: str = Field(..., description="Base64-encoded encryption key")
+    key_id: str = Field(..., description="Key identifier")
+    algorithm: str = Field(..., description="Algorithm name (e.g., AES-256-GCM)")
+    version: int = Field(..., description="Key version")
+    ttl: int = Field(default=300, description="Recommended cache TTL in seconds")
+
+
+def _get_key_size_from_algorithm(algorithm: str | None) -> int:
+    """Extract key size in bytes from algorithm name."""
+    if not algorithm:
+        return 32  # Default AES-256
+    if "128" in algorithm:
+        return 16
+    if "192" in algorithm:
+        return 24
+    return 32  # Default AES-256
+
+
+@router.post("/key-bundle", response_model=KeyBundleResponse)
+async def get_key_bundle(
+    request: Request,
+    response: Response,
+    data: KeyBundleRequest,
+    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get encryption key bundle for local caching.
+
+    Returns the current active key for a context, enabling SDK clients
+    to perform local encryption/decryption without server round-trips.
+
+    This dramatically reduces latency from ~5-50ms (server round-trip)
+    to ~0.1-0.5ms (local crypto with cached key).
+
+    Rate limits apply per identity and per context.
+    """
+    # Check rate limits
+    rate_result = await check_rate_limit(request, identity, data.context)
+    add_rate_limit_headers(response, rate_result)
+
+    # Import here to avoid circular imports
+    from sqlalchemy import select
+    from app.models.context import Context
+    from app.models.key import Key
+    from app.core.key_manager import key_manager
+
+    # 1. Get context and validate it exists
+    result = await db.execute(
+        select(Context).where(Context.name == data.context)
+    )
+    context = result.scalar_one_or_none()
+
+    if not context:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown context: {data.context}",
+        )
+
+    # 2. Check identity authorization
+    if data.context not in identity.allowed_contexts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Identity not authorized for context: {data.context}",
+        )
+
+    # 3. Get or create active key
+    key_size = _get_key_size_from_algorithm(context.algorithm)
+    key_material, key_id = await key_manager.get_or_create_key(
+        db=db,
+        context=data.context,
+        tenant_id=str(identity.tenant_id),
+        key_size=key_size,
+    )
+
+    # 4. Get key record for version info
+    key_result = await db.execute(select(Key).where(Key.id == key_id))
+    key_record = key_result.scalar_one_or_none()
+    version = key_record.version if key_record else 1
+
+    # 5. Return key bundle
+    return KeyBundleResponse(
+        key=base64.b64encode(key_material).decode("ascii"),
+        key_id=key_id,
+        algorithm=context.algorithm or "AES-256-GCM",
+        version=version,
+        ttl=300,  # 5 minutes
+    )
