@@ -89,7 +89,7 @@ async def get_assessment(
     - Categories of affected contexts
     """
     advisor = MigrationAdvisor(db)
-    assessment = await advisor.analyze_tenant(str(user.tenant_id))
+    assessment = await advisor.analyze_tenant(str(identity.tenant_id))
     return assessment
 
 
@@ -103,7 +103,7 @@ async def get_recommendations(
     Returns only contexts that need migration, sorted by risk score.
     """
     advisor = MigrationAdvisor(db)
-    assessment = await advisor.analyze_tenant(str(user.tenant_id))
+    assessment = await advisor.analyze_tenant(str(identity.tenant_id))
     return assessment.recommendations
 
 
@@ -125,7 +125,7 @@ async def get_migration_plan(
     # Get context
     result = await db.execute(
         select(Context).where(
-            Context.tenant_id == user.tenant_id,
+            Context.tenant_id == identity.tenant_id,
             Context.name == context_name,
         )
     )
@@ -156,7 +156,7 @@ async def simulate_migration(
     # Get context
     result = await db.execute(
         select(Context).where(
-            Context.tenant_id == user.tenant_id,
+            Context.tenant_id == identity.tenant_id,
             Context.name == request.contextName,
         )
     )
@@ -186,7 +186,7 @@ async def execute_migration(
     # Get context
     result = await db.execute(
         select(Context).where(
-            Context.tenant_id == user.tenant_id,
+            Context.tenant_id == identity.tenant_id,
             Context.name == request.contextName,
         )
     )
@@ -227,8 +227,8 @@ async def execute_migration(
 
     # Log the migration
     history = MigrationHistory(
-        tenant_id=user.tenant_id,
-        user_id=user.id,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
         action="algorithm_migration",
         context_name=context.name,
         previous_algorithm=previous_algorithm or "unknown",
@@ -270,7 +270,7 @@ async def execute_bulk_migration(
     # Get all contexts using the source algorithm
     result = await db.execute(
         select(Context).where(
-            Context.tenant_id == user.tenant_id,
+            Context.tenant_id == identity.tenant_id,
             Context.algorithm == request.fromAlgorithm,
         )
     )
@@ -317,8 +317,8 @@ async def execute_bulk_migration(
 
     # Log bulk migration
     history = MigrationHistory(
-        tenant_id=user.tenant_id,
-        user_id=user.id,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
         action="bulk_algorithm_migration",
         context_name=None,  # Bulk migration
         previous_algorithm=request.fromAlgorithm,
@@ -353,7 +353,7 @@ async def get_migration_history(
     """
     result = await db.execute(
         select(MigrationHistory)
-        .where(MigrationHistory.tenant_id == user.tenant_id)
+        .where(MigrationHistory.tenant_id == identity.tenant_id)
         .order_by(MigrationHistory.migrated_at.desc())
         .limit(limit)
     )

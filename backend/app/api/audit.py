@@ -53,9 +53,9 @@ async def list_audit_logs(
     offset: int = Query(0),
 ):
     """List audit logs for the current user's identities."""
-    # Get user's identity IDs
+    # Get user's identity IDs (use the identity's user_id to find all identities)
     identity_result = await db.execute(
-        select(Identity.id).where(Identity.user_id == user.id)
+        select(Identity.id).where(Identity.user_id == identity.user_id)
     )
     user_identity_ids = [row[0] for row in identity_result.fetchall()]
 
@@ -92,9 +92,9 @@ async def get_audit_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get audit statistics for the current user."""
-    # Get user's identity IDs
+    # Get user's identity IDs (use the identity's user_id to find all identities)
     identity_result = await db.execute(
-        select(Identity.id).where(Identity.user_id == user.id)
+        select(Identity.id).where(Identity.user_id == identity.user_id)
     )
     user_identity_ids = [row[0] for row in identity_result.fetchall()]
 
