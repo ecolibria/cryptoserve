@@ -181,9 +181,9 @@ class HealthChecker:
         if not settings.hkdf_salt:
             issues.append("CRYPTOSERVE_HKDF_SALT not set")
 
-        if not settings.jwt_secret:
-            issues.append("JWT_SECRET not set")
-        elif settings.jwt_secret == "change-in-production":
+        if not settings.jwt_secret_key:
+            issues.append("JWT_SECRET_KEY not set")
+        elif "change-in-production" in settings.jwt_secret_key.lower():
             issues.append("Using default JWT secret")
 
         # Check GitHub OAuth (if enabled)
