@@ -20,7 +20,6 @@ import {
   ShieldAlert,
   ClipboardCheck,
   Play,
-  Cpu,
   Lock,
   Wrench,
 } from "lucide-react";
@@ -61,7 +60,6 @@ const adminNavSections: NavSection[] = [
     items: [
       { href: "/admin/security", label: "Findings", icon: ShieldAlert },
       { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
-      { href: "/admin/settings/algorithm-policy", label: "Algorithm Policy", icon: Cpu },
       { href: "/admin/compliance", label: "Compliance", icon: ClipboardCheck },
       { href: "/admin/cbom", label: "CBOM Reports", icon: FileText },
     ],
