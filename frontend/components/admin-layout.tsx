@@ -21,6 +21,8 @@ import {
   ClipboardCheck,
   Play,
   Cpu,
+  Lock,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -35,20 +37,55 @@ interface AdminLayoutProps {
   onRefresh?: () => void;
 }
 
-const adminNavItems = [
-  { href: "/admin", label: "Overview", icon: LayoutDashboard },
-  { href: "/admin/security", label: "Security", icon: ShieldAlert },
-  { href: "/admin/users", label: "Users", icon: Users },
-  { href: "/admin/applications", label: "Applications", icon: Key },
-  { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
-  { href: "/admin/audit", label: "Audit Logs", icon: FileText },
-  { href: "/admin/contexts", label: "Contexts", icon: Settings },
-  { href: "/admin/compliance", label: "Compliance", icon: ClipboardCheck },
-  { href: "/admin/cbom", label: "CBOM Reports", icon: FileText },
-  { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/admin/playground", label: "Playground", icon: Play },
-  { href: "/admin/settings/algorithm-policy", label: "Algorithm Policy", icon: Cpu },
-  { href: "/admin/settings", label: "Settings", icon: Settings },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+interface NavSection {
+  title?: string;
+  items: NavItem[];
+}
+
+const adminNavSections: NavSection[] = [
+  {
+    items: [
+      { href: "/admin", label: "Overview", icon: LayoutDashboard },
+      { href: "/admin/users", label: "Users", icon: Users },
+      { href: "/admin/applications", label: "Applications", icon: Key },
+    ],
+  },
+  {
+    title: "Security",
+    items: [
+      { href: "/admin/security", label: "Findings", icon: ShieldAlert },
+      { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
+      { href: "/admin/settings/algorithm-policy", label: "Algorithm Policy", icon: Cpu },
+      { href: "/admin/compliance", label: "Compliance", icon: ClipboardCheck },
+      { href: "/admin/cbom", label: "CBOM Reports", icon: FileText },
+    ],
+  },
+  {
+    title: "Configuration",
+    items: [
+      { href: "/admin/contexts", label: "Contexts", icon: Lock },
+      { href: "/admin/settings", label: "Settings", icon: Wrench },
+    ],
+  },
+  {
+    title: "Monitoring",
+    items: [
+      { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
+      { href: "/admin/audit", label: "Audit Logs", icon: FileText },
+    ],
+  },
+  {
+    title: "Dev Tools",
+    items: [
+      { href: "/admin/playground", label: "Playground", icon: Play },
+    ],
+  },
 ];
 
 export function AdminLayout({
@@ -143,27 +180,38 @@ export function AdminLayout({
 
           {/* Navigation */}
           <nav className="flex flex-1 flex-col">
-            <ul role="list" className="flex flex-1 flex-col gap-y-1">
-              {adminNavItems.map((item) => {
-                const isActive = pathname === item.href;
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        "group flex gap-x-3 rounded-lg p-3 text-base leading-6 font-medium transition-all",
-                        isActive
-                          ? "bg-indigo-50 text-indigo-700 shadow-sm"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                      )}
-                    >
-                      <item.icon className={cn("h-5 w-5 shrink-0", isActive ? "text-indigo-600" : "text-slate-400")} />
-                      {item.label}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="flex flex-1 flex-col gap-y-4">
+              {adminNavSections.map((section, sectionIdx) => (
+                <div key={sectionIdx}>
+                  {section.title && (
+                    <p className="px-3 mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      {section.title}
+                    </p>
+                  )}
+                  <ul role="list" className="flex flex-col gap-y-1">
+                    {section.items.map((item) => {
+                      const isActive = pathname === item.href;
+                      return (
+                        <li key={item.href}>
+                          <Link
+                            href={item.href}
+                            className={cn(
+                              "group flex gap-x-3 rounded-lg p-2.5 text-sm leading-6 font-medium transition-all",
+                              isActive
+                                ? "bg-indigo-50 text-indigo-700 shadow-sm"
+                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                            )}
+                          >
+                            <item.icon className={cn("h-5 w-5 shrink-0", isActive ? "text-indigo-600" : "text-slate-400")} />
+                            {item.label}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
           </nav>
 
           {/* User */}
@@ -217,26 +265,37 @@ export function AdminLayout({
                 <X className="h-6 w-6" />
               </button>
             </div>
-            <nav className="space-y-1">
-              {adminNavItems.map((item) => {
-                const isActive = pathname === item.href;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
-                      isActive
-                        ? "bg-blue-50 text-blue-600"
-                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                    )}
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    <item.icon className={cn("h-5 w-5", isActive ? "text-blue-600" : "text-slate-400")} />
-                    {item.label}
-                  </Link>
-                );
-              })}
+            <nav className="space-y-4">
+              {adminNavSections.map((section, sectionIdx) => (
+                <div key={sectionIdx}>
+                  {section.title && (
+                    <p className="px-3 mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      {section.title}
+                    </p>
+                  )}
+                  <div className="space-y-1">
+                    {section.items.map((item) => {
+                      const isActive = pathname === item.href;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className={cn(
+                            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
+                            isActive
+                              ? "bg-indigo-50 text-indigo-600"
+                              : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                          )}
+                          onClick={() => setMobileMenuOpen(false)}
+                        >
+                          <item.icon className={cn("h-5 w-5", isActive ? "text-indigo-600" : "text-slate-400")} />
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </nav>
           </div>
         </div>
