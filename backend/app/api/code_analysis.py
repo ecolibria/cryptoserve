@@ -564,6 +564,64 @@ async def list_detectable_algorithms(
     return code_scanner.get_detectable_algorithms()
 
 
+@router.get("/recommendations")
+async def get_recommendations(
+    identity: Annotated[Identity, Depends(get_sdk_identity)],
+):
+    """Get general cryptographic recommendations.
+
+    Returns best practice recommendations for cryptographic implementations
+    without requiring code to scan.
+    """
+    return {
+        "recommendations": [
+            {
+                "category": "symmetric_encryption",
+                "recommended": ["AES-256-GCM", "ChaCha20-Poly1305"],
+                "avoid": ["DES", "3DES", "RC4", "AES-ECB"],
+                "reason": "Use authenticated encryption with minimum 256-bit keys",
+            },
+            {
+                "category": "hashing",
+                "recommended": ["SHA-256", "SHA-384", "SHA-512", "SHA3-256", "BLAKE3"],
+                "avoid": ["MD5", "SHA-1"],
+                "reason": "Use SHA-2 or SHA-3 family with minimum 256-bit output",
+            },
+            {
+                "category": "password_hashing",
+                "recommended": ["Argon2id", "bcrypt", "scrypt"],
+                "avoid": ["MD5", "SHA-1", "SHA-256 (without KDF)"],
+                "reason": "Use memory-hard KDFs designed for password storage",
+            },
+            {
+                "category": "asymmetric_encryption",
+                "recommended": ["RSA-OAEP (2048+)", "ECIES-P256", "X25519"],
+                "avoid": ["RSA-PKCS1v15", "RSA < 2048 bits"],
+                "reason": "Use OAEP padding, minimum 2048-bit RSA, or elliptic curves",
+            },
+            {
+                "category": "digital_signatures",
+                "recommended": ["Ed25519", "ECDSA-P256", "RSA-PSS (2048+)"],
+                "avoid": ["RSA-PKCS1v15 signatures", "DSA"],
+                "reason": "Use Ed25519 for performance, ECDSA for compatibility",
+            },
+            {
+                "category": "post_quantum",
+                "recommended": ["ML-KEM (Kyber)", "ML-DSA (Dilithium)"],
+                "avoid": ["RSA/ECDSA for long-term secrets"],
+                "reason": "Plan migration to PQC for data with > 10 year protection needs",
+            },
+        ],
+        "general_guidance": [
+            "Always use authenticated encryption (AEAD) modes like GCM",
+            "Never implement your own cryptographic algorithms",
+            "Use established libraries (cryptography, libsodium, OpenSSL)",
+            "Rotate keys regularly based on data sensitivity",
+            "Start planning post-quantum migration for sensitive data",
+        ],
+    }
+
+
 @router.post("/cbom", response_model=CBOMResponse)
 async def generate_cbom(
     data: CodeScanRequest,

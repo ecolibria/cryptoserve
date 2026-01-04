@@ -226,6 +226,13 @@ async def encrypt(
             detail="Invalid base64 plaintext",
         )
 
+    # Validate non-empty plaintext
+    if len(plaintext) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Plaintext cannot be empty",
+        )
+
     # Parse optional AAD
     associated_data = None
     if data.associated_data:

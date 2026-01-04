@@ -55,6 +55,7 @@ class ShamirShare(BaseModel):
     """A single Shamir share."""
     index: int
     value: str = Field(..., description="Share value (base64 encoded)")
+    threshold: int = Field(..., description="Minimum shares needed to reconstruct")
 
 
 class ShamirSplitResponse(BaseModel):
@@ -117,7 +118,11 @@ async def shamir_split(
 
     return ShamirSplitResponse(
         shares=[
-            ShamirShare(index=share.x, value=base64.b64encode(share.y).decode("ascii"))
+            ShamirShare(
+                index=share.x,
+                value=base64.b64encode(share.y).decode("ascii"),
+                threshold=data.threshold,
+            )
             for share in shares
         ],
         threshold=data.threshold,
@@ -137,13 +142,20 @@ async def shamir_combine(
     """
     try:
         # Convert API shares to engine Share objects
-        # Threshold is inferred from the number of shares provided
-        # Total is unknown, but we set it to threshold since combine only needs threshold shares
-        num_shares = len(data.shares)
+        # Get threshold from the first share (all shares should have same threshold)
+        if not data.shares:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No shares provided",
+            )
+
+        threshold = data.shares[0].threshold
         shares = [
-            Share(x=s.index, y=base64.b64decode(s.value), threshold=num_shares, total=num_shares)
+            Share(x=s.index, y=base64.b64decode(s.value), threshold=threshold, total=threshold)
             for s in data.shares
         ]
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

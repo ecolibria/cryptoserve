@@ -740,6 +740,7 @@ async def upload_cbom(
 
     # Create inventory report
     report = CryptoInventoryReport(
+        tenant_id=identity.tenant_id,
         user_id=str(identity.user_id),
         identity_id=str(identity.id),
         identity_name=identity.name,
