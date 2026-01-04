@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.backup import BackupService, BackupManifest, backup_service
 from app.models import Tenant, User, Context, Key, KeyStatus
+from app import __version__ as cryptoserve_version
 
 
 @pytest.fixture
@@ -174,8 +175,8 @@ class TestBackupCreateRestore:
         # Read back the manifest
         manifest = await backup_service.get_backup_info(backup_path, password)
 
-        assert manifest.version == "1.0.0"
-        assert manifest.cryptoserve_version == "1.0.0"
+        assert manifest.version == "1.0.0"  # Backup format version
+        assert manifest.cryptoserve_version == cryptoserve_version
         assert manifest.checksum is not None
         assert len(manifest.checksum) == 64  # SHA-256 hex length
 

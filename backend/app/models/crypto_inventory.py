@@ -127,7 +127,7 @@ class CryptoInventoryReport(Base):
     violations: Mapped[dict] = mapped_column(JSON, default=list)
     warnings: Mapped[dict] = mapped_column(JSON, default=list)
 
-    # QBOM export data (optional, for premium)
+    # QBOM export data (optional)
     qbom_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # PQC-Bench recommendations (optional)

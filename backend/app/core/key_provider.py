@@ -2,10 +2,8 @@
 
 Defines an interface for key storage and derivation that can be implemented
 by different backends:
-- LocalKeyProvider: In-memory key derivation (default, OSS)
-- CloudHSMKeyProvider: AWS CloudHSM integration (Premium)
-- AzureHSMKeyProvider: Azure Dedicated HSM (Premium)
-- VaultKeyProvider: HashiCorp Vault Transit (Premium)
+- LocalKeyProvider: In-memory key derivation (default)
+- Future: CloudHSM, Azure HSM, Vault integrations
 
 This abstraction allows crypto-serve to work with different key management
 systems while maintaining a consistent API.
@@ -130,8 +128,7 @@ class KeyProvider(ABC):
             Wrapped key data
         """
         raise NotImplementedError(
-            f"{self.provider_type.value} does not support key wrapping. "
-            "This is a premium feature."
+            f"{self.provider_type.value} does not support key wrapping."
         )
 
     async def unwrap_key(
@@ -150,8 +147,7 @@ class KeyProvider(ABC):
             Unwrapped key material
         """
         raise NotImplementedError(
-            f"{self.provider_type.value} does not support key unwrapping. "
-            "This is a premium feature."
+            f"{self.provider_type.value} does not support key unwrapping."
         )
 
     async def rotate_key(

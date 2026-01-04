@@ -396,37 +396,6 @@ class TestRiskScore:
 
 
 # =============================================================================
-# Premium Features Tests
-# =============================================================================
-
-class TestPremiumFeatures:
-    """Tests for premium feature indicators."""
-
-    def test_premium_features_list(self):
-        """Test premium features are defined correctly."""
-        from app.api.compliance import PREMIUM_FEATURES
-
-        assert len(PREMIUM_FEATURES) == 6
-
-        feature_names = [f.name for f in PREMIUM_FEATURES]
-        assert "Evidence Packages" in feature_names
-        assert "Crypto-Shredding" in feature_names
-        assert "Detailed Risk Scoring" in feature_names
-        assert "Compliance Alerting" in feature_names
-        assert "PDF Reports" in feature_names
-        assert "Historical Trends" in feature_names
-
-    def test_premium_feature_categories(self):
-        """Test premium features have valid categories."""
-        from app.api.compliance import PREMIUM_FEATURES
-
-        valid_categories = ["audit", "retention", "risk", "monitoring", "reporting", "analytics"]
-
-        for feature in PREMIUM_FEATURES:
-            assert feature.category in valid_categories
-
-
-# =============================================================================
 # Response Model Tests
 # =============================================================================
 
@@ -481,7 +450,7 @@ class TestResponseModels:
 
         assert summary.overall_score == 25
         assert summary.risk_level == RiskLevel.MEDIUM
-        assert len(summary.premium_features_available) > 0
+        assert summary.high_risk_contexts == 2
 
     def test_data_inventory_item_model(self):
         """Test DataInventoryItem model."""
@@ -517,7 +486,7 @@ class TestResponseModels:
 
         assert summary.total_contexts == 10
         assert summary.pii_count == 5
-        assert len(summary.premium_features_available) > 0
+        assert summary.quantum_safe_count == 3
 
     def test_compliance_report_model(self):
         """Test ComplianceReport model."""
