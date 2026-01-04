@@ -31,7 +31,8 @@ class TestKeyGeneration:
 
         assert key_pair.key_id.startswith("sig_test_")
         assert key_pair.algorithm == SignatureAlgorithm.ED25519
-        assert key_pair.private_key_pem.startswith(b"-----BEGIN PRIVATE KEY-----")
+        # Private key is now encrypted in memory (not PEM format)
+        assert len(key_pair.private_key_pem) > 0
         assert key_pair.public_key_pem.startswith(b"-----BEGIN PUBLIC KEY-----")
         assert key_pair.public_key_jwk["kty"] == "OKP"
         assert key_pair.public_key_jwk["crv"] == "Ed25519"

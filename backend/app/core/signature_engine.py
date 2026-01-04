@@ -14,10 +14,17 @@ Key features:
 - Deterministic signatures (no random nonce issues)
 - Key pair generation with secure storage
 - Multiple output formats (raw, DER, PEM)
+
+Security Notes:
+- Private keys are encrypted in memory using a session key
+- For production use, integrate with HSM or secure key storage
+- Session keys are regenerated on each engine instantiation
 """
 
 import base64
 import json
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -25,6 +32,9 @@ from typing import Optional
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, ec
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+logger = logging.getLogger(__name__)
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
@@ -135,8 +145,55 @@ class SignatureEngine:
     }
 
     def __init__(self):
-        # In-memory key cache (production would use HSM/database)
+        """Initialize signature engine with encrypted key storage.
+
+        WARNING: This implementation stores encrypted private keys in memory.
+        For production deployments, integrate with:
+        - Hardware Security Module (HSM)
+        - Cloud KMS (AWS KMS, GCP Cloud HSM, Azure Key Vault)
+        - Secure enclave storage
+
+        The session encryption key is generated fresh on each instantiation
+        and is used to protect private keys at rest in memory.
+        """
+        # Generate session key for encrypting private keys in memory
+        # This protects against memory scraping if the process is compromised
+        self._session_key = os.urandom(32)  # AES-256 key
+        self._cipher = AESGCM(self._session_key)
+
+        # In-memory key cache with encrypted private keys
         self._keys: dict[str, SigningKeyPair] = {}
+
+        logger.info(
+            "SignatureEngine initialized with encrypted key storage. "
+            "For production, use HSM integration."
+        )
+
+    def _encrypt_private_key(self, private_key_pem: bytes) -> bytes:
+        """Encrypt private key for storage using session key.
+
+        Args:
+            private_key_pem: Unencrypted PEM-encoded private key
+
+        Returns:
+            Encrypted key blob: nonce (12 bytes) || ciphertext
+        """
+        nonce = os.urandom(12)
+        ciphertext = self._cipher.encrypt(nonce, private_key_pem, None)
+        return nonce + ciphertext
+
+    def _decrypt_private_key(self, encrypted_key: bytes) -> bytes:
+        """Decrypt private key from storage.
+
+        Args:
+            encrypted_key: Encrypted key blob from _encrypt_private_key
+
+        Returns:
+            Decrypted PEM-encoded private key
+        """
+        nonce = encrypted_key[:12]
+        ciphertext = encrypted_key[12:]
+        return self._cipher.decrypt(nonce, ciphertext, None)
 
     def generate_key_pair(
         self,
@@ -221,17 +278,20 @@ class SignatureEngine:
         else:
             raise UnsupportedAlgorithmError(f"Algorithm {algorithm} not yet implemented")
 
+        # Encrypt private key before storage
+        encrypted_private_pem = self._encrypt_private_key(private_pem)
+
         key_pair = SigningKeyPair(
             key_id=key_id,
             algorithm=algorithm,
-            private_key_pem=private_pem,
+            private_key_pem=encrypted_private_pem,  # Stored encrypted
             public_key_pem=public_pem,
             public_key_jwk=public_jwk,
             created_at=datetime.now(timezone.utc),
             context=context,
         )
 
-        # Cache the key
+        # Cache the key (with encrypted private key)
         self._keys[key_id] = key_pair
 
         return key_pair
@@ -256,15 +316,18 @@ class SignatureEngine:
         if not key_pair:
             raise KeyNotFoundError(f"Signing key not found: {key_id}")
 
+        # Decrypt private key from storage
+        decrypted_pem = self._decrypt_private_key(key_pair.private_key_pem)
+
         if key_pair.algorithm == SignatureAlgorithm.ED25519:
             private_key = ed25519.Ed25519PrivateKey.from_private_bytes(
-                self._extract_raw_private_key(key_pair.private_key_pem, "ed25519")
+                self._extract_raw_private_key(decrypted_pem, "ed25519")
             )
             signature = private_key.sign(message)
 
         elif key_pair.algorithm in [SignatureAlgorithm.ECDSA_P256, SignatureAlgorithm.ECDSA_P384]:
             private_key = serialization.load_pem_private_key(
-                key_pair.private_key_pem, password=None
+                decrypted_pem, password=None  # Use decrypted PEM
             )
             # Use SHA-256 for P-256, SHA-384 for P-384
             hash_alg = hashes.SHA256() if key_pair.algorithm == SignatureAlgorithm.ECDSA_P256 else hashes.SHA384()

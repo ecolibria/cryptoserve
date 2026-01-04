@@ -188,6 +188,7 @@ class SecretSharingEngine:
     """
 
     MAX_SHARES = 255  # Limited by GF(256) field size
+    MAX_SECRET_SIZE = 1024 * 1024  # 1 MB limit to prevent memory exhaustion
 
     def split(
         self,
@@ -216,6 +217,10 @@ class SecretSharingEngine:
             raise SecretSharingError(f"Maximum {self.MAX_SHARES} shares supported")
         if not secret:
             raise SecretSharingError("Secret cannot be empty")
+        if len(secret) > self.MAX_SECRET_SIZE:
+            raise SecretSharingError(
+                f"Secret size {len(secret)} exceeds maximum {self.MAX_SECRET_SIZE} bytes"
+            )
 
         # Initialize GF256 tables
         GF256._init_tables()
