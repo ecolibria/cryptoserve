@@ -1353,6 +1353,8 @@ export default function AdminPoliciesPage() {
             </Card>
           </>
         )}
+          </>
+        )}
 
         {/* Classification Tab Content */}
         {activeTab === "classification" && (
