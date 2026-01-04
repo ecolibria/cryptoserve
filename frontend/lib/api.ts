@@ -1983,6 +1983,37 @@ export const api = {
     if (params?.limit) query.set("limit", String(params.limit));
     return fetchApi(`/api/v1/audit-log?${query}`) as Promise<AuditLogPaginatedResponse>;
   },
+
+  // Migration Dashboard
+  getMigrationAssessment: () =>
+    fetchApi("/api/migration/assessment") as Promise<MigrationAssessment>,
+
+  getMigrationRecommendations: () =>
+    fetchApi("/api/migration/recommendations") as Promise<MigrationRecommendation[]>,
+
+  getMigrationPlan: (contextName: string, targetAlgorithm: string) =>
+    fetchApi(`/api/migration/plan/${encodeURIComponent(contextName)}?target_algorithm=${encodeURIComponent(targetAlgorithm)}`) as Promise<MigrationPlan>,
+
+  simulateMigration: (contextName: string, newAlgorithm: string) =>
+    fetchApi("/api/migration/simulate", {
+      method: "POST",
+      body: JSON.stringify({ contextName, newAlgorithm }),
+    }) as Promise<MigrationPreview>,
+
+  executeMigration: (contextName: string, newAlgorithm: string) =>
+    fetchApi("/api/migration/execute", {
+      method: "POST",
+      body: JSON.stringify({ contextName, newAlgorithm }),
+    }) as Promise<MigrationResult>,
+
+  executeBulkMigration: (fromAlgorithm: string, toAlgorithm: string) =>
+    fetchApi("/api/migration/execute-bulk", {
+      method: "POST",
+      body: JSON.stringify({ fromAlgorithm, toAlgorithm }),
+    }) as Promise<BulkMigrationResult>,
+
+  getMigrationHistory: (limit: number = 50) =>
+    fetchApi(`/api/migration/history?limit=${limit}`) as Promise<MigrationHistoryEntry[]>,
 };
 
 // =============================================================================
@@ -2125,4 +2156,112 @@ export interface AuditLogPaginatedResponse {
   total: number;
   page: number;
   totalPages: number;
+}
+
+// =============================================================================
+// Migration Dashboard Types
+// =============================================================================
+
+export interface RiskScore {
+  score: number;
+  level: "critical" | "high" | "medium" | "low";
+  factors: string[];
+}
+
+export interface MigrationRecommendation {
+  priority: number;
+  contextName: string;
+  contextDisplayName: string;
+  currentAlgorithm: string;
+  recommendedAlgorithm: string;
+  reason: string;
+  vulnerabilities: string[];
+  urgency: "immediate" | "soon" | "planned";
+  compatibility: "direct" | "requires-key-rotation" | "requires-reencryption";
+  estimatedImpact: "low" | "medium" | "high";
+  riskScore: RiskScore;
+  steps: string[];
+}
+
+export interface RiskCategory {
+  count: number;
+  contexts: string[];
+}
+
+export interface QuantumReadiness {
+  percentage: number;
+  contextsUsingPQC: number;
+  contextsNeedingPQC: number;
+  recommendation: string;
+}
+
+export interface MigrationAssessment {
+  overallRiskScore: number;
+  overallLevel: "critical" | "high" | "medium" | "low";
+  summary: string;
+  categories: {
+    critical: RiskCategory;
+    high: RiskCategory;
+    medium: RiskCategory;
+    low: RiskCategory;
+  };
+  recommendations: MigrationRecommendation[];
+  quantumReadiness: QuantumReadiness;
+  totalContexts: number;
+  contextsNeedingMigration: number;
+}
+
+export interface MigrationStep {
+  order: number;
+  action: string;
+  description: string;
+  automated: boolean;
+}
+
+export interface MigrationPlan {
+  contextName: string;
+  currentAlgorithm: string;
+  targetAlgorithm: string;
+  steps: MigrationStep[];
+  warnings: string[];
+  estimatedDuration: string;
+  rollbackSteps: string[];
+}
+
+export interface MigrationPreview {
+  contextName: string;
+  currentAlgorithm: string;
+  newAlgorithm: string;
+  impactSummary: {
+    requiresKeyRederivation: boolean;
+    affectedFields: string[];
+    estimatedDowntime: string;
+    compatibility: string;
+  };
+  warnings: string[];
+  canProceed: boolean;
+}
+
+export interface MigrationResult {
+  success: boolean;
+  contextName: string;
+  previousAlgorithm: string;
+  newAlgorithm: string;
+  message: string;
+}
+
+export interface BulkMigrationResult {
+  success: boolean;
+  migratedCount: number;
+  failedCount: number;
+  results: MigrationResult[];
+}
+
+export interface MigrationHistoryEntry {
+  contextName: string;
+  previousAlgorithm: string;
+  newAlgorithm: string;
+  migratedAt: string;
+  migratedBy: string;
+  success: boolean;
 }

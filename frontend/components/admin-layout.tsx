@@ -22,6 +22,7 @@ import {
   Play,
   Lock,
   Wrench,
+  ArrowRightLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -60,6 +61,7 @@ const adminNavSections: NavSection[] = [
     items: [
       { href: "/admin/security", label: "Findings", icon: ShieldAlert },
       { href: "/admin/policies", label: "Policies", icon: ShieldCheck },
+      { href: "/admin/migration", label: "Migration", icon: ArrowRightLeft },
       { href: "/admin/compliance", label: "Compliance", icon: ClipboardCheck },
       { href: "/admin/cbom", label: "CBOM Reports", icon: FileText },
     ],
