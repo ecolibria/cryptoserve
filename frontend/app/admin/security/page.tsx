@@ -960,12 +960,19 @@ export default function SecurityCommandCenter() {
                               </p>
                             )}
                           </div>
-                          <div className={cn(
-                            "flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border",
-                            statusStyle.color
-                          )}>
-                            <StatusIcon className="h-3 w-3" />
-                            <span className="capitalize">{finding.status.replace("_", " ")}</span>
+                          <div className="flex flex-col items-end gap-1">
+                            <div className={cn(
+                              "flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border",
+                              statusStyle.color
+                            )}>
+                              <StatusIcon className="h-3 w-3" />
+                              <span className="capitalize">{finding.status.replace("_", " ")}</span>
+                            </div>
+                            {finding.status_reason && (
+                              <span className="text-xs text-slate-500 italic max-w-[150px] text-right">
+                                {finding.status_reason}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
