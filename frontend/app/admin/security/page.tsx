@@ -45,6 +45,7 @@ import {
   ScanDashboardStats,
   ScanSummary,
   FindingSummary,
+  FindingStatus,
   CertificateSummary,
   ScanTrendPoint,
 } from "@/lib/api";
@@ -206,6 +207,17 @@ export default function SecurityCommandCenter() {
       case "medium": return "text-amber-600 bg-amber-50";
       case "low": return "text-blue-600 bg-blue-50";
       default: return "text-slate-600 bg-slate-50";
+    }
+  };
+
+  const getStatusStyle = (status: FindingStatus) => {
+    switch (status) {
+      case "open": return { color: "text-blue-600 bg-blue-50 border-blue-200", icon: AlertCircle };
+      case "resolved": return { color: "text-green-600 bg-green-50 border-green-200", icon: CheckCircle2 };
+      case "accepted": return { color: "text-slate-600 bg-slate-50 border-slate-200", icon: CheckCircle2 };
+      case "false_positive": return { color: "text-purple-600 bg-purple-50 border-purple-200", icon: XCircle };
+      case "in_progress": return { color: "text-amber-600 bg-amber-50 border-amber-200", icon: Clock };
+      default: return { color: "text-slate-600 bg-slate-50 border-slate-200", icon: AlertCircle };
     }
   };
 
@@ -911,14 +923,20 @@ export default function SecurityCommandCenter() {
               <CardContent>
                 {findings.length > 0 ? (
                   <div className="space-y-2 max-h-[320px] overflow-y-auto">
-                    {findings.slice(0, 10).map((finding) => (
+                    {findings.slice(0, 10).map((finding) => {
+                      const statusStyle = getStatusStyle(finding.status);
+                      const StatusIcon = statusStyle.icon;
+                      return (
                       <div
                         key={finding.id}
-                        className="p-3 border rounded-lg"
+                        className={cn(
+                          "p-3 border rounded-lg",
+                          finding.status === "resolved" && "opacity-60"
+                        )}
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className={cn(
                                 "px-2 py-0.5 text-xs font-medium rounded capitalize",
                                 getSeverityColor(finding.severity)
@@ -926,6 +944,11 @@ export default function SecurityCommandCenter() {
                                 {finding.severity}
                               </span>
                               <span className="text-xs text-slate-500 capitalize">{finding.scan_type}</span>
+                              {finding.is_new && (
+                                <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-100 text-blue-700">
+                                  New
+                                </span>
+                              )}
                             </div>
                             <p className="font-medium text-slate-900 text-sm mt-1">{finding.title}</p>
                             {finding.file_path && (
@@ -937,9 +960,16 @@ export default function SecurityCommandCenter() {
                               </p>
                             )}
                           </div>
+                          <div className={cn(
+                            "flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border",
+                            statusStyle.color
+                          )}>
+                            <StatusIcon className="h-3 w-3" />
+                            <span className="capitalize">{finding.status.replace("_", " ")}</span>
+                          </div>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-slate-500">

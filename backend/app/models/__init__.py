@@ -23,6 +23,7 @@ from app.models.security_scan import (
     CertificateInventory,
     ScanType,
     SeverityLevel,
+    FindingStatus,
 )
 
 __all__ = [
@@ -63,4 +64,5 @@ __all__ = [
     "CertificateInventory",
     "ScanType",
     "SeverityLevel",
+    "FindingStatus",
 ]

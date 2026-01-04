@@ -26,6 +26,7 @@ from app.models import (
     CertificateInventory,
     ScanType,
     SeverityLevel,
+    FindingStatus,
 )
 
 router = APIRouter(prefix="/api/admin/security-dashboard", tags=["security-dashboard"])
@@ -88,6 +89,24 @@ class FindingSummary(BaseModel):
     file_path: str | None
     recommendation: str | None
     scanned_at: datetime
+    status: str
+    status_reason: str | None = None
+    is_new: bool = True  # New finding vs recurring from previous scan
+
+
+class UpdateFindingStatusRequest(BaseModel):
+    """Request to update finding status."""
+    status: FindingStatus
+    reason: str | None = Field(None, max_length=500, description="Reason for status change")
+
+
+class UpdateFindingStatusResponse(BaseModel):
+    """Response after updating finding status."""
+    id: int
+    status: str
+    status_reason: str | None
+    status_updated_at: datetime | None
+    status_updated_by: str | None
 
 
 class CertificateSummary(BaseModel):
@@ -313,13 +332,16 @@ async def list_findings(
     db: AsyncSession = Depends(get_db),
     severity: SeverityLevel | None = None,
     scan_type: ScanType | None = None,
+    finding_status: FindingStatus | None = Query(default=None, alias="status"),
+    hide_accepted: bool = Query(default=False, description="Hide accepted/resolved findings"),
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=50, ge=1, le=200),
 ):
     """List security findings.
 
     Returns a list of individual security findings.
-    Optionally filter by severity or scan type.
+    Optionally filter by severity, scan type, or status.
+    Use hide_accepted=true to exclude accepted/resolved/false_positive findings.
     """
     if not current_user.is_admin:
         raise HTTPException(
@@ -341,6 +363,13 @@ async def list_findings(
     if scan_type:
         query = query.where(SecurityScan.scan_type == scan_type)
 
+    if finding_status:
+        query = query.where(SecurityFinding.status == finding_status)
+    elif hide_accepted:
+        query = query.where(
+            SecurityFinding.status.in_([FindingStatus.OPEN, FindingStatus.IN_PROGRESS])
+        )
+
     query = query.order_by(
         desc(SecurityFinding.severity),
         desc(SecurityScan.scanned_at)
@@ -360,9 +389,109 @@ async def list_findings(
             file_path=finding.file_path,
             recommendation=finding.recommendation,
             scanned_at=scan.scanned_at,
+            status=finding.status.value,
+            status_reason=finding.status_reason,
+            is_new=finding.is_new,
         )
         for finding, scan in rows
     ]
+
+
+@router.patch("/findings/{finding_id}", response_model=UpdateFindingStatusResponse)
+async def update_finding_status(
+    finding_id: int,
+    request: UpdateFindingStatusRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the status of a security finding.
+
+    Use this to mark findings as:
+    - accepted: Risk acknowledged, won't fix (e.g., by design)
+    - resolved: Issue has been fixed
+    - false_positive: Not a real issue
+    - in_progress: Currently being worked on
+    - open: Reset to open status
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    result = await db.execute(
+        select(SecurityFinding).where(SecurityFinding.id == finding_id)
+    )
+    finding = result.scalar_one_or_none()
+
+    if not finding:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Finding {finding_id} not found",
+        )
+
+    finding.status = request.status
+    finding.status_reason = request.reason
+    finding.status_updated_by = str(current_user.id)
+    finding.status_updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(finding)
+
+    return UpdateFindingStatusResponse(
+        id=finding.id,
+        status=finding.status.value,
+        status_reason=finding.status_reason,
+        status_updated_at=finding.status_updated_at,
+        status_updated_by=finding.status_updated_by,
+    )
+
+
+@router.post("/findings/bulk-status", response_model=dict)
+async def bulk_update_finding_status(
+    request: UpdateFindingStatusRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+    finding_ids: list[int] = Query(..., description="List of finding IDs to update"),
+):
+    """Bulk update status of multiple findings.
+
+    Useful for marking multiple findings as accepted at once.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    if len(finding_ids) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum 100 findings per request",
+        )
+
+    result = await db.execute(
+        select(SecurityFinding).where(SecurityFinding.id.in_(finding_ids))
+    )
+    findings = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    updated_count = 0
+
+    for finding in findings:
+        finding.status = request.status
+        finding.status_reason = request.reason
+        finding.status_updated_by = str(current_user.id)
+        finding.status_updated_at = now
+        updated_count += 1
+
+    await db.commit()
+
+    return {
+        "updated": updated_count,
+        "requested": len(finding_ids),
+        "status": request.status.value,
+    }
 
 
 @router.get("/certificates", response_model=list[CertificateSummary])

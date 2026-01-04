@@ -1031,6 +1031,8 @@ export interface ScanDashboardStats {
   expired: number;
 }
 
+export type FindingStatus = "open" | "accepted" | "resolved" | "false_positive" | "in_progress";
+
 export interface FindingSummary {
   id: number;
   severity: SeverityLevel;
@@ -1041,6 +1043,9 @@ export interface FindingSummary {
   file_path: string | null;
   recommendation: string | null;
   scanned_at: string;
+  status: FindingStatus;
+  status_reason: string | null;
+  is_new: boolean;
 }
 
 export interface CertificateSummary {
@@ -1512,12 +1517,16 @@ export const api = {
   listSecurityFindings: (params?: {
     severity?: SeverityLevel;
     scan_type?: ScanType;
+    status?: FindingStatus;
+    hide_accepted?: boolean;
     days?: number;
     limit?: number;
   }) => {
     const query = new URLSearchParams();
     if (params?.severity) query.set("severity", params.severity);
     if (params?.scan_type) query.set("scan_type", params.scan_type);
+    if (params?.status) query.set("status", params.status);
+    if (params?.hide_accepted !== undefined) query.set("hide_accepted", String(params.hide_accepted));
     if (params?.days) query.set("days", String(params.days));
     if (params?.limit) query.set("limit", String(params.limit));
     return fetchApi(`/api/admin/security-dashboard/findings?${query}`) as Promise<FindingSummary[]>;

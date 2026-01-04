@@ -4,20 +4,29 @@ Provides AST-based source code scanning for cryptographic detection.
 """
 
 import base64
+import hashlib
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import User, SecurityScan, SecurityFinding, ScanType, SeverityLevel
+from app.models import User, SecurityScan, SecurityFinding, ScanType, SeverityLevel, FindingStatus
 from app.core.code_scanner import (
     CodeScanner,
     CodeScannerError,
     Language,
 )
 from app.auth.jwt import get_dashboard_or_sdk_user
+
+
+def compute_finding_fingerprint(target_name: str, file_path: str | None, algorithm: str | None, title: str, line_number: int | None) -> str:
+    """Compute a fingerprint for deduplication across scans."""
+    data = f"{target_name}|{file_path or ''}|{algorithm or ''}|{title}|{line_number or ''}"
+    return hashlib.sha256(data.encode()).hexdigest()[:32]
 
 router = APIRouter(prefix="/api/v1/code", tags=["code-analysis"])
 
@@ -162,6 +171,21 @@ async def scan_code(
         quantum_vulnerable = sum(1 for u in result.usages if u.quantum_risk.value in ["high", "critical"])
         quantum_safe = sum(1 for u in result.usages if u.quantum_risk.value in ["none", "low"])
 
+        # Find previous OPEN findings for this target to compare
+        previous_findings_result = await db.execute(
+            select(SecurityFinding)
+            .join(SecurityScan)
+            .where(
+                and_(
+                    SecurityScan.tenant_id == user.tenant_id,
+                    SecurityScan.target_name == target_name,
+                    SecurityScan.scan_type == ScanType.CODE,
+                    SecurityFinding.status == FindingStatus.OPEN,
+                )
+            )
+        )
+        previous_findings = {f.fingerprint: f for f in previous_findings_result.scalars().all() if f.fingerprint}
+
         # Create SecurityScan record
         scan_record = SecurityScan(
             tenant_id=user.tenant_id,
@@ -190,6 +214,9 @@ async def scan_code(
         db.add(scan_record)
         await db.flush()
 
+        # Track new fingerprints to identify resolved issues
+        new_fingerprints = set()
+
         # Create SecurityFinding records for each finding
         for f in result.findings:
             sev_str = f.severity.value.lower()
@@ -197,6 +224,13 @@ async def scan_code(
                 severity = SeverityLevel(sev_str)
             except ValueError:
                 severity = SeverityLevel.LOW
+
+            fingerprint = compute_finding_fingerprint(target_name, f.file_path, f.algorithm, f.title, f.line_number)
+            new_fingerprints.add(fingerprint)
+
+            # Check if this is a recurring finding
+            is_new = fingerprint not in previous_findings
+            first_seen_scan_id = scan_record.id if is_new else previous_findings.get(fingerprint, None) and previous_findings[fingerprint].first_seen_scan_id
 
             finding_record = SecurityFinding(
                 scan_id=scan_record.id,
@@ -208,35 +242,55 @@ async def scan_code(
                 algorithm=f.algorithm,
                 cwe=f.cwe,
                 recommendation=f.recommendation,
+                fingerprint=fingerprint,
+                is_new=is_new,
+                first_seen_scan_id=first_seen_scan_id or scan_record.id,
             )
             db.add(finding_record)
 
-        # Also create findings for weak/deprecated usages
+        # Also create findings for quantum-vulnerable usages (skip if already in findings)
         for u in result.usages:
-            if u.is_weak:
+            if u.quantum_risk.value in ["high", "critical"]:
                 qr = u.quantum_risk.value.lower()
-                if qr in ["critical"]:
-                    severity = SeverityLevel.CRITICAL
-                elif qr in ["high"]:
-                    severity = SeverityLevel.HIGH
-                else:
-                    severity = SeverityLevel.MEDIUM
+                severity = SeverityLevel.HIGH if qr == "high" else SeverityLevel.MEDIUM
+
+                title = f"Quantum Vulnerable: {u.algorithm.upper()}"
+                fingerprint = compute_finding_fingerprint(target_name, u.file_path, u.algorithm, title, u.line_number)
+
+                # Skip if this fingerprint was already created from result.findings
+                if fingerprint in new_fingerprints:
+                    continue
+
+                new_fingerprints.add(fingerprint)
+
+                is_new = fingerprint not in previous_findings
 
                 finding_record = SecurityFinding(
                     scan_id=scan_record.id,
                     severity=severity,
-                    title=f"Weak crypto: {u.algorithm}",
-                    description=u.weakness_reason or f"Weak cryptographic algorithm detected: {u.algorithm}",
+                    title=title,
+                    description=f"Algorithm {u.algorithm} is vulnerable to quantum computing attacks",
                     file_path=u.file_path,
                     line_number=u.line_number,
                     algorithm=u.algorithm,
                     library=u.library,
                     quantum_risk=u.quantum_risk.value,
-                    is_weak=True,
+                    is_weak=u.is_weak,
                     cwe=u.cwe,
-                    recommendation=u.recommendation,
+                    recommendation=u.recommendation or "Plan migration to post-quantum algorithms (ML-KEM, ML-DSA)",
+                    fingerprint=fingerprint,
+                    is_new=is_new,
+                    first_seen_scan_id=scan_record.id if is_new else None,
                 )
                 db.add(finding_record)
+
+        # Auto-resolve findings that were in previous scan but not in this one
+        now = datetime.now(timezone.utc)
+        for fingerprint, old_finding in previous_findings.items():
+            if fingerprint not in new_fingerprints:
+                old_finding.status = FindingStatus.RESOLVED
+                old_finding.status_reason = "Auto-resolved: not found in latest scan"
+                old_finding.status_updated_at = now
 
         await db.commit()
 

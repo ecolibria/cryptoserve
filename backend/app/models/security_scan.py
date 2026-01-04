@@ -32,6 +32,15 @@ class SeverityLevel(str, Enum):
     INFO = "info"
 
 
+class FindingStatus(str, Enum):
+    """Status of a security finding."""
+    OPEN = "open"
+    ACCEPTED = "accepted"  # Risk accepted, won't fix
+    RESOLVED = "resolved"  # Fixed
+    FALSE_POSITIVE = "false_positive"  # Not a real issue
+    IN_PROGRESS = "in_progress"  # Being worked on
+
+
 class SecurityScan(Base):
     """
     Record of a security scan (code, dependency, or certificate).
@@ -165,8 +174,33 @@ class SecurityFinding(Base):
     cwe: Mapped[str | None] = mapped_column(String(32), nullable=True)
     recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Status tracking
+    status: Mapped[FindingStatus] = mapped_column(
+        SQLEnum(FindingStatus),
+        default=FindingStatus.OPEN,
+        nullable=False,
+        index=True
+    )
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_updated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Fingerprint for deduplication - identifies same finding across scans
+    # Format: hash of (target_name, file_path, algorithm, title, line_number)
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    # Tracking across scans
+    first_seen_scan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_new: Mapped[bool] = mapped_column(Boolean, default=True)  # New in this scan vs recurring
+
     # Relationship
     scan: Mapped["SecurityScan"] = relationship("SecurityScan", back_populates="findings")
+
+    def compute_fingerprint(self, target_name: str) -> str:
+        """Compute a fingerprint for deduplication."""
+        import hashlib
+        data = f"{target_name}|{self.file_path or ''}|{self.algorithm or ''}|{self.title}|{self.line_number or ''}"
+        return hashlib.sha256(data.encode()).hexdigest()[:32]
 
     def __repr__(self) -> str:
         return f"<SecurityFinding {self.severity.value}: {self.title}>"

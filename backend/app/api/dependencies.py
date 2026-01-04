@@ -3,14 +3,17 @@
 Scans package files (package.json, requirements.txt, etc.) for crypto dependencies.
 """
 
+import hashlib
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, Field
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import User, SecurityScan, SecurityFinding, ScanType, SeverityLevel
+from app.models import User, SecurityScan, SecurityFinding, ScanType, SeverityLevel, FindingStatus
 from app.core.dependency_scanner import (
     DependencyScanner,
     DependencyScannerError,
@@ -22,6 +25,12 @@ router = APIRouter(prefix="/api/v1/dependencies", tags=["dependencies"])
 
 # Singleton scanner
 dependency_scanner = DependencyScanner()
+
+
+def compute_dependency_fingerprint(target_name: str, library: str, title: str) -> str:
+    """Compute a fingerprint for deduplication across dependency scans."""
+    data = f"{target_name}|{library}|{title}"
+    return hashlib.sha256(data.encode()).hexdigest()[:32]
 
 
 class DependencyScanRequest(BaseModel):
@@ -105,6 +114,21 @@ async def scan_dependencies(
     if data.persist:
         target_name = data.target_name or data.filename or "dependency-scan"
 
+        # Find previous OPEN findings for this target to compare
+        previous_findings_result = await db.execute(
+            select(SecurityFinding)
+            .join(SecurityScan)
+            .where(
+                and_(
+                    SecurityScan.tenant_id == user.tenant_id,
+                    SecurityScan.target_name == target_name,
+                    SecurityScan.scan_type == ScanType.DEPENDENCY,
+                    SecurityFinding.status == FindingStatus.OPEN,
+                )
+            )
+        )
+        previous_findings = {f.fingerprint: f for f in previous_findings_result.scalars().all() if f.fingerprint}
+
         # Create SecurityScan record
         scan_record = SecurityScan(
             tenant_id=user.tenant_id,
@@ -129,35 +153,72 @@ async def scan_dependencies(
         db.add(scan_record)
         await db.flush()
 
+        # Track fingerprints of new findings
+        new_fingerprints: set[str] = set()
+
         # Create findings for deprecated packages
         for dep in result.dependencies:
             if dep.is_deprecated:
+                title = f"Deprecated package: {dep.name}"
+                fingerprint = compute_dependency_fingerprint(target_name, dep.name, title)
+                new_fingerprints.add(fingerprint)
+
+                # Check if this finding existed before
+                is_new = fingerprint not in previous_findings
+                first_seen_scan_id = scan_record.id if is_new else (
+                    previous_findings[fingerprint].first_seen_scan_id or previous_findings[fingerprint].scan_id
+                )
+
                 finding_record = SecurityFinding(
                     scan_id=scan_record.id,
                     severity=SeverityLevel.CRITICAL,
-                    title=f"Deprecated package: {dep.name}",
+                    title=title,
                     description=dep.deprecation_reason or f"The package {dep.name} is deprecated",
                     algorithm=", ".join(dep.algorithms) if dep.algorithms else None,
                     library=dep.name,
                     quantum_risk=dep.quantum_risk.value,
                     is_deprecated=True,
                     recommendation=f"Replace with: {dep.recommended_replacement}" if dep.recommended_replacement else "Find a modern alternative",
+                    fingerprint=fingerprint,
+                    first_seen_scan_id=first_seen_scan_id,
+                    is_new=is_new,
                 )
                 db.add(finding_record)
 
             elif dep.quantum_risk.value in ["high", "critical"]:
+                title = f"Quantum-vulnerable: {dep.name}"
+                fingerprint = compute_dependency_fingerprint(target_name, dep.name, title)
+                new_fingerprints.add(fingerprint)
+
+                # Check if this finding existed before
+                is_new = fingerprint not in previous_findings
+                first_seen_scan_id = scan_record.id if is_new else (
+                    previous_findings[fingerprint].first_seen_scan_id or previous_findings[fingerprint].scan_id
+                )
+
                 finding_record = SecurityFinding(
                     scan_id=scan_record.id,
                     severity=SeverityLevel.HIGH,
-                    title=f"Quantum-vulnerable: {dep.name}",
+                    title=title,
                     description=f"Package {dep.name} uses algorithms vulnerable to quantum computing",
                     algorithm=", ".join(dep.algorithms) if dep.algorithms else None,
                     library=dep.name,
                     quantum_risk=dep.quantum_risk.value,
                     is_weak=False,
                     recommendation="Plan migration to post-quantum cryptography",
+                    fingerprint=fingerprint,
+                    first_seen_scan_id=first_seen_scan_id,
+                    is_new=is_new,
                 )
                 db.add(finding_record)
+
+        # Auto-resolve findings that were in previous scan but not in this one
+        now = datetime.now(timezone.utc)
+        for fingerprint, old_finding in previous_findings.items():
+            if fingerprint not in new_fingerprints:
+                old_finding.status = FindingStatus.RESOLVED
+                old_finding.status_reason = "Auto-resolved: not found in latest scan"
+                old_finding.status_updated_at = now
 
         await db.commit()
 
