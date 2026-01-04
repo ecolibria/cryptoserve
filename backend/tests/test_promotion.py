@@ -475,10 +475,15 @@ class TestCreateExpeditedRequest:
     """Tests for create_expedited_request async function."""
 
     @pytest.mark.asyncio
+    @patch("app.core.promotion.calculate_user_trust_score")
     @patch("app.core.promotion.get_context_stats")
-    async def test_create_expedited_request_critical(self, mock_stats):
+    async def test_create_expedited_request_critical(self, mock_stats, mock_trust_score):
         """Test creating a critical expedited request."""
         mock_db = AsyncMock()
+        # Mock the database add/commit/refresh
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
 
         # Create mock application
         mock_app = MagicMock()
@@ -489,6 +494,7 @@ class TestCreateExpeditedRequest:
 
         # Not ready: needs 50 ops, 24h, 2 days
         mock_stats.return_value = (10, 5.0, 1)
+        mock_trust_score.return_value = 0.75
 
         request = await create_expedited_request(
             db=mock_db,
@@ -496,6 +502,8 @@ class TestCreateExpeditedRequest:
             priority=ExpediteePriority.CRITICAL,
             justification="Production is down, critical fix needed",
             requester_email="dev@example.com",
+            requester_user_id="user_123",
+            tenant_id="tenant_123",
         )
 
         assert request.priority == ExpediteePriority.CRITICAL
@@ -503,12 +511,20 @@ class TestCreateExpeditedRequest:
         assert len(request.thresholds_bypassed) > 0
         assert request.request_id.startswith("EXP-")
         assert request.requester_email == "dev@example.com"
+        assert request.requester_trust_score == 0.75
+        # Verify db operations were called
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("app.core.promotion.calculate_user_trust_score")
     @patch("app.core.promotion.get_context_stats")
-    async def test_create_expedited_request_captures_bypassed_thresholds(self, mock_stats):
+    async def test_create_expedited_request_captures_bypassed_thresholds(self, mock_stats, mock_trust_score):
         """Test that expedited request captures all bypassed thresholds."""
         mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
 
         mock_app = MagicMock()
         mock_app.id = "app_123"
@@ -518,6 +534,7 @@ class TestCreateExpeditedRequest:
 
         # All Tier 3 requirements not met (needs 100 ops, 48h, 3 days)
         mock_stats.return_value = (25, 12.0, 1)
+        mock_trust_score.return_value = 0.5
 
         request = await create_expedited_request(
             db=mock_db,
@@ -525,6 +542,8 @@ class TestCreateExpeditedRequest:
             priority=ExpediteePriority.HIGH,
             justification="Customer deadline approaching",
             requester_email="dev@example.com",
+            requester_user_id="user_123",
+            tenant_id="tenant_123",
         )
 
         # Should have 3 bypassed thresholds (ops, hours, days)

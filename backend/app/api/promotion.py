@@ -178,9 +178,18 @@ async def request_promotion(
         )
 
     if readiness.requires_approval:
-        # Submit for admin approval
-        message = "Promotion request submitted. Awaiting admin approval for Tier 3 contexts."
-        # TODO: Create approval request record
+        # Submit for admin approval - create expedited request with NORMAL priority
+        from app.core.promotion import ExpediteePriority as CoreExpediteePriority
+        approval_request = await create_expedited_request(
+            db=db,
+            application=application,
+            priority=CoreExpediteePriority.NORMAL,
+            justification=f"Automatic approval request for promotion to {data.target_environment}",
+            requester_email=user.email,
+            requester_user_id=user.id,
+            tenant_id=user.tenant_id,
+        )
+        message = f"Promotion request submitted (#{approval_request.request_id}). Awaiting admin approval for Tier 3 contexts."
     else:
         # Auto-approve and promote
         application.environment = data.target_environment
@@ -231,13 +240,15 @@ async def request_expedited_promotion(
             detail="Cannot promote inactive application",
         )
 
-    # Create expedited request
+    # Create expedited request (now persisted to database with calculated trust score)
     request = await create_expedited_request(
         db=db,
         application=application,
         priority=data.priority,
         justification=data.justification,
         requester_email=user.email,
+        requester_user_id=user.id,
+        tenant_id=user.tenant_id,
     )
 
     # Generate response based on priority

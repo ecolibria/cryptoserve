@@ -25,6 +25,11 @@ from app.models.security_scan import (
     SeverityLevel,
     FindingStatus,
 )
+from app.models.approval import (
+    ExpeditedApprovalRequest,
+    ApprovalStatus,
+    ApprovalPriority,
+)
 
 __all__ = [
     # Multi-tenancy
@@ -65,4 +70,8 @@ __all__ = [
     "ScanType",
     "SeverityLevel",
     "FindingStatus",
+    # Approval Workflow
+    "ExpeditedApprovalRequest",
+    "ApprovalStatus",
+    "ApprovalPriority",
 ]

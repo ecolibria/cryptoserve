@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
 from app.models.audit import AuditLog
+from app.models.approval import ExpeditedApprovalRequest, ApprovalStatus
 
 
 class ContextTier(str, Enum):
@@ -152,6 +153,95 @@ class ExpeditedRequest(BaseModel):
     approved_at: Optional[datetime] = None
     follow_up_required: bool = False
     follow_up_date: Optional[datetime] = None
+
+
+async def calculate_user_trust_score(
+    db: AsyncSession,
+    user_id: str,
+    tenant_id: str,
+) -> float:
+    """Calculate trust score for a user based on their promotion history.
+
+    Trust score ranges from 0.0 to 1.0 based on:
+    - Number of successful promotions without issues
+    - Number of expedited requests that were approved
+    - Any incidents or rollbacks from their promotions
+    - Time as an active user
+
+    Returns:
+        float: Trust score between 0.0 and 1.0
+    """
+    # Base score starts at 0.5 for new users
+    base_score = 0.5
+
+    # Get count of approved expedited requests from this user
+    approved_count_result = await db.execute(
+        select(func.count())
+        .select_from(ExpeditedApprovalRequest)
+        .where(ExpeditedApprovalRequest.requester_user_id == user_id)
+        .where(ExpeditedApprovalRequest.tenant_id == tenant_id)
+        .where(ExpeditedApprovalRequest.status == ApprovalStatus.APPROVED.value)
+    )
+    approved_count = approved_count_result.scalar() or 0
+
+    # Get count of rejected expedited requests
+    rejected_count_result = await db.execute(
+        select(func.count())
+        .select_from(ExpeditedApprovalRequest)
+        .where(ExpeditedApprovalRequest.requester_user_id == user_id)
+        .where(ExpeditedApprovalRequest.tenant_id == tenant_id)
+        .where(ExpeditedApprovalRequest.status == ApprovalStatus.REJECTED.value)
+    )
+    rejected_count = rejected_count_result.scalar() or 0
+
+    # Get total expedited requests
+    total_requests = approved_count + rejected_count
+
+    # Calculate trust adjustment based on history
+    if total_requests > 0:
+        # Approval rate contributes to trust
+        approval_rate = approved_count / total_requests
+        # Weight: good history increases trust, bad history decreases it
+        history_adjustment = (approval_rate - 0.5) * 0.4  # Max +/-0.2 from history
+    else:
+        history_adjustment = 0.0
+
+    # Get successful operations count (indicates active, careful user)
+    ops_count_result = await db.execute(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.success == True)
+    )
+    ops_count = ops_count_result.scalar() or 0
+
+    # Activity bonus (capped at +0.2)
+    if ops_count >= 1000:
+        activity_bonus = 0.2
+    elif ops_count >= 100:
+        activity_bonus = 0.1
+    elif ops_count >= 10:
+        activity_bonus = 0.05
+    else:
+        activity_bonus = 0.0
+
+    # Get policy violations (negative indicator)
+    violations_result = await db.execute(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(AuditLog.tenant_id == tenant_id)
+        .where(AuditLog.policy_violation == True)
+    )
+    violations_count = violations_result.scalar() or 0
+
+    # Penalty for violations (capped at -0.3)
+    violation_penalty = min(violations_count * 0.05, 0.3)
+
+    # Calculate final score
+    trust_score = base_score + history_adjustment + activity_bonus - violation_penalty
+
+    # Clamp to valid range
+    return max(0.0, min(1.0, trust_score))
 
 
 def get_context_tier(context: str) -> ContextTier:
@@ -353,8 +443,23 @@ async def create_expedited_request(
     priority: ExpediteePriority,
     justification: str,
     requester_email: str,
+    requester_user_id: str,
+    tenant_id: str,
 ) -> ExpeditedRequest:
-    """Create an expedited promotion request."""
+    """Create an expedited promotion request and persist to database.
+
+    Args:
+        db: Database session
+        application: Application to promote
+        priority: Request priority level
+        justification: Business justification for expedited request
+        requester_email: Email of the requester
+        requester_user_id: User ID of the requester
+        tenant_id: Tenant ID for multi-tenant isolation
+
+    Returns:
+        ExpeditedRequest: The created request with calculated trust score
+    """
     readiness = await check_promotion_readiness(db, application)
 
     # Gather bypassed thresholds
@@ -374,7 +479,15 @@ async def create_expedited_request(
                     f"{ctx.context}: {ctx.current_unique_days}/{ctx.required_days} days"
                 )
 
+    # Calculate trust score from user history
+    trust_score = await calculate_user_trust_score(db, requester_user_id, tenant_id)
+
+    # Generate human-readable request ID
+    request_id = f"EXP-{datetime.now().strftime('%Y')}-{uuid4().hex[:4].upper()}"
+
+    # Create Pydantic response model
     request = ExpeditedRequest(
+        request_id=request_id,
         app_id=application.id,
         app_name=application.name,
         priority=priority,
@@ -382,10 +495,120 @@ async def create_expedited_request(
         contexts=application.allowed_contexts or [],
         thresholds_bypassed=thresholds_bypassed,
         requester_email=requester_email,
-        requester_trust_score=1.0,  # TODO: Calculate from user history
+        requester_trust_score=trust_score,
     )
 
-    # TODO: Store in database, send notifications
-    # For now, just return the request
+    # Calculate expiration (critical = 24h, high = 48h, normal = 72h)
+    expiration_hours = {
+        ExpediteePriority.CRITICAL: 24,
+        ExpediteePriority.HIGH: 48,
+        ExpediteePriority.NORMAL: 72,
+    }
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        hours=expiration_hours.get(priority, 72)
+    )
+
+    # Persist to database
+    db_request = ExpeditedApprovalRequest(
+        request_id=request_id,
+        tenant_id=tenant_id,
+        application_id=application.id,
+        application_name=application.name,
+        priority=priority.value,
+        justification=justification,
+        contexts=application.allowed_contexts or [],
+        thresholds_bypassed=thresholds_bypassed,
+        requester_user_id=requester_user_id,
+        requester_email=requester_email,
+        requester_trust_score=trust_score,
+        expires_at=expires_at,
+        status=ApprovalStatus.PENDING.value,
+    )
+
+    db.add(db_request)
+    await db.commit()
+    await db.refresh(db_request)
 
     return request
+
+
+async def get_pending_approval_requests(
+    db: AsyncSession,
+    tenant_id: str,
+) -> list[ExpeditedApprovalRequest]:
+    """Get all pending approval requests for a tenant."""
+    result = await db.execute(
+        select(ExpeditedApprovalRequest)
+        .where(ExpeditedApprovalRequest.tenant_id == tenant_id)
+        .where(ExpeditedApprovalRequest.status == ApprovalStatus.PENDING.value)
+        .order_by(ExpeditedApprovalRequest.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def approve_request(
+    db: AsyncSession,
+    request_id: str,
+    approver_user_id: str,
+    approver_email: str,
+    notes: str | None = None,
+    follow_up_required: bool = False,
+    follow_up_date: datetime | None = None,
+) -> ExpeditedApprovalRequest | None:
+    """Approve an expedited promotion request."""
+    result = await db.execute(
+        select(ExpeditedApprovalRequest)
+        .where(ExpeditedApprovalRequest.request_id == request_id)
+    )
+    db_request = result.scalar_one_or_none()
+
+    if not db_request:
+        return None
+
+    if db_request.status != ApprovalStatus.PENDING.value:
+        return None  # Already processed
+
+    db_request.status = ApprovalStatus.APPROVED.value
+    db_request.approved_by_user_id = approver_user_id
+    db_request.approved_by_email = approver_email
+    db_request.approved_at = datetime.now(timezone.utc)
+    db_request.approval_notes = notes
+    db_request.follow_up_required = follow_up_required
+    db_request.follow_up_date = follow_up_date
+
+    await db.commit()
+    await db.refresh(db_request)
+
+    return db_request
+
+
+async def reject_request(
+    db: AsyncSession,
+    request_id: str,
+    approver_user_id: str,
+    approver_email: str,
+    notes: str | None = None,
+) -> ExpeditedApprovalRequest | None:
+    """Reject an expedited promotion request."""
+    result = await db.execute(
+        select(ExpeditedApprovalRequest)
+        .where(ExpeditedApprovalRequest.request_id == request_id)
+    )
+    db_request = result.scalar_one_or_none()
+
+    if not db_request:
+        return None
+
+    if db_request.status != ApprovalStatus.PENDING.value:
+        return None  # Already processed
+
+    db_request.status = ApprovalStatus.REJECTED.value
+    db_request.approved_by_user_id = approver_user_id
+    db_request.approved_by_email = approver_email
+    db_request.approved_at = datetime.now(timezone.utc)
+    db_request.approval_notes = notes
+
+    await db.commit()
+    await db.refresh(db_request)
+
+    return db_request

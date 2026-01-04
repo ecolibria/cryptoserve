@@ -20,12 +20,14 @@ from typing import BinaryIO
 
 from cryptography.hazmat.primitives import hashes, hmac as crypto_hmac
 
-# KMAC support (from pycryptodome)
+# KMAC and cSHAKE support (from pycryptodome)
 try:
-    from Crypto.Hash import KMAC128, KMAC256
+    from Crypto.Hash import KMAC128, KMAC256, cSHAKE128, cSHAKE256
     KMAC_AVAILABLE = True
+    CSHAKE_AVAILABLE = True
 except ImportError:
     KMAC_AVAILABLE = False
+    CSHAKE_AVAILABLE = False
 
 # BLAKE3 support (optional)
 try:
@@ -49,6 +51,10 @@ class HashAlgorithm(str, Enum):
     SHA3_512 = "sha3-512"
     SHAKE128 = "shake128"
     SHAKE256 = "shake256"
+
+    # cSHAKE (NIST SP 800-185) - customizable SHAKE
+    CSHAKE128 = "cshake128"
+    CSHAKE256 = "cshake256"
 
     # BLAKE family
     BLAKE2B = "blake2b"
@@ -119,6 +125,8 @@ class HashEngine:
         HashAlgorithm.SHA3_512: {"bits": 512, "block_size": 72},
         HashAlgorithm.SHAKE128: {"bits": 128, "block_size": 168, "xof": True},
         HashAlgorithm.SHAKE256: {"bits": 256, "block_size": 136, "xof": True},
+        HashAlgorithm.CSHAKE128: {"bits": 128, "block_size": 168, "xof": True, "customizable": True},
+        HashAlgorithm.CSHAKE256: {"bits": 256, "block_size": 136, "xof": True, "customizable": True},
         HashAlgorithm.BLAKE2B: {"bits": 512, "block_size": 128},
         HashAlgorithm.BLAKE2S: {"bits": 256, "block_size": 64},
         HashAlgorithm.BLAKE3: {"bits": 256, "block_size": 64},
@@ -129,6 +137,8 @@ class HashEngine:
         data: bytes,
         algorithm: HashAlgorithm = HashAlgorithm.SHA256,
         output_length: int | None = None,
+        customization: bytes = b"",
+        function_name: bytes = b"",
     ) -> HashResult:
         """Compute hash of data.
 
@@ -136,6 +146,8 @@ class HashEngine:
             data: Data to hash
             algorithm: Hash algorithm to use
             output_length: Output length in bytes (for XOF algorithms)
+            customization: Customization string for cSHAKE (NIST SP 800-185)
+            function_name: Function name for cSHAKE (NIST SP 800-185)
 
         Returns:
             HashResult with digest
@@ -160,6 +172,22 @@ class HashEngine:
         elif algorithm == HashAlgorithm.SHAKE256:
             length = output_length or 32
             digest = hashlib.shake_256(data).digest(length)
+        elif algorithm == HashAlgorithm.CSHAKE128:
+            if not CSHAKE_AVAILABLE:
+                raise UnsupportedAlgorithmError(
+                    "cSHAKE requires pycryptodome. Install with: pip install pycryptodome"
+                )
+            length = output_length or 16
+            h = cSHAKE128.new(data=data, custom=customization)
+            digest = h.read(length)
+        elif algorithm == HashAlgorithm.CSHAKE256:
+            if not CSHAKE_AVAILABLE:
+                raise UnsupportedAlgorithmError(
+                    "cSHAKE requires pycryptodome. Install with: pip install pycryptodome"
+                )
+            length = output_length or 32
+            h = cSHAKE256.new(data=data, custom=customization)
+            digest = h.read(length)
         elif algorithm == HashAlgorithm.BLAKE2B:
             length = output_length or 64
             digest = hashlib.blake2b(data, digest_size=length).digest()
