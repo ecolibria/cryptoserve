@@ -6,6 +6,92 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+## [1.3.2] - 2026-01-04
+
+### Added
+- Comprehensive production deployment documentation
+- Critical secrets configuration section with generation commands
+- Kubernetes secrets YAML example
+- Health check verification steps for configuration validation
+
+### Documentation
+- Updated `docs/guides/production.md` with secrets management best practices
+- All pre-release gap assessment items completed
+
+---
+
+## [1.3.1] - 2026-01-04
+
+### Fixed
+- `/health/ready` endpoint now returns 503 with error details instead of 500 on failures
+- `/health/deep` endpoint now returns 503 with error details instead of 500 on failures
+- FIPS status check wrapped in try/except to prevent cascading failures
+
+### Improved
+- Graceful degradation for all health check endpoints
+- Better error messages when health checks fail unexpectedly
+
+---
+
+## [1.3.0] - 2026-01-04
+
+### Added
+- SDK integration test suite with 69 tests
+  - `test_client.py` - CryptoClient low-level API tests
+  - `test_cryptoserve.py` - CryptoServe high-level API tests
+  - `test_init_cbom_pqc.py` - Init, CBOM, and PQC recommendation tests
+  - `conftest.py` - Shared test fixtures
+
+### Fixed
+- Lease engine tests updated to match actual API (`secret` bytes instead of `secret_id` string)
+- Compliance test fixed to remove broken `get_current_user` patch
+- Revocation callback signature corrected to `(lease_id)` only
+
+### Testing
+- Total test count: 1,235 tests passing
+
+---
+
+## [1.2.0] - 2026-01-04
+
+### Added
+- `GET /api/v1/code/recommendations` endpoint for cryptographic best practices
+- Empty plaintext validation in encrypt endpoint (returns 400)
+
+### Fixed
+- Weak password test uses truly weak passwords
+- Hybrid encryption includes required `recipient_public_key`
+- ML-DSA-65 test includes required `context` field
+- CBOM endpoint corrected to `/api/v1/code/cbom`
+- Policy evaluate includes required `algorithm` field
+- Shamir shares include threshold for proper validation
+- CBOM upload includes `tenant_id`
+
+### Testing
+- Feature test coverage: 103/103 (100%)
+- PQC (ML-DSA, ML-KEM) fully validated
+- API authentication consolidated to SDK identity auth
+
+---
+
+## [1.1.2] - 2026-01-04
+
+### Fixed
+- Standardize frontend port to 3000 (Next.js default)
+- Standardize backend port to 8000 (FastAPI default)
+- OAuth redirect mismatch (was redirecting to port 3003)
+
+---
+
+## [1.1.1] - 2026-01-04
+
+### Fixed
+- Migration history API 500 error by creating dedicated `MigrationHistory` table
+- URL normalization for CT monitoring (accepts full URLs like `https://example.com`)
+- Frontend domain normalization for CT search
+
+---
+
 ## [1.1.0] - 2026-01-03
 
 ### Added
@@ -185,6 +271,12 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+[1.3.2]: https://github.com/keytum/crypto-serve/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/keytum/crypto-serve/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/keytum/crypto-serve/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/keytum/crypto-serve/compare/v1.1.2...v1.2.0
+[1.1.2]: https://github.com/keytum/crypto-serve/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/keytum/crypto-serve/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/keytum/crypto-serve/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/keytum/crypto-serve/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/keytum/crypto-serve/compare/v0.2.0...v0.3.0
