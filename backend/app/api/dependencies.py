@@ -27,6 +27,32 @@ router = APIRouter(prefix="/api/v1/dependencies", tags=["dependencies"])
 dependency_scanner = DependencyScanner()
 
 
+def get_dependency_recommendation(package_name: str, quantum_risk: str | None, is_deprecated: bool = False, replacement: str | None = None) -> str:
+    """Generate a recommendation linking to crypto-serve contexts for dependency findings."""
+    if is_deprecated:
+        base = f"Package '{package_name}' is deprecated. "
+        if replacement:
+            base += f"Replace with '{replacement}'. "
+        return (
+            base + "After updating, integrate CryptoServe SDK with an appropriate context: "
+            "'general' for internal data, 'user-pii' for personal information, "
+            "'payment-data' for financial data. The SDK ensures secure algorithm selection."
+        )
+
+    if quantum_risk in ["high", "critical"]:
+        return (
+            f"Package '{package_name}' uses quantum-vulnerable cryptography. "
+            "Migrate to CryptoServe SDK with require_quantum_safe=true in your context's algorithm policy. "
+            "Use 'payment-data' context for financial data, 'health-data' for PHI, "
+            "or 'general' for other sensitive data with post-quantum protection."
+        )
+
+    return (
+        f"Consider replacing direct crypto dependency on '{package_name}' with CryptoServe SDK. "
+        "Select a context matching your data classification for automatic secure algorithm selection."
+    )
+
+
 def compute_dependency_fingerprint(target_name: str, library: str, title: str) -> str:
     """Compute a fingerprint for deduplication across dependency scans."""
     data = f"{target_name}|{library}|{title}"
@@ -171,6 +197,14 @@ async def scan_dependencies(
                 )
                 first_detected_at = datetime.now(timezone.utc) if is_new else (prev_finding.first_detected_at if prev_finding else None)
 
+                # Generate context-aware recommendation
+                context_recommendation = get_dependency_recommendation(
+                    package_name=dep.name,
+                    quantum_risk=dep.quantum_risk.value,
+                    is_deprecated=True,
+                    replacement=dep.recommended_replacement
+                )
+
                 finding_record = SecurityFinding(
                     scan_id=scan_record.id,
                     severity=SeverityLevel.CRITICAL,
@@ -180,7 +214,7 @@ async def scan_dependencies(
                     library=dep.name,
                     quantum_risk=dep.quantum_risk.value,
                     is_deprecated=True,
-                    recommendation=f"Replace with: {dep.recommended_replacement}" if dep.recommended_replacement else "Find a modern alternative",
+                    recommendation=context_recommendation,
                     fingerprint=fingerprint,
                     first_seen_scan_id=first_seen_scan_id,
                     first_detected_at=first_detected_at or datetime.now(timezone.utc),
@@ -201,6 +235,13 @@ async def scan_dependencies(
                 )
                 first_detected_at = datetime.now(timezone.utc) if is_new else (prev_finding.first_detected_at if prev_finding else None)
 
+                # Generate context-aware recommendation
+                context_recommendation = get_dependency_recommendation(
+                    package_name=dep.name,
+                    quantum_risk=dep.quantum_risk.value,
+                    is_deprecated=False
+                )
+
                 finding_record = SecurityFinding(
                     scan_id=scan_record.id,
                     severity=SeverityLevel.HIGH,
@@ -210,7 +251,7 @@ async def scan_dependencies(
                     library=dep.name,
                     quantum_risk=dep.quantum_risk.value,
                     is_weak=False,
-                    recommendation="Plan migration to post-quantum cryptography",
+                    recommendation=context_recommendation,
                     fingerprint=fingerprint,
                     first_seen_scan_id=first_seen_scan_id,
                     first_detected_at=first_detected_at or datetime.now(timezone.utc),

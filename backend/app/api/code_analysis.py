@@ -28,6 +28,60 @@ def compute_finding_fingerprint(target_name: str, file_path: str | None, algorit
     data = f"{target_name}|{file_path or ''}|{algorithm or ''}|{title}|{line_number or ''}"
     return hashlib.sha256(data.encode()).hexdigest()[:32]
 
+
+def get_context_recommendation(algorithm: str | None, quantum_risk: str | None, is_deprecated: bool = False) -> str:
+    """Generate a recommendation that links to appropriate crypto-serve context.
+
+    Maps security findings to actionable crypto-serve context usage.
+    """
+    algo_upper = (algorithm or "").upper()
+
+    # Quantum-vulnerable algorithms - recommend contexts with quantum-safe settings
+    if quantum_risk in ["high", "critical"]:
+        if algo_upper in ["RSA", "DSA", "ECDSA", "ECDH", "DH"]:
+            return (
+                "Replace with CryptoServe SDK using a context with quantum-safe settings enabled. "
+                "For payment data, use 'payment-data' context. For health records, use 'health-data' context. "
+                "Configure require_quantum_safe=true in the context's algorithm policy to enforce ML-KEM/ML-DSA."
+            )
+
+    # Deprecated or weak algorithms
+    if is_deprecated or algo_upper in ["MD5", "SHA1", "DES", "3DES", "RC4", "BLOWFISH"]:
+        return (
+            "Migrate to CryptoServe SDK with an appropriate context: "
+            "'general' for internal data, 'user-pii' for personal information, "
+            "'payment-data' for financial data. The SDK automatically selects secure algorithms."
+        )
+
+    # Weak key sizes
+    if "1024" in (algorithm or "") or "512" in (algorithm or ""):
+        return (
+            "Key size is below recommended minimum. Use CryptoServe SDK which enforces "
+            "minimum key sizes (256-bit symmetric, 2048-bit RSA minimum). "
+            "Select a context matching your data type for automatic secure algorithm selection."
+        )
+
+    # AES without authenticated mode
+    if algo_upper in ["AES-CBC", "AES-ECB", "AES-CTR"]:
+        return (
+            "Use authenticated encryption mode. CryptoServe SDK contexts default to AES-256-GCM. "
+            "Integrate the SDK with 'general' context for automatic AEAD protection."
+        )
+
+    # Default recommendation for other quantum-vulnerable findings
+    if quantum_risk:
+        return (
+            "Plan migration to post-quantum cryptography using CryptoServe SDK. "
+            "Configure your context with require_quantum_safe=true to use ML-KEM (Kyber) for key exchange "
+            "and ML-DSA (Dilithium) for signatures."
+        )
+
+    # Generic fallback
+    return (
+        "Consider using CryptoServe SDK with an appropriate context for centralized key management "
+        "and automatic algorithm selection based on your data classification."
+    )
+
 router = APIRouter(prefix="/api/v1/code", tags=["code-analysis"])
 
 # Singleton scanner
@@ -270,6 +324,13 @@ async def scan_code(
                 prev_finding = previous_findings.get(fingerprint)
                 first_detected_at = datetime.now(timezone.utc) if is_new else (prev_finding.first_detected_at if prev_finding else None)
 
+                # Generate context-aware recommendation
+                context_recommendation = get_context_recommendation(
+                    algorithm=u.algorithm,
+                    quantum_risk=u.quantum_risk.value,
+                    is_deprecated=False
+                )
+
                 finding_record = SecurityFinding(
                     scan_id=scan_record.id,
                     severity=severity,
@@ -282,7 +343,7 @@ async def scan_code(
                     quantum_risk=u.quantum_risk.value,
                     is_weak=u.is_weak,
                     cwe=u.cwe,
-                    recommendation=u.recommendation or "Plan migration to post-quantum algorithms (ML-KEM, ML-DSA)",
+                    recommendation=context_recommendation,
                     fingerprint=fingerprint,
                     is_new=is_new,
                     first_seen_scan_id=scan_record.id if is_new else None,
