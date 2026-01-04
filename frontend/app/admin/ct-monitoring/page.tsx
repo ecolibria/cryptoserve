@@ -67,7 +67,7 @@ export default function CTMonitoringPage() {
 
     try {
       const [scanData, issuerData] = await Promise.all([
-        api.scanCTDomain(domain.trim(), { includeSubdomains }),
+        api.scanCTDomain(domain.trim(), { includeSubdomains, includeExpired: showExpired }),
         api.getCTIssuers(domain.trim(), includeSubdomains),
       ]);
 
@@ -79,7 +79,7 @@ export default function CTMonitoringPage() {
     } finally {
       setLoading(false);
     }
-  }, [domain, includeSubdomains]);
+  }, [domain, includeSubdomains, showExpired]);
 
   const handleRefresh = useCallback(async () => {
     if (domain && viewMode === "results") {
@@ -87,9 +87,8 @@ export default function CTMonitoringPage() {
     }
   }, [domain, viewMode, handleSearch]);
 
-  // Filter certificates
+  // Filter certificates (API already filters by showExpired, this adds UI filters)
   const filteredCerts = scanResult?.certificates.filter((cert) => {
-    if (!showExpired && cert.isExpired) return false;
     if (selectedIssuer && cert.issuerName !== selectedIssuer) return false;
     return true;
   }) || [];

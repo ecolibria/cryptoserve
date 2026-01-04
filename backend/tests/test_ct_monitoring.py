@@ -116,13 +116,13 @@ class TestCTMonitorAnalysis:
     """Tests for certificate analysis and alert generation."""
 
     def test_analyze_expired_cert(self, ct_monitor, expired_cert_entry):
-        """Test detection of expired certificates."""
+        """Test that expired certs do NOT generate alerts (not actionable)."""
         config = DomainConfig(domain="example.com")
         alerts = ct_monitor.analyze_certificates([expired_cert_entry], config)
 
+        # Expired cert alerts were removed as they are not actionable
         expired_alerts = [a for a in alerts if a.alert_type == CTAlertType.EXPIRED_CERT]
-        assert len(expired_alerts) == 1
-        assert expired_alerts[0].severity == CTAlertSeverity.LOW
+        assert len(expired_alerts) == 0
 
     def test_analyze_expiring_soon(self, ct_monitor, expiring_cert_entry):
         """Test detection of certificates expiring soon."""
@@ -157,13 +157,14 @@ class TestCTMonitorAnalysis:
         assert len(issuer_alerts) == 0
 
     def test_analyze_wildcard_cert(self, ct_monitor, wildcard_cert_entry):
-        """Test detection of wildcard certificates."""
+        """Test detection of wildcard certificates (informational only)."""
         config = DomainConfig(domain="example.com", alert_on_wildcard=True)
         alerts = ct_monitor.analyze_certificates([wildcard_cert_entry], config)
 
         wildcard_alerts = [a for a in alerts if a.alert_type == CTAlertType.WILDCARD_ISSUED]
         assert len(wildcard_alerts) == 1
-        assert wildcard_alerts[0].severity == CTAlertSeverity.MEDIUM
+        # Wildcards are INFO level - informational, not a security issue
+        assert wildcard_alerts[0].severity == CTAlertSeverity.INFO
 
     def test_analyze_wildcard_disabled(self, ct_monitor, wildcard_cert_entry):
         """Test no wildcard alert when disabled."""
@@ -173,8 +174,14 @@ class TestCTMonitorAnalysis:
         wildcard_alerts = [a for a in alerts if a.alert_type == CTAlertType.WILDCARD_ISSUED]
         assert len(wildcard_alerts) == 0
 
-    def test_analyze_duplicate_serial(self, ct_monitor):
-        """Test detection of duplicate serial numbers."""
+    def test_analyze_no_duplicate_serial_alerts(self, ct_monitor):
+        """Test that duplicate serials do NOT generate alerts.
+
+        Duplicate serial detection was removed because:
+        1. Same cert appears in multiple CT logs (normal behavior)
+        2. Deduplication is now handled at the search level
+        3. Same serial from different CAs is technically valid
+        """
         cert1 = CTLogEntry(
             id=1, issuer_name="CA1", issuer_ca_id=1, common_name="a.example.com",
             name_value="a.example.com", not_before=datetime.now(timezone.utc),
@@ -191,9 +198,9 @@ class TestCTMonitorAnalysis:
         config = DomainConfig(domain="example.com")
         alerts = ct_monitor.analyze_certificates([cert1, cert2], config)
 
+        # Duplicate serial alerts were removed - deduplication happens at search level
         dup_alerts = [a for a in alerts if a.alert_type == CTAlertType.DUPLICATE_SERIAL]
-        assert len(dup_alerts) == 1
-        assert dup_alerts[0].severity == CTAlertSeverity.HIGH
+        assert len(dup_alerts) == 0
 
 
 class TestCTMonitorSearch:

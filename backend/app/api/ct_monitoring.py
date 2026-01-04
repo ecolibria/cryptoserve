@@ -189,6 +189,7 @@ def _config_from_request(req: DomainConfigRequest) -> DomainConfig:
 async def scan_domain(
     domain: str,
     include_subdomains: bool = Query(default=True, description="Include subdomains"),
+    include_expired: bool = Query(default=False, description="Include expired certs in results"),
     expected_issuers: list[str] = Query(default=[], description="Expected CA issuers"),
     user: Annotated[User, Depends(get_current_user)] = None,
 ):
@@ -197,6 +198,9 @@ async def scan_domain(
     Queries public CT log aggregators to find all certificates
     ever issued for the specified domain. Returns certificates
     and any security alerts.
+
+    By default, only active (non-expired) certificates are returned
+    in the results, but summary stats include all certificates.
 
     This is useful for:
     - Detecting unauthorized certificate issuance
@@ -218,9 +222,14 @@ async def scan_domain(
             detail=f"Failed to query CT logs: {str(e)}",
         )
 
+    # Filter certificates for response (stats still include all)
+    certs_to_return = result.certificates
+    if not include_expired:
+        certs_to_return = [c for c in result.certificates if not c.is_expired]
+
     return ScanDomainResponse(
         summary=_result_to_summary(result),
-        certificates=[_cert_to_response(c) for c in result.certificates],
+        certificates=[_cert_to_response(c) for c in certs_to_return],
         alerts=[_alert_to_response(a) for a in result.alerts],
     )
 

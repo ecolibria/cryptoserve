@@ -2022,11 +2022,15 @@ export const api = {
   // Scan a domain for CT certificates
   scanCTDomain: (domain: string, params?: {
     includeSubdomains?: boolean;
+    includeExpired?: boolean;
     expectedIssuers?: string[];
   }) => {
     const query = new URLSearchParams();
     if (params?.includeSubdomains !== undefined) {
       query.set("include_subdomains", String(params.includeSubdomains));
+    }
+    if (params?.includeExpired !== undefined) {
+      query.set("include_expired", String(params.includeExpired));
     }
     if (params?.expectedIssuers?.length) {
       params.expectedIssuers.forEach(issuer => query.append("expected_issuers", issuer));
