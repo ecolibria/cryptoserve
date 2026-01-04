@@ -320,21 +320,13 @@ class TestDataInventory:
         audit_logs: list[AuditLog],
     ):
         """Test data inventory returns correct summary."""
-        from app.api.compliance import get_data_inventory
+        from sqlalchemy import select
 
-        # Mock the dependencies
-        with patch("app.api.compliance.get_current_user", return_value=admin_user):
-            with patch("app.api.compliance.get_db", return_value=db_session):
-                # Call the endpoint handler directly with mocked deps
-                from app.api.compliance import DataInventorySummary
+        # Query contexts directly to verify fixture setup
+        result = await db_session.execute(select(Context))
+        contexts = result.scalars().all()
 
-                # Simulate what the endpoint does
-                result = await db_session.execute(
-                    __import__("sqlalchemy").select(Context)
-                )
-                contexts = result.scalars().all()
-
-                assert len(contexts) == 4  # Our 4 compliance contexts
+        assert len(contexts) == 4  # Our 4 compliance contexts
 
     async def test_data_inventory_classifications(
         self,
