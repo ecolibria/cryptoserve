@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth.jwt import get_current_user
-from app.models import User, Context, AuditLog
+from app.models import User, Context, MigrationHistory
 from app.core.migration_advisor import (
     MigrationAdvisor,
     MigrationAssessment,
@@ -226,20 +226,16 @@ async def execute_migration(
         context.derived["resolved_algorithm"] = request.newAlgorithm
 
     # Log the migration
-    audit = AuditLog(
+    history = MigrationHistory(
         tenant_id=user.tenant_id,
         user_id=user.id,
         action="algorithm_migration",
-        resource_type="context",
-        resource_id=context.name,
-        details={
-            "previous_algorithm": previous_algorithm,
-            "new_algorithm": request.newAlgorithm,
-            "context_name": context.name,
-        },
-        status="success",
+        context_name=context.name,
+        previous_algorithm=previous_algorithm or "unknown",
+        new_algorithm=request.newAlgorithm,
+        success=True,
     )
-    db.add(audit)
+    db.add(history)
 
     await db.commit()
 
@@ -320,21 +316,20 @@ async def execute_bulk_migration(
             failed += 1
 
     # Log bulk migration
-    audit = AuditLog(
+    history = MigrationHistory(
         tenant_id=user.tenant_id,
         user_id=user.id,
         action="bulk_algorithm_migration",
-        resource_type="contexts",
-        resource_id=request.fromAlgorithm,
+        context_name=None,  # Bulk migration
+        previous_algorithm=request.fromAlgorithm,
+        new_algorithm=request.toAlgorithm,
+        success=failed == 0,
         details={
-            "from_algorithm": request.fromAlgorithm,
-            "to_algorithm": request.toAlgorithm,
             "migrated_count": migrated,
             "failed_count": failed,
         },
-        status="success" if failed == 0 else "partial",
     )
-    db.add(audit)
+    db.add(history)
 
     await db.commit()
 
@@ -357,39 +352,35 @@ async def get_migration_history(
     Returns past migrations sorted by date (most recent first).
     """
     result = await db.execute(
-        select(AuditLog)
-        .where(
-            AuditLog.tenant_id == user.tenant_id,
-            AuditLog.action.in_(["algorithm_migration", "bulk_algorithm_migration"]),
-        )
-        .order_by(AuditLog.timestamp.desc())
+        select(MigrationHistory)
+        .where(MigrationHistory.tenant_id == user.tenant_id)
+        .order_by(MigrationHistory.migrated_at.desc())
         .limit(limit)
     )
-    logs = result.scalars().all()
+    records = result.scalars().all()
 
     history = []
-    for log in logs:
-        details = log.details or {}
-
+    for record in records:
         # Handle both single and bulk migrations
-        if log.action == "algorithm_migration":
+        if record.action == "algorithm_migration":
             history.append(MigrationHistoryEntry(
-                contextName=details.get("context_name", log.resource_id),
-                previousAlgorithm=details.get("previous_algorithm", "unknown"),
-                newAlgorithm=details.get("new_algorithm", "unknown"),
-                migratedAt=log.timestamp,
-                migratedBy=str(log.user_id),
-                success=log.status == "success",
+                contextName=record.context_name or "unknown",
+                previousAlgorithm=record.previous_algorithm,
+                newAlgorithm=record.new_algorithm,
+                migratedAt=record.migrated_at,
+                migratedBy=str(record.user_id),
+                success=record.success,
             ))
         else:
             # Bulk migration - create entry for the operation
+            details = record.details or {}
             history.append(MigrationHistoryEntry(
                 contextName=f"Bulk: {details.get('migrated_count', 0)} contexts",
-                previousAlgorithm=details.get("from_algorithm", "unknown"),
-                newAlgorithm=details.get("to_algorithm", "unknown"),
-                migratedAt=log.timestamp,
-                migratedBy=str(log.user_id),
-                success=log.status == "success",
+                previousAlgorithm=record.previous_algorithm,
+                newAlgorithm=record.new_algorithm,
+                migratedAt=record.migrated_at,
+                migratedBy=str(record.user_id),
+                success=record.success,
             ))
 
     return history

@@ -30,6 +30,7 @@ from app.models.approval import (
     ApprovalStatus,
     ApprovalPriority,
 )
+from app.models.migration_history import MigrationHistory
 
 __all__ = [
     # Multi-tenancy
@@ -74,4 +75,6 @@ __all__ = [
     "ExpeditedApprovalRequest",
     "ApprovalStatus",
     "ApprovalPriority",
+    # Migration History
+    "MigrationHistory",
 ]
