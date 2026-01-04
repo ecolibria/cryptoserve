@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { AdminLayout } from "@/components/admin-layout";
 import { KeyInfoCard } from "@/components/keys/key-info-card";
 import { RotationModal } from "@/components/keys/rotation-modal";
+import { ScheduleEditModal } from "@/components/keys/schedule-edit-modal";
 import { KeyHistoryTable } from "@/components/keys/key-history-table";
 import {
   api,
@@ -44,6 +45,8 @@ export default function KeyBundlePage() {
   // Modal state
   const [showRotationModal, setShowRotationModal] = useState(false);
   const [rotationKeyType, setRotationKeyType] = useState<KeyType>("ENCRYPTION");
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleKeyType, setScheduleKeyType] = useState<KeyType>("ENCRYPTION");
 
   const loadData = useCallback(async () => {
     try {
@@ -105,8 +108,28 @@ export default function KeyBundlePage() {
   };
 
   const handleEditSchedule = (keyType: KeyType) => {
-    // TODO: Implement schedule edit modal
-    alert(`Edit schedule for ${keyType} - coming soon`);
+    setScheduleKeyType(keyType);
+    setShowScheduleModal(true);
+  };
+
+  const handleConfirmSchedule = async (rotationScheduleDays: number) => {
+    try {
+      await api.updateKeySchedule(contextId, scheduleKeyType, { rotationScheduleDays });
+      // Reload data to reflect changes
+      await loadData();
+    } catch (error) {
+      console.error("Failed to update schedule:", error);
+      throw error;
+    }
+  };
+
+  const getKeyInfoForType = (keyType: KeyType) => {
+    if (!keyBundle) return null;
+    switch (keyType) {
+      case "ENCRYPTION": return keyBundle.encryptionKey;
+      case "MAC": return keyBundle.macKey;
+      case "SIGNING": return keyBundle.signingKey;
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -245,6 +268,18 @@ export default function KeyBundlePage() {
             : keyBundle.signingKey.version
         }
       />
+
+      {/* Schedule Edit Modal */}
+      {getKeyInfoForType(scheduleKeyType) && (
+        <ScheduleEditModal
+          isOpen={showScheduleModal}
+          onClose={() => setShowScheduleModal(false)}
+          onConfirm={handleConfirmSchedule}
+          keyType={scheduleKeyType}
+          keyInfo={getKeyInfoForType(scheduleKeyType)!}
+          contextName={context.display_name}
+        />
+      )}
     </AdminLayout>
   );
 }

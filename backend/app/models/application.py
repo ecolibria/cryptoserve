@@ -129,10 +129,3 @@ class Application(Base):
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
         return now < expires
-
-
-# Backward compatibility aliases
-# TODO: Remove after migration is complete
-IdentityStatus = ApplicationStatus
-Identity = Application
-IdentityType = None  # No longer needed, but keep for import compatibility
