@@ -11,10 +11,7 @@ import {
   Building2,
   Mail,
   Users,
-  ChevronRight,
-  Cpu,
 } from "lucide-react";
-import Link from "next/link";
 import { AdminLayout } from "@/components/admin-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -117,28 +114,6 @@ export default function AdminSettingsPage() {
       subtitle="Configure authentication and access control"
     >
       <div className="space-y-6 max-w-4xl">
-        {/* Quick Links */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <Link href="/admin/settings/algorithm-policy">
-            <Card className="hover:bg-slate-50 transition-colors cursor-pointer">
-              <CardContent className="py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-indigo-100">
-                      <Cpu className="h-5 w-5 text-indigo-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-900">Algorithm Policy</p>
-                      <p className="text-sm text-slate-500">Configure algorithms by data classification</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-slate-400" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        </div>
-
         {/* Status Messages */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">

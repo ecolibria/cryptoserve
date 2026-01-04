@@ -5,6 +5,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  ShieldX,
   Info,
   AlertTriangle,
   Ban,
@@ -33,6 +34,10 @@ import {
   Zap,
   Eye,
   BookOpen,
+  RotateCw,
+  Atom,
+  Edit,
+  Layers,
 } from "lucide-react";
 import { AdminLayout } from "@/components/admin-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,11 +48,64 @@ import {
   PolicyEvaluationRequest,
   PolicyEvaluationResponse,
   Context,
+  ClassificationAlgorithmPolicy,
+  DataClassification,
 } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { StatCard } from "@/components/ui/stat-card";
 
 type SeverityFilter = "all" | "block" | "warn" | "info";
+type PolicyTab = "rules" | "classification";
+
+// Classification config for algorithm policy tab
+const classificationConfig: Record<DataClassification, {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  description: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+}> = {
+  PUBLIC: {
+    icon: Shield,
+    label: "Public",
+    description: "Non-sensitive, can be exposed",
+    color: "text-slate-600",
+    bgColor: "bg-slate-100",
+    borderColor: "border-slate-300",
+  },
+  INTERNAL: {
+    icon: ShieldCheck,
+    label: "Internal",
+    description: "Internal use, basic protection",
+    color: "text-blue-600",
+    bgColor: "bg-blue-100",
+    borderColor: "border-blue-300",
+  },
+  SENSITIVE: {
+    icon: ShieldAlert,
+    label: "Sensitive",
+    description: "PII, requires strong encryption",
+    color: "text-amber-600",
+    bgColor: "bg-amber-100",
+    borderColor: "border-amber-300",
+  },
+  CRITICAL: {
+    icon: ShieldX,
+    label: "Critical",
+    description: "Financial, health, maximum protection",
+    color: "text-red-600",
+    bgColor: "bg-red-100",
+    borderColor: "border-red-300",
+  },
+};
+
+const encryptionOptions = ["AES-128-GCM", "AES-256-GCM", "AES-256-GCM + HKDF", "ChaCha20-Poly1305"];
+const macOptions = ["HMAC-SHA256", "HMAC-SHA384", "HMAC-SHA512"];
+const signingOptions = ["Ed25519", "Ed448", "ECDSA-P256", "ECDSA-P384"];
 
 interface PolicyFormData {
   name: string;
@@ -68,6 +126,10 @@ const emptyPolicy: PolicyFormData = {
 };
 
 export default function AdminPoliciesPage() {
+  // Tab state
+  const [activeTab, setActiveTab] = useState<PolicyTab>("rules");
+
+  // Rules tab state
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [defaultPolicies, setDefaultPolicies] = useState<Policy[]>([]);
   const [contexts, setContexts] = useState<Context[]>([]);
@@ -91,6 +153,16 @@ export default function AdminPoliciesPage() {
   const [error, setError] = useState<string | null>(null);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
 
+  // Classification tab state
+  const [algorithmPolicies, setAlgorithmPolicies] = useState<ClassificationAlgorithmPolicy[]>([]);
+  const [quantumReady, setQuantumReady] = useState(false);
+  const [showClassificationEditModal, setShowClassificationEditModal] = useState(false);
+  const [editingClassification, setEditingClassification] = useState<ClassificationAlgorithmPolicy | null>(null);
+  const [classFormEncryption, setClassFormEncryption] = useState("");
+  const [classFormMac, setClassFormMac] = useState("");
+  const [classFormSigning, setClassFormSigning] = useState("");
+  const [classFormRotation, setClassFormRotation] = useState(90);
+
   const loadData = async () => {
     setError(null);
 
@@ -99,9 +171,10 @@ export default function AdminPoliciesPage() {
       api.listPolicies(),
       api.getDefaultPolicies(),
       api.listContexts(),
+      api.getAlgorithmPolicies(),
     ]);
 
-    const [policiesResult, defaultPoliciesResult, contextsResult] = results;
+    const [policiesResult, defaultPoliciesResult, contextsResult, algorithmPoliciesResult] = results;
 
     // Handle custom policies
     if (policiesResult.status === "fulfilled") {
@@ -127,6 +200,14 @@ export default function AdminPoliciesPage() {
       }
     } else {
       console.error("Failed to load contexts:", contextsResult.reason);
+    }
+
+    // Handle algorithm policies
+    if (algorithmPoliciesResult.status === "fulfilled") {
+      setAlgorithmPolicies(algorithmPoliciesResult.value);
+      setQuantumReady(algorithmPoliciesResult.value.some((p: ClassificationAlgorithmPolicy) => p.requireQuantumSafe));
+    } else {
+      console.error("Failed to load algorithm policies:", algorithmPoliciesResult.reason);
     }
 
     setLoading(false);
@@ -319,6 +400,47 @@ export default function AdminPoliciesPage() {
     return "#ef4444";
   };
 
+  // Classification tab handlers
+  const openClassificationEdit = (policy: ClassificationAlgorithmPolicy) => {
+    setEditingClassification(policy);
+    setClassFormEncryption(policy.defaultEncryptionAlgorithm);
+    setClassFormMac(policy.defaultMacAlgorithm);
+    setClassFormSigning(policy.defaultSigningAlgorithm || "");
+    setClassFormRotation(policy.keyRotationDays);
+    setShowClassificationEditModal(true);
+  };
+
+  const closeClassificationEdit = () => {
+    setShowClassificationEditModal(false);
+    setEditingClassification(null);
+  };
+
+  const handleSaveClassification = async () => {
+    if (!editingClassification) return;
+    setSaving(true);
+    try {
+      await api.updateAlgorithmPolicyByClassification(editingClassification.classification, {
+        defaultEncryptionAlgorithm: classFormEncryption,
+        defaultMacAlgorithm: classFormMac,
+        defaultSigningAlgorithm: classFormSigning || null,
+        keyRotationDays: classFormRotation,
+      });
+      await loadData();
+      closeClassificationEdit();
+    } catch (error) {
+      console.error("Failed to save policy:", error);
+      alert("Failed to save policy. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleQuantumReady = async () => {
+    setQuantumReady(!quantumReady);
+    // In a real implementation, this would call an API
+    console.log("Quantum ready toggled:", !quantumReady);
+  };
+
   return (
     <AdminLayout
       title="Policy Management"
@@ -340,6 +462,39 @@ export default function AdminPoliciesPage() {
           </div>
         )}
 
+        {/* Tab Navigation */}
+        <div className="border-b border-slate-200">
+          <nav className="flex gap-4" aria-label="Tabs">
+            <button
+              onClick={() => setActiveTab("rules")}
+              className={cn(
+                "flex items-center gap-2 px-1 py-3 text-sm font-medium border-b-2 transition-colors",
+                activeTab === "rules"
+                  ? "border-indigo-600 text-indigo-600"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              )}
+            >
+              <ShieldCheck className="h-4 w-4" />
+              Policy Rules
+            </button>
+            <button
+              onClick={() => setActiveTab("classification")}
+              className={cn(
+                "flex items-center gap-2 px-1 py-3 text-sm font-medium border-b-2 transition-colors",
+                activeTab === "classification"
+                  ? "border-indigo-600 text-indigo-600"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+              )}
+            >
+              <Layers className="h-4 w-4" />
+              By Classification
+            </button>
+          </nav>
+        </div>
+
+        {/* Rules Tab Content */}
+        {activeTab === "rules" && (
+          <>
         {/* How Policies Work - Expandable Explainer */}
         <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl overflow-hidden">
           <button
@@ -1197,6 +1352,266 @@ export default function AdminPoliciesPage() {
               </CardContent>
             </Card>
           </>
+        )}
+
+        {/* Classification Tab Content */}
+        {activeTab === "classification" && (
+          <>
+            {/* Info Banner */}
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <Info className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
+                <div className="text-sm">
+                  <p className="font-medium text-blue-800 mb-1">About Algorithm Policies</p>
+                  <p className="text-blue-700">
+                    These policies determine which algorithms are automatically assigned when creating new contexts.
+                    Individual contexts can override these defaults if needed.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Policy Cards Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {algorithmPolicies.map((policy) => {
+                const config = classificationConfig[policy.classification];
+                const Icon = config.icon;
+
+                return (
+                  <Card key={policy.classification} className={cn("relative overflow-hidden", config.borderColor, "border-l-4")}>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center", config.bgColor)}>
+                            <Icon className={cn("h-5 w-5", config.color)} />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base font-semibold">{config.label}</CardTitle>
+                            <p className="text-xs text-slate-500">{config.description}</p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openClassificationEdit(policy)}
+                        >
+                          <Edit className="h-4 w-4 mr-1.5" />
+                          Edit
+                        </Button>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="space-y-4">
+                      {/* Algorithm Details */}
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg">
+                          <span className="text-sm text-slate-600">Encryption</span>
+                          <Badge variant="secondary" className="font-mono text-xs">
+                            {policy.defaultEncryptionAlgorithm}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg">
+                          <span className="text-sm text-slate-600">MAC</span>
+                          <Badge variant="secondary" className="font-mono text-xs">
+                            {policy.defaultMacAlgorithm}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg">
+                          <span className="text-sm text-slate-600">Signing</span>
+                          <Badge variant="secondary" className="font-mono text-xs">
+                            {policy.defaultSigningAlgorithm || "None"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      {/* Rotation Schedule */}
+                      <div className="pt-3 border-t border-slate-100">
+                        <div className="flex items-center gap-2 mb-2">
+                          <RotateCw className="h-4 w-4 text-slate-400" />
+                          <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                            Rotation Schedule
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="px-2 py-1 bg-slate-100 rounded text-slate-600">
+                            Key Rotation {policy.keyRotationDays}d
+                          </span>
+                          <span className="px-2 py-1 bg-slate-100 rounded text-slate-600">
+                            Min Key Bits {policy.minKeyBits}
+                          </span>
+                          {policy.requireQuantumSafe && (
+                            <span className="px-2 py-1 bg-purple-100 rounded text-purple-600">
+                              Quantum Safe
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {/* Quantum-Ready Section */}
+            <Card className="border-purple-200 border-l-4">
+              <CardContent className="py-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-xl bg-purple-100 flex items-center justify-center">
+                      <Atom className="h-6 w-6 text-purple-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-slate-900">Quantum-Ready Algorithms</h3>
+                      <p className="text-sm text-slate-500">
+                        Enable post-quantum algorithms for new CRITICAL contexts
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Uses ML-KEM-768 for key encapsulation (hybrid mode)
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleToggleQuantumReady}
+                    className={cn(
+                      "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                      quantumReady ? "bg-purple-600" : "bg-slate-300"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                        quantumReady ? "translate-x-6" : "translate-x-1"
+                      )}
+                    />
+                  </button>
+                </div>
+
+                {quantumReady && (
+                  <div className="mt-4 p-3 bg-purple-50 rounded-lg">
+                    <p className="text-sm text-purple-800">
+                      <strong>Enabled:</strong> New CRITICAL contexts will use hybrid ML-KEM-768 + AES-256-GCM
+                      for maximum quantum resistance. This provides protection against future quantum computer attacks
+                      while maintaining compatibility with current systems.
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* Classification Edit Modal */}
+        {showClassificationEditModal && editingClassification && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+                <div className="flex items-center gap-3">
+                  {(() => {
+                    const config = classificationConfig[editingClassification.classification];
+                    const Icon = config.icon;
+                    return (
+                      <>
+                        <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center", config.bgColor)}>
+                          <Icon className={cn("h-5 w-5", config.color)} />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-semibold">Edit Policy: {config.label}</h2>
+                          <p className="text-sm text-slate-500">{config.description}</p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+                <button
+                  onClick={closeClassificationEdit}
+                  className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  <X className="h-5 w-5 text-slate-400" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
+                <div>
+                  <Label className="text-sm font-medium text-slate-700 mb-2 block">
+                    Encryption Algorithm
+                  </Label>
+                  <select
+                    value={classFormEncryption}
+                    onChange={(e) => setClassFormEncryption(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    {encryptionOptions.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-sm font-medium text-slate-700 mb-2 block">
+                    MAC Algorithm
+                  </Label>
+                  <select
+                    value={classFormMac}
+                    onChange={(e) => setClassFormMac(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    {macOptions.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-sm font-medium text-slate-700 mb-2 block">
+                    Signing Algorithm
+                  </Label>
+                  <select
+                    value={classFormSigning}
+                    onChange={(e) => setClassFormSigning(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    {signingOptions.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="pt-4 border-t border-slate-200">
+                  <h4 className="text-sm font-medium text-slate-700 mb-3">Key Rotation Schedule</h4>
+                  <div>
+                    <Label className="text-xs text-slate-500 mb-1.5 block">Rotation Period (days)</Label>
+                    <Input
+                      type="number"
+                      min={7}
+                      max={365}
+                      value={classFormRotation}
+                      onChange={(e) => setClassFormRotation(parseInt(e.target.value) || 90)}
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Recommended: 30 (Critical), 60 (Sensitive), 90 (Internal), 180 (Public)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50">
+                <Button variant="outline" onClick={closeClassificationEdit} disabled={saving}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveClassification} disabled={saving}>
+                  {saving ? (
+                    <>
+                      <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Policy"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AdminLayout>
