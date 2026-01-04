@@ -6,6 +6,18 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+## [1.3.5] - 2026-01-04
+
+### Fixed
+- P0: Trust score now dynamically calculated instead of hardcoded to 1.0
+- `check_promotion_readiness()` now accepts user_id and tenant_id parameters
+- Trust score reflects user history (approvals, rejections, policy violations)
+
+### Security
+- Promotion readiness now properly gates based on developer trust metrics
+
+---
+
 ## [1.3.2] - 2026-01-04
 
 ### Added
@@ -271,6 +283,9 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+[1.3.5]: https://github.com/keytum/crypto-serve/compare/v1.3.4...v1.3.5
+[1.3.4]: https://github.com/keytum/crypto-serve/compare/v1.3.3...v1.3.4
+[1.3.3]: https://github.com/keytum/crypto-serve/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/keytum/crypto-serve/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/keytum/crypto-serve/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/keytum/crypto-serve/compare/v1.2.0...v1.3.0
