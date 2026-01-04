@@ -288,6 +288,15 @@ async def scan_code(
             first_seen_scan_id = scan_record.id if is_new else (prev_finding.first_seen_scan_id if prev_finding else None)
             first_detected_at = datetime.now(timezone.utc) if is_new else (prev_finding.first_detected_at if prev_finding else None)
 
+            # Generate context-aware recommendation
+            # Check if this is a quantum-related finding based on title
+            is_quantum_finding = "quantum" in f.title.lower()
+            context_recommendation = get_context_recommendation(
+                algorithm=f.algorithm,
+                quantum_risk="high" if is_quantum_finding else None,
+                is_deprecated=False
+            )
+
             finding_record = SecurityFinding(
                 scan_id=scan_record.id,
                 severity=severity,
@@ -297,7 +306,7 @@ async def scan_code(
                 line_number=f.line_number,
                 algorithm=f.algorithm,
                 cwe=f.cwe,
-                recommendation=f.recommendation,
+                recommendation=context_recommendation,
                 fingerprint=fingerprint,
                 is_new=is_new,
                 first_seen_scan_id=first_seen_scan_id or scan_record.id,
