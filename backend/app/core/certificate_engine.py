@@ -742,6 +742,263 @@ class CertificateEngine:
         else:
             raise CertificateError(f"Unknown public key type: {type(public_key)}")
 
+    # ==================== Revocation Checking ====================
+
+    def get_ocsp_url(self, cert_data: bytes | str) -> str | None:
+        """Extract OCSP responder URL from certificate.
+
+        Args:
+            cert_data: Certificate in PEM or DER format
+
+        Returns:
+            OCSP URL or None if not present
+        """
+        cert = self._load_certificate(cert_data)
+
+        try:
+            aia = cert.extensions.get_extension_for_oid(
+                ExtensionOID.AUTHORITY_INFORMATION_ACCESS
+            )
+            for access_desc in aia.value:
+                if access_desc.access_method == x509.oid.AuthorityInformationAccessOID.OCSP:
+                    return access_desc.access_location.value
+        except x509.ExtensionNotFound:
+            pass
+
+        return None
+
+    def get_crl_urls(self, cert_data: bytes | str) -> list[str]:
+        """Extract CRL distribution points from certificate.
+
+        Args:
+            cert_data: Certificate in PEM or DER format
+
+        Returns:
+            List of CRL URLs
+        """
+        cert = self._load_certificate(cert_data)
+        urls = []
+
+        try:
+            crl_dp = cert.extensions.get_extension_for_oid(
+                ExtensionOID.CRL_DISTRIBUTION_POINTS
+            )
+            for dp in crl_dp.value:
+                if dp.full_name:
+                    for name in dp.full_name:
+                        if isinstance(name, x509.UniformResourceIdentifier):
+                            urls.append(name.value)
+        except x509.ExtensionNotFound:
+            pass
+
+        return urls
+
+    def check_ocsp(
+        self,
+        cert_data: bytes | str,
+        issuer_cert_data: bytes | str,
+        ocsp_url: str | None = None,
+        timeout: int = 10,
+    ) -> dict:
+        """Check certificate revocation status via OCSP.
+
+        Args:
+            cert_data: Certificate to check
+            issuer_cert_data: Issuer certificate (for signing OCSP request)
+            ocsp_url: OCSP responder URL (extracted from cert if not provided)
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dict with revocation status:
+            - status: "good", "revoked", "unknown", or "error"
+            - revocation_time: datetime if revoked
+            - revocation_reason: reason if revoked
+            - error: error message if status is "error"
+        """
+        import urllib.request
+        import urllib.error
+        from cryptography.x509 import ocsp
+
+        cert = self._load_certificate(cert_data)
+        issuer_cert = self._load_certificate(issuer_cert_data)
+
+        # Get OCSP URL
+        if not ocsp_url:
+            ocsp_url = self.get_ocsp_url(cert_data)
+            if not ocsp_url:
+                return {
+                    "status": "error",
+                    "error": "No OCSP URL found in certificate",
+                }
+
+        try:
+            # Build OCSP request
+            builder = ocsp.OCSPRequestBuilder()
+            builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
+            ocsp_request = builder.build()
+
+            # Send request
+            req = urllib.request.Request(
+                ocsp_url,
+                data=ocsp_request.public_bytes(serialization.Encoding.DER),
+                headers={"Content-Type": "application/ocsp-request"},
+            )
+
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                ocsp_response_data = response.read()
+
+            # Parse response
+            ocsp_response = ocsp.load_der_ocsp_response(ocsp_response_data)
+
+            if ocsp_response.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
+                return {
+                    "status": "error",
+                    "error": f"OCSP response status: {ocsp_response.response_status.name}",
+                }
+
+            cert_status = ocsp_response.certificate_status
+
+            if cert_status == ocsp.OCSPCertStatus.GOOD:
+                return {"status": "good"}
+            elif cert_status == ocsp.OCSPCertStatus.REVOKED:
+                result = {
+                    "status": "revoked",
+                    "revocation_time": ocsp_response.revocation_time.isoformat()
+                    if ocsp_response.revocation_time
+                    else None,
+                }
+                if ocsp_response.revocation_reason:
+                    result["revocation_reason"] = ocsp_response.revocation_reason.name
+                return result
+            else:
+                return {"status": "unknown"}
+
+        except urllib.error.URLError as e:
+            return {"status": "error", "error": f"OCSP request failed: {e}"}
+        except Exception as e:
+            return {"status": "error", "error": f"OCSP check error: {e}"}
+
+    def check_crl(
+        self,
+        cert_data: bytes | str,
+        crl_data: bytes | None = None,
+        crl_url: str | None = None,
+        timeout: int = 10,
+    ) -> dict:
+        """Check certificate revocation status via CRL.
+
+        Args:
+            cert_data: Certificate to check
+            crl_data: CRL data in PEM or DER format (if already downloaded)
+            crl_url: CRL URL (extracted from cert if not provided)
+            timeout: Request timeout for CRL download
+
+        Returns:
+            Dict with revocation status:
+            - status: "good", "revoked", or "error"
+            - revocation_time: datetime if revoked
+            - revocation_reason: reason if revoked
+            - error: error message if status is "error"
+        """
+        import urllib.request
+        import urllib.error
+
+        cert = self._load_certificate(cert_data)
+
+        # Get or download CRL
+        if crl_data is None:
+            if crl_url is None:
+                crl_urls = self.get_crl_urls(cert_data)
+                if not crl_urls:
+                    return {
+                        "status": "error",
+                        "error": "No CRL URL found in certificate",
+                    }
+                crl_url = crl_urls[0]
+
+            try:
+                req = urllib.request.Request(crl_url)
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    crl_data = response.read()
+            except urllib.error.URLError as e:
+                return {"status": "error", "error": f"CRL download failed: {e}"}
+
+        # Parse CRL
+        try:
+            if b"-----BEGIN" in crl_data:
+                crl = x509.load_pem_x509_crl(crl_data)
+            else:
+                crl = x509.load_der_x509_crl(crl_data)
+        except Exception as e:
+            return {"status": "error", "error": f"Failed to parse CRL: {e}"}
+
+        # Check if certificate is in CRL
+        revoked_cert = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
+
+        if revoked_cert is None:
+            return {"status": "good"}
+
+        result = {
+            "status": "revoked",
+            "revocation_time": revoked_cert.revocation_date_utc.isoformat()
+            if revoked_cert.revocation_date
+            else None,
+        }
+
+        # Get revocation reason if present
+        try:
+            reason_ext = revoked_cert.extensions.get_extension_for_oid(
+                x509.CRLEntryExtensionOID.CRL_REASON
+            )
+            result["revocation_reason"] = reason_ext.value.name
+        except x509.ExtensionNotFound:
+            pass
+
+        return result
+
+    def check_revocation(
+        self,
+        cert_data: bytes | str,
+        issuer_cert_data: bytes | str | None = None,
+        prefer_ocsp: bool = True,
+        timeout: int = 10,
+    ) -> dict:
+        """Check certificate revocation using OCSP or CRL.
+
+        Tries OCSP first if available and preferred, falls back to CRL.
+
+        Args:
+            cert_data: Certificate to check
+            issuer_cert_data: Issuer certificate (required for OCSP)
+            prefer_ocsp: Try OCSP before CRL
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dict with revocation status and method used
+        """
+        ocsp_url = self.get_ocsp_url(cert_data)
+        crl_urls = self.get_crl_urls(cert_data)
+
+        # Try OCSP first if preferred and available
+        if prefer_ocsp and ocsp_url and issuer_cert_data:
+            result = self.check_ocsp(cert_data, issuer_cert_data, ocsp_url, timeout)
+            if result["status"] != "error":
+                result["method"] = "ocsp"
+                return result
+
+        # Fall back to CRL
+        if crl_urls:
+            result = self.check_crl(cert_data, crl_url=crl_urls[0], timeout=timeout)
+            result["method"] = "crl"
+            return result
+
+        # Neither available
+        return {
+            "status": "error",
+            "error": "No OCSP or CRL URLs found in certificate",
+            "method": "none",
+        }
+
 
 # Singleton instance
 certificate_engine = CertificateEngine()

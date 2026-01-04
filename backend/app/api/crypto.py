@@ -447,3 +447,242 @@ async def get_key_bundle(
         version=version,
         ttl=300,  # 5 minutes
     )
+
+
+# ============================================================================
+# Batch Operations (for high-throughput use cases)
+# ============================================================================
+
+
+class BatchEncryptItem(BaseModel):
+    """Single item in a batch encryption request."""
+    id: str = Field(..., description="Client-provided ID for tracking")
+    plaintext: str = Field(..., description="Base64-encoded plaintext")
+    associated_data: str | None = Field(default=None, description="Optional AAD (base64)")
+
+
+class BatchEncryptRequest(BaseModel):
+    """Batch encryption request."""
+    context: str = Field(..., description="Encryption context (all items use same context)")
+    items: list[BatchEncryptItem] = Field(
+        ...,
+        description="Items to encrypt (max 100 per batch)",
+        max_length=100,
+    )
+    fail_fast: bool = Field(
+        default=False,
+        description="If true, stop on first error. If false, continue and report all errors."
+    )
+
+
+class BatchEncryptResultItem(BaseModel):
+    """Result of encrypting a single item."""
+    id: str
+    success: bool
+    ciphertext: str | None = None
+    error: str | None = None
+
+
+class BatchEncryptResponse(BaseModel):
+    """Batch encryption response."""
+    context: str
+    total: int
+    successful: int
+    failed: int
+    algorithm: AlgorithmInfo | None = None
+    results: list[BatchEncryptResultItem]
+
+
+class BatchDecryptItem(BaseModel):
+    """Single item in a batch decryption request."""
+    id: str = Field(..., description="Client-provided ID for tracking")
+    ciphertext: str = Field(..., description="Base64-encoded ciphertext")
+    associated_data: str | None = Field(default=None, description="Optional AAD (base64)")
+
+
+class BatchDecryptRequest(BaseModel):
+    """Batch decryption request."""
+    context: str = Field(..., description="Encryption context (all items use same context)")
+    items: list[BatchDecryptItem] = Field(
+        ...,
+        description="Items to decrypt (max 100 per batch)",
+        max_length=100,
+    )
+    fail_fast: bool = Field(
+        default=False,
+        description="If true, stop on first error. If false, continue and report all errors."
+    )
+
+
+class BatchDecryptResultItem(BaseModel):
+    """Result of decrypting a single item."""
+    id: str
+    success: bool
+    plaintext: str | None = None
+    error: str | None = None
+
+
+class BatchDecryptResponse(BaseModel):
+    """Batch decryption response."""
+    context: str
+    total: int
+    successful: int
+    failed: int
+    results: list[BatchDecryptResultItem]
+
+
+@router.post("/batch/encrypt", response_model=BatchEncryptResponse)
+async def batch_encrypt(
+    request: Request,
+    response: Response,
+    data: BatchEncryptRequest,
+    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Batch encrypt multiple items.
+
+    Encrypts multiple items in a single request, which is more efficient
+    than making individual requests. All items use the same encryption context.
+
+    - Maximum 100 items per batch
+    - Uses fail_fast=false by default to process all items
+    - Returns results in the same order as input
+    """
+    # Check rate limits (count as number of items)
+    rate_result = await check_rate_limit(request, identity, data.context)
+    add_rate_limit_headers(response, rate_result)
+
+    results: list[BatchEncryptResultItem] = []
+    successful = 0
+    failed = 0
+    algorithm_info: AlgorithmInfo | None = None
+
+    for item in data.items:
+        try:
+            # Decode plaintext
+            plaintext = base64.b64decode(item.plaintext)
+
+            # Decode AAD if present
+            associated_data = None
+            if item.associated_data:
+                associated_data = base64.b64decode(item.associated_data)
+
+            # Encrypt
+            result = await crypto_engine.encrypt(
+                db=db,
+                plaintext=plaintext,
+                context_name=data.context,
+                identity=identity,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                associated_data=associated_data,
+            )
+
+            # Capture algorithm info from first successful encryption
+            if algorithm_info is None:
+                algorithm_info = AlgorithmInfo(
+                    name=result.algorithm,
+                    mode=result.mode.value if hasattr(result.mode, 'value') else str(result.mode),
+                    key_bits=result.key_bits,
+                    description=result.description,
+                )
+
+            results.append(BatchEncryptResultItem(
+                id=item.id,
+                success=True,
+                ciphertext=base64.b64encode(result.ciphertext).decode("ascii"),
+            ))
+            successful += 1
+
+        except Exception as e:
+            results.append(BatchEncryptResultItem(
+                id=item.id,
+                success=False,
+                error=str(e),
+            ))
+            failed += 1
+
+            if data.fail_fast:
+                break
+
+    return BatchEncryptResponse(
+        context=data.context,
+        total=len(data.items),
+        successful=successful,
+        failed=failed,
+        algorithm=algorithm_info,
+        results=results,
+    )
+
+
+@router.post("/batch/decrypt", response_model=BatchDecryptResponse)
+async def batch_decrypt(
+    request: Request,
+    response: Response,
+    data: BatchDecryptRequest,
+    identity: Annotated[Identity, Depends(get_sdk_identity)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Batch decrypt multiple items.
+
+    Decrypts multiple items in a single request, which is more efficient
+    than making individual requests. All items use the same encryption context.
+
+    - Maximum 100 items per batch
+    - Uses fail_fast=false by default to process all items
+    - Returns results in the same order as input
+    """
+    # Check rate limits (count as number of items)
+    rate_result = await check_rate_limit(request, identity, data.context)
+    add_rate_limit_headers(response, rate_result)
+
+    results: list[BatchDecryptResultItem] = []
+    successful = 0
+    failed = 0
+
+    for item in data.items:
+        try:
+            # Decode ciphertext
+            ciphertext = base64.b64decode(item.ciphertext)
+
+            # Decode AAD if present
+            associated_data = None
+            if item.associated_data:
+                associated_data = base64.b64decode(item.associated_data)
+
+            # Decrypt
+            plaintext = await crypto_engine.decrypt(
+                db=db,
+                packed_ciphertext=ciphertext,
+                context_name=data.context,
+                identity=identity,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                associated_data=associated_data,
+            )
+
+            results.append(BatchDecryptResultItem(
+                id=item.id,
+                success=True,
+                plaintext=base64.b64encode(plaintext).decode("ascii"),
+            ))
+            successful += 1
+
+        except Exception as e:
+            results.append(BatchDecryptResultItem(
+                id=item.id,
+                success=False,
+                error=str(e),
+            ))
+            failed += 1
+
+            if data.fail_fast:
+                break
+
+    return BatchDecryptResponse(
+        context=data.context,
+        total=len(data.items),
+        successful=successful,
+        failed=failed,
+        results=results,
+    )

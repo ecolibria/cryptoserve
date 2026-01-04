@@ -160,6 +160,7 @@ nav:
     - Key Rotation: guides/key-rotation.md
     - Compliance: guides/compliance.md
     - Production Deployment: guides/production.md
+    - Migration Guide: guides/migration.md
   - API Reference:
     - api-reference/index.md
     - Crypto Operations: api-reference/crypto.md

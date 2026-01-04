@@ -38,6 +38,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from sqlalchemy import select, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import __version__ as cryptoserve_version
 from app.config import get_settings
 from app.database import Base, get_session_maker
 from app.models import (
@@ -333,7 +334,7 @@ class BackupService:
             manifest = BackupManifest(
                 version=BACKUP_VERSION,
                 created_at=datetime.now(timezone.utc).isoformat(),
-                cryptoserve_version="1.0.0",  # TODO: Get from package
+                cryptoserve_version=cryptoserve_version,
                 database_type="postgresql" if "postgresql" in settings.database_url else "sqlite",
                 tenant_count=len(backup_data.get("tenants", [])),
                 context_count=len(backup_data.get("contexts", [])),

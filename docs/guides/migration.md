@@ -1,0 +1,358 @@
+# Migration Guide
+
+This guide helps you migrate to CryptoServe from other cryptographic platforms and libraries.
+
+## Migrating from AWS KMS
+
+### Conceptual Mapping
+
+| AWS KMS Concept | CryptoServe Equivalent |
+|-----------------|------------------------|
+| Customer Master Key (CMK) | Encryption Context |
+| Key Policy | Policy Engine Rules |
+| Encrypt/Decrypt API | `/v1/crypto/encrypt` and `/v1/crypto/decrypt` |
+| GenerateDataKey | Context key derivation (automatic) |
+| Key Rotation | `/v1/contexts/{id}/rotate` |
+| CloudTrail | Audit Log API |
+
+### Code Migration
+
+**AWS KMS (Before):**
+
+```python
+import boto3
+
+kms = boto3.client('kms')
+
+# Encrypt
+response = kms.encrypt(
+    KeyId='alias/my-key',
+    Plaintext=b'sensitive data'
+)
+ciphertext = response['CiphertextBlob']
+
+# Decrypt
+response = kms.decrypt(CiphertextBlob=ciphertext)
+plaintext = response['Plaintext']
+```
+
+**CryptoServe (After):**
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app")
+
+# Encrypt
+ciphertext = crypto.encrypt(b'sensitive data', context="default")
+
+# Decrypt
+plaintext = crypto.decrypt(ciphertext, context="default")
+```
+
+### Key Differences
+
+1. **No key management required** - CryptoServe derives keys automatically from contexts
+2. **Built-in PQC** - Post-quantum algorithms available without additional configuration
+3. **Policy enforcement** - Cryptographic policies enforced at runtime
+4. **Local caching** - SDK caches key bundles for offline operation
+
+---
+
+## Migrating from HashiCorp Vault
+
+### Conceptual Mapping
+
+| Vault Concept | CryptoServe Equivalent |
+|---------------|------------------------|
+| Transit Secrets Engine | Crypto API |
+| Named Keys | Encryption Contexts |
+| Key Rotation | `/v1/contexts/{id}/rotate` |
+| Seal/Unseal | Key Ceremony (`/v1/ceremony/`) |
+| Policies | Policy Engine |
+| Leases | Lease Engine |
+| Audit Backend | SIEM Integration |
+
+### Code Migration
+
+**Vault (Before):**
+
+```python
+import hvac
+
+client = hvac.Client(url='https://vault.example.com')
+client.token = 's.xxxxxx'
+
+# Encrypt
+response = client.secrets.transit.encrypt_data(
+    name='my-key',
+    plaintext=base64.b64encode(b'sensitive data').decode()
+)
+ciphertext = response['data']['ciphertext']
+
+# Decrypt
+response = client.secrets.transit.decrypt_data(
+    name='my-key',
+    ciphertext=ciphertext
+)
+plaintext = base64.b64decode(response['data']['plaintext'])
+```
+
+**CryptoServe (After):**
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app")
+
+# Encrypt
+ciphertext = crypto.encrypt(b'sensitive data', context="my-key")
+
+# Decrypt
+plaintext = crypto.decrypt(ciphertext, context="my-key")
+```
+
+### Feature Comparison
+
+| Feature | Vault | CryptoServe |
+|---------|-------|-------------|
+| Symmetric encryption | Yes | Yes |
+| Asymmetric encryption | Yes | Yes |
+| Signing | Yes | Yes |
+| Key rotation | Yes | Yes |
+| Seal/unseal ceremony | Yes | Yes |
+| Secret sharing (Shamir) | Yes | Yes |
+| Threshold signatures | No | Yes (FROST) |
+| Post-quantum crypto | No | Yes |
+| CBOM generation | No | Yes |
+
+---
+
+## Migrating from cryptography Library
+
+If you're using Python's `cryptography` library directly, CryptoServe simplifies your code significantly.
+
+### Code Migration
+
+**cryptography (Before):**
+
+```python
+import os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# Generate and store key securely (your responsibility)
+key = os.urandom(32)
+# You need to implement key storage, rotation, etc.
+
+aesgcm = AESGCM(key)
+nonce = os.urandom(12)
+
+# Encrypt
+ciphertext = aesgcm.encrypt(nonce, b'sensitive data', None)
+# You need to store nonce with ciphertext
+
+# Decrypt
+plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+```
+
+**CryptoServe (After):**
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app")
+
+# Encrypt (nonce handling automatic)
+ciphertext = crypto.encrypt(b'sensitive data', context="default")
+
+# Decrypt
+plaintext = crypto.decrypt(ciphertext, context="default")
+```
+
+### What CryptoServe Handles For You
+
+| Concern | DIY Approach | CryptoServe |
+|---------|--------------|-------------|
+| Key generation | Manual | Automatic |
+| Key storage | Build it yourself | Built-in |
+| Key rotation | Build it yourself | One API call |
+| Nonce management | Manual | Automatic |
+| Algorithm selection | Manual research | Policy-driven |
+| Audit logging | Build it yourself | Built-in |
+| Compliance | Manual | Policy engine |
+
+---
+
+## Migrating from PyCryptodome
+
+Similar to the cryptography library, PyCryptodome requires manual key management.
+
+**PyCryptodome (Before):**
+
+```python
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+
+key = get_random_bytes(32)  # Store this securely!
+nonce = get_random_bytes(12)
+
+cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+ciphertext, tag = cipher.encrypt_and_digest(b'sensitive data')
+
+# Store: nonce + ciphertext + tag
+```
+
+**CryptoServe (After):**
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app")
+ciphertext = crypto.encrypt(b'sensitive data', context="default")
+```
+
+---
+
+## Batch Migration
+
+For high-throughput migrations, use the batch API:
+
+```python
+import base64
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="migration-tool")
+
+# Prepare batch
+items = [
+    {"id": f"item-{i}", "plaintext": base64.b64encode(data).decode()}
+    for i, data in enumerate(your_data_list)
+]
+
+# Encrypt in batches of 100
+response = crypto.batch_encrypt(items[:100], context="default")
+
+for result in response["results"]:
+    if result["success"]:
+        # Store result["ciphertext"]
+        pass
+    else:
+        # Handle error
+        print(f"Failed: {result['id']} - {result['error']}")
+```
+
+---
+
+## Certificate Migration
+
+### Importing Existing Certificates
+
+CryptoServe can parse and validate existing X.509 certificates:
+
+```python
+# Parse existing certificate
+cert_info = crypto.parse_certificate(existing_cert_pem)
+
+# Validate chain
+validation = crypto.validate_chain(cert_chain)
+
+# Check revocation status (OCSP/CRL)
+revocation = crypto.check_revocation(cert_pem, issuer_pem)
+```
+
+### Generating New Certificates
+
+```python
+# Generate CSR
+csr = crypto.generate_csr(
+    common_name="my-service.example.com",
+    organization="Example Corp",
+    key_type="ec",
+    curve="P-256"
+)
+
+# Self-signed certificate (for testing)
+cert = crypto.generate_self_signed(
+    common_name="my-service.example.com",
+    days_valid=365
+)
+```
+
+---
+
+## Post-Quantum Migration
+
+CryptoServe supports hybrid post-quantum cryptography for quantum-resistant encryption:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="pqc-ready-app")
+
+# Hybrid encryption: X25519 + ML-KEM-768
+ciphertext = crypto.encrypt(
+    b'quantum-safe data',
+    context="pqc-context"  # Configure context for PQC
+)
+
+# Hybrid signatures: Ed25519 + ML-DSA-65
+signature = crypto.sign(
+    b'document',
+    key_id="hybrid-signing-key"
+)
+```
+
+### Enabling PQC for a Context
+
+Via the dashboard or API, configure a context for post-quantum:
+
+```json
+{
+  "name": "pqc-context",
+  "algorithm": "hybrid",
+  "pqc_algorithm": "ml-kem-768",
+  "classical_algorithm": "x25519"
+}
+```
+
+---
+
+## Migration Checklist
+
+- [ ] **Inventory current cryptographic usage**
+    - List all encryption keys and their purposes
+    - Document current algorithms in use
+    - Identify deprecated algorithms (DES, 3DES, MD5, SHA-1)
+
+- [ ] **Plan context structure**
+    - Map existing keys to CryptoServe contexts
+    - Define sensitivity levels and compliance requirements
+    - Plan key rotation schedule
+
+- [ ] **Set up CryptoServe**
+    - Deploy server (Docker or manual)
+    - Configure authentication (GitHub OAuth)
+    - Create encryption contexts
+
+- [ ] **Migrate incrementally**
+    - Start with non-critical data
+    - Use batch API for bulk migration
+    - Verify decryption after migration
+
+- [ ] **Update applications**
+    - Install CryptoServe SDK
+    - Replace cryptographic code
+    - Test thoroughly
+
+- [ ] **Decommission old systems**
+    - Verify all data migrated
+    - Revoke old keys
+    - Update documentation
+
+---
+
+## Getting Help
+
+- **Documentation:** [https://keytum.github.io/crypto-serve/](https://keytum.github.io/crypto-serve/)
+- **GitHub Issues:** [https://github.com/keytum/crypto-serve/issues](https://github.com/keytum/crypto-serve/issues)
+- **Security Issues:** security@cryptoserve.io
