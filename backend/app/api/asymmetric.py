@@ -82,13 +82,44 @@ async def generate_key_exchange_keys(
         )
 
     try:
-        private_key, public_key = asymmetric_engine.generate_key_exchange_pair(algorithm)
+        from cryptography.hazmat.primitives import serialization
+
+        # Map key exchange algorithm to asymmetric algorithm
+        algo_map = {
+            KeyExchangeAlgorithm.X25519: AsymmetricAlgorithm.X25519_AESGCM,
+            KeyExchangeAlgorithm.ECDH_P256: AsymmetricAlgorithm.ECIES_P256,
+            KeyExchangeAlgorithm.ECDH_P384: AsymmetricAlgorithm.ECIES_P384,
+        }
+        asymmetric_algo = algo_map.get(algorithm)
+        if not asymmetric_algo:
+            raise UnsupportedAlgorithmError(f"Unsupported key exchange algorithm: {algorithm}")
+
+        key_pair = asymmetric_engine.generate_key_pair(
+            algorithm=asymmetric_algo,
+            context="key-exchange",
+        )
+
+        # Serialize keys to raw bytes
+        if algorithm == KeyExchangeAlgorithm.X25519:
+            private_bytes = key_pair.private_key.private_bytes_raw()
+            public_bytes = key_pair.public_key.public_bytes_raw()
+        else:
+            # ECDH uses X.509 format
+            private_bytes = key_pair.private_key.private_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PrivateFormat.Raw,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            public_bytes = key_pair.public_key.public_bytes(
+                encoding=serialization.Encoding.X962,
+                format=serialization.PublicFormat.UncompressedPoint,
+            )
     except UnsupportedAlgorithmError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     return KeyExchangeGenerateResponse(
-        private_key=base64.b64encode(private_key).decode("ascii"),
-        public_key=base64.b64encode(public_key).decode("ascii"),
+        private_key=base64.b64encode(private_bytes).decode("ascii"),
+        public_key=base64.b64encode(public_bytes).decode("ascii"),
         algorithm=algorithm.value,
     )
 
@@ -334,7 +365,25 @@ async def generate_rsa_keys(
         )
 
     try:
-        private_pem, public_pem = asymmetric_engine.generate_rsa_pair(data.key_size)
+        from cryptography.hazmat.primitives import serialization
+
+        key_pair = asymmetric_engine.generate_key_pair(
+            algorithm=AsymmetricAlgorithm.RSA_OAEP_SHA256,
+            context="rsa-generation",
+            rsa_key_size=data.key_size,
+        )
+
+        # Serialize to PEM format
+        private_pem = key_pair.private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
+
+        public_pem = key_pair.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
     except AsymmetricError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
