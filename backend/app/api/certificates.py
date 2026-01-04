@@ -1,6 +1,7 @@
 """Certificate Management API routes.
 
 Provides PKI operations: CSR generation, self-signed certs, certificate parsing and validation.
+Also includes PKCS#12 (.p12/.pfx) import/export for enterprise key migration.
 """
 
 import base64
@@ -18,12 +19,18 @@ from app.core.certificate_engine import (
     SubjectInfo,
     CertificateType,
 )
+from app.core.key_export import (
+    KeyExportEngine,
+    PKCS12ExportError,
+    PKCS12ImportError,
+)
 from app.auth.jwt import get_dashboard_or_sdk_user
 
 router = APIRouter(prefix="/api/v1/certificates", tags=["certificates"])
 
-# Singleton engine
+# Singleton engines
 certificate_engine = CertificateEngine()
+key_export_engine = KeyExportEngine()
 
 
 # ============================================================================
@@ -446,3 +453,235 @@ async def parse_uploaded_certificate(
         "san": info.san,
         "fingerprint_sha256": info.fingerprint_sha256,
     }
+
+
+# ============================================================================
+# PKCS#12 Request/Response Models
+# ============================================================================
+
+class PKCS12ExportRequest(BaseModel):
+    """PKCS#12 export request."""
+    private_key_pem: str = Field(..., description="Private key in PEM format")
+    certificate_pem: str = Field(..., description="Certificate in PEM format")
+    password: str | None = Field(default=None, description="Password for PKCS#12 encryption (recommended)")
+    friendly_name: str | None = Field(default=None, description="Friendly name for the key/cert bundle")
+    ca_certs_pem: list[str] | None = Field(default=None, description="CA certificate chain (PEM format)")
+
+
+class PKCS12ExportResponse(BaseModel):
+    """PKCS#12 export response."""
+    pkcs12_base64: str = Field(..., description="PKCS#12 data (base64 encoded)")
+    includes_chain: bool = Field(..., description="Whether CA chain is included")
+    key_type: str = Field(..., description="Key type (ec-p256, rsa-2048, etc.)")
+    certificate_subject: str = Field(..., description="Certificate subject (RFC 4514 format)")
+    certificate_fingerprint: str = Field(..., description="Certificate SHA-256 fingerprint")
+
+
+class PKCS12ImportRequest(BaseModel):
+    """PKCS#12 import request."""
+    pkcs12_base64: str = Field(..., description="PKCS#12 data (base64 encoded)")
+    password: str | None = Field(default=None, description="Password to decrypt PKCS#12")
+
+
+class PKCS12ImportResponse(BaseModel):
+    """PKCS#12 import response."""
+    private_key_pem: str = Field(..., description="Private key in PEM format")
+    certificate_pem: str = Field(..., description="Certificate in PEM format")
+    ca_certs_pem: list[str] = Field(..., description="Additional CA certificates (PEM format)")
+    key_type: str = Field(..., description="Key type")
+    certificate_subject: str = Field(..., description="Certificate subject")
+    certificate_fingerprint: str = Field(..., description="Certificate SHA-256 fingerprint")
+
+
+# ============================================================================
+# PKCS#12 API Endpoints
+# ============================================================================
+
+@router.post("/pkcs12/export", response_model=PKCS12ExportResponse)
+async def export_to_pkcs12(
+    data: PKCS12ExportRequest,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
+):
+    """Export a private key and certificate to PKCS#12 format.
+
+    Creates a .p12/.pfx bundle containing the private key, certificate,
+    and optionally a CA certificate chain. PKCS#12 is commonly used for:
+    - Enterprise key migration between systems
+    - Importing into browsers and keystores
+    - Backup of key/certificate pairs
+
+    The password is highly recommended for security, as it encrypts
+    the private key within the bundle.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    # Parse private key
+    try:
+        private_key = serialization.load_pem_private_key(
+            data.private_key_pem.encode(),
+            password=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid private key: {e}",
+        )
+
+    # Parse CA certs if provided
+    ca_certs = None
+    if data.ca_certs_pem:
+        ca_certs = [cert.encode() for cert in data.ca_certs_pem]
+
+    try:
+        result = key_export_engine.export_to_pkcs12(
+            private_key=private_key,
+            certificate=data.certificate_pem.encode(),
+            password=data.password,
+            friendly_name=data.friendly_name,
+            ca_certs=ca_certs,
+        )
+    except PKCS12ExportError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    return PKCS12ExportResponse(
+        pkcs12_base64=base64.b64encode(result.pkcs12_data).decode(),
+        includes_chain=result.includes_chain,
+        key_type=result.key_type.value,
+        certificate_subject=result.certificate_subject,
+        certificate_fingerprint=result.certificate_fingerprint,
+    )
+
+
+@router.post("/pkcs12/import", response_model=PKCS12ImportResponse)
+async def import_from_pkcs12(
+    data: PKCS12ImportRequest,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)],
+):
+    """Import a private key and certificate from PKCS#12 format.
+
+    Parses a .p12/.pfx bundle and extracts the private key, certificate,
+    and any CA certificates in the chain.
+
+    The password is required if the PKCS#12 was encrypted.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    # Decode base64
+    try:
+        pkcs12_data = base64.b64decode(data.pkcs12_base64)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid base64 encoding",
+        )
+
+    # Size limit (100KB)
+    if len(pkcs12_data) > 100 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="PKCS#12 data too large (max 100KB)",
+        )
+
+    try:
+        result = key_export_engine.import_from_pkcs12(
+            pkcs12_data=pkcs12_data,
+            password=data.password,
+        )
+    except PKCS12ImportError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    # Serialize to PEM
+    private_key_pem = result.private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    certificate_pem = result.certificate.public_bytes(
+        encoding=serialization.Encoding.PEM,
+    ).decode()
+
+    ca_certs_pem = [
+        cert.public_bytes(serialization.Encoding.PEM).decode()
+        for cert in result.additional_certs
+    ]
+
+    return PKCS12ImportResponse(
+        private_key_pem=private_key_pem,
+        certificate_pem=certificate_pem,
+        ca_certs_pem=ca_certs_pem,
+        key_type=result.key_type.value,
+        certificate_subject=result.certificate_subject,
+        certificate_fingerprint=result.certificate_fingerprint,
+    )
+
+
+@router.post("/pkcs12/upload", response_model=PKCS12ImportResponse)
+async def upload_pkcs12(
+    file: UploadFile = File(...),
+    password: str | None = None,
+    user: Annotated[User, Depends(get_dashboard_or_sdk_user)] = None,
+):
+    """Upload and import a PKCS#12 file.
+
+    Accepts .p12 or .pfx files and extracts the private key, certificate,
+    and CA chain.
+
+    Query parameter:
+    - password: Password to decrypt the PKCS#12 file (optional)
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    content = await file.read()
+
+    # Size limit (100KB)
+    if len(content) > 100 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File too large (max 100KB)",
+        )
+
+    try:
+        result = key_export_engine.import_from_pkcs12(
+            pkcs12_data=content,
+            password=password,
+        )
+    except PKCS12ImportError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    # Serialize to PEM
+    private_key_pem = result.private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    certificate_pem = result.certificate.public_bytes(
+        encoding=serialization.Encoding.PEM,
+    ).decode()
+
+    ca_certs_pem = [
+        cert.public_bytes(serialization.Encoding.PEM).decode()
+        for cert in result.additional_certs
+    ]
+
+    return PKCS12ImportResponse(
+        private_key_pem=private_key_pem,
+        certificate_pem=certificate_pem,
+        ca_certs_pem=ca_certs_pem,
+        key_type=result.key_type.value,
+        certificate_subject=result.certificate_subject,
+        certificate_fingerprint=result.certificate_fingerprint,
+    )

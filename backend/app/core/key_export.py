@@ -3,6 +3,7 @@
 Provides secure key export and import functionality:
 - Symmetric key export with key wrapping (AES-KW, AES-GCM-KW)
 - Asymmetric key export (JWK, PEM, PKCS#8)
+- PKCS#12 (.p12/.pfx) import/export for key + certificate bundles
 - Key import with validation
 - Password-based key encryption (PBKDF2 + AES-GCM)
 
@@ -10,6 +11,7 @@ Security considerations:
 - Private keys are never exported in plain text
 - Key wrapping uses authenticated encryption
 - Import validates key material before use
+- PKCS#12 validates key-certificate pairing
 """
 
 import base64
@@ -25,6 +27,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.keywrap import aes_key_wrap, aes_key_unwrap
+from cryptography.hazmat.primitives.serialization import pkcs12
+from cryptography import x509
 
 from app.core.secure_memory import SecureBytes
 
@@ -36,6 +40,7 @@ class KeyFormat(str, Enum):
     RAW = "raw"  # Raw bytes (for symmetric keys)
     WRAPPED = "wrapped"  # Key wrapped with KEK
     ENCRYPTED = "encrypted"  # Password-encrypted
+    PKCS12 = "pkcs12"  # PKCS#12 bundle (.p12/.pfx)
 
 
 class KeyType(str, Enum):
@@ -76,6 +81,37 @@ class KeyExportError(Exception):
 class KeyImportError(Exception):
     """Key import failed."""
     pass
+
+
+class PKCS12ExportError(Exception):
+    """PKCS#12 export failed."""
+    pass
+
+
+class PKCS12ImportError(Exception):
+    """PKCS#12 import failed."""
+    pass
+
+
+@dataclass
+class PKCS12ExportResult:
+    """Result of PKCS#12 export operation."""
+    pkcs12_data: bytes
+    includes_chain: bool
+    key_type: KeyType
+    certificate_subject: str
+    certificate_fingerprint: str
+
+
+@dataclass
+class PKCS12ImportResult:
+    """Result of PKCS#12 import operation."""
+    private_key: Any
+    certificate: x509.Certificate
+    additional_certs: list[x509.Certificate]
+    key_type: KeyType
+    certificate_fingerprint: str
+    certificate_subject: str
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -607,6 +643,210 @@ class KeyExportEngine:
             return key, False
         except Exception as e:
             raise KeyImportError(f"Failed to parse PEM: {e}")
+
+    def export_to_pkcs12(
+        self,
+        private_key: Any,
+        certificate: bytes | x509.Certificate,
+        password: str | None = None,
+        friendly_name: str | None = None,
+        ca_certs: list[bytes | x509.Certificate] | None = None,
+    ) -> PKCS12ExportResult:
+        """Export a private key and certificate to PKCS#12 format.
+
+        Creates a .p12/.pfx file containing the private key, certificate, and
+        optionally a CA certificate chain. Commonly used for enterprise key
+        migration scenarios.
+
+        Args:
+            private_key: The private key (RSA, EC, or Ed25519)
+            certificate: The certificate (DER/PEM bytes or x509.Certificate)
+            password: Password to encrypt the PKCS#12 file (recommended)
+            friendly_name: Optional display name for the key/cert in the bundle
+            ca_certs: Optional CA certificate chain
+
+        Returns:
+            PKCS12ExportResult with the serialized data
+
+        Raises:
+            PKCS12ExportError: If export fails (key/cert mismatch, unsupported type)
+        """
+        # Parse certificate if bytes
+        if isinstance(certificate, bytes):
+            try:
+                # Try PEM first
+                if b"-----BEGIN CERTIFICATE-----" in certificate:
+                    cert = x509.load_pem_x509_certificate(certificate)
+                else:
+                    cert = x509.load_der_x509_certificate(certificate)
+            except Exception as e:
+                raise PKCS12ExportError(f"Failed to parse certificate: {e}")
+        else:
+            cert = certificate
+
+        # Validate key matches certificate
+        if not self._validate_key_cert_pair(private_key, cert):
+            raise PKCS12ExportError(
+                "Private key does not match certificate public key"
+            )
+
+        # Parse CA certs
+        parsed_ca_certs: list[x509.Certificate] = []
+        if ca_certs:
+            for ca_cert in ca_certs:
+                if isinstance(ca_cert, bytes):
+                    try:
+                        if b"-----BEGIN CERTIFICATE-----" in ca_cert:
+                            parsed_ca_certs.append(
+                                x509.load_pem_x509_certificate(ca_cert)
+                            )
+                        else:
+                            parsed_ca_certs.append(
+                                x509.load_der_x509_certificate(ca_cert)
+                            )
+                    except Exception as e:
+                        raise PKCS12ExportError(f"Failed to parse CA certificate: {e}")
+                else:
+                    parsed_ca_certs.append(ca_cert)
+
+        # Determine key type
+        key_type = self._get_key_type(private_key)
+
+        # Prepare friendly name
+        name = friendly_name.encode() if friendly_name else None
+
+        # Prepare password
+        pwd_bytes: bytes | None = password.encode() if password else None
+
+        try:
+            # Serialize to PKCS#12
+            pkcs12_data = pkcs12.serialize_key_and_certificates(
+                name=name,
+                key=private_key,
+                cert=cert,
+                cas=parsed_ca_certs if parsed_ca_certs else None,
+                encryption_algorithm=(
+                    serialization.BestAvailableEncryption(pwd_bytes)
+                    if pwd_bytes
+                    else serialization.NoEncryption()
+                ),
+            )
+        except Exception as e:
+            raise PKCS12ExportError(f"PKCS#12 serialization failed: {e}")
+
+        # Calculate certificate fingerprint
+        fingerprint = cert.fingerprint(hashes.SHA256()).hex()
+
+        # Get certificate subject
+        subject = cert.subject.rfc4514_string()
+
+        return PKCS12ExportResult(
+            pkcs12_data=pkcs12_data,
+            includes_chain=len(parsed_ca_certs) > 0,
+            key_type=key_type,
+            certificate_subject=subject,
+            certificate_fingerprint=fingerprint,
+        )
+
+    def import_from_pkcs12(
+        self,
+        pkcs12_data: bytes,
+        password: str | None = None,
+    ) -> PKCS12ImportResult:
+        """Import a private key and certificate from PKCS#12 format.
+
+        Parses a .p12/.pfx file and extracts the private key, certificate,
+        and any CA certificates in the chain.
+
+        Args:
+            pkcs12_data: The PKCS#12 file contents
+            password: Password to decrypt the PKCS#12 file
+
+        Returns:
+            PKCS12ImportResult with key, certificate, and chain
+
+        Raises:
+            PKCS12ImportError: If import fails (wrong password, corrupted data)
+        """
+        # Prepare password
+        pwd_bytes: bytes | None = password.encode() if password else None
+
+        try:
+            # Parse PKCS#12 data
+            private_key, certificate, additional_certs = (
+                pkcs12.load_key_and_certificates(pkcs12_data, pwd_bytes)
+            )
+        except ValueError as e:
+            # Generic error to prevent password enumeration
+            raise PKCS12ImportError(
+                "Failed to decrypt PKCS#12 (wrong password or corrupted data)"
+            )
+        except Exception as e:
+            raise PKCS12ImportError(f"Failed to parse PKCS#12: {e}")
+
+        if private_key is None:
+            raise PKCS12ImportError("PKCS#12 does not contain a private key")
+
+        if certificate is None:
+            raise PKCS12ImportError("PKCS#12 does not contain a certificate")
+
+        # Determine key type
+        key_type = self._get_key_type(private_key)
+
+        # Calculate certificate fingerprint
+        fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
+
+        # Get certificate subject
+        subject = certificate.subject.rfc4514_string()
+
+        # Convert additional certs to list (may be None)
+        chain = list(additional_certs) if additional_certs else []
+
+        return PKCS12ImportResult(
+            private_key=private_key,
+            certificate=certificate,
+            additional_certs=chain,
+            key_type=key_type,
+            certificate_fingerprint=fingerprint,
+            certificate_subject=subject,
+        )
+
+    def _validate_key_cert_pair(
+        self,
+        private_key: Any,
+        certificate: x509.Certificate,
+    ) -> bool:
+        """Validate that a private key matches a certificate's public key.
+
+        Args:
+            private_key: The private key to validate
+            certificate: The certificate to match against
+
+        Returns:
+            True if the key matches the certificate
+        """
+        try:
+            cert_public_key = certificate.public_key()
+
+            # Get public key from private key
+            if hasattr(private_key, "public_key"):
+                key_public = private_key.public_key()
+            else:
+                return False
+
+            # Compare by serializing to bytes
+            cert_pub_bytes = cert_public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            key_pub_bytes = key_public.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+
+            return cert_pub_bytes == key_pub_bytes
+        except Exception:
+            return False
 
 
 # Singleton instance
