@@ -9,25 +9,55 @@ import { api, User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-const baseNavigation = [
-  { name: "Dashboard", href: "/dashboard", icon: Shield },
-  { name: "Security", href: "/dashboard/security", icon: ShieldAlert },
-  { name: "My Applications", href: "/applications", icon: AppWindow },
-  { name: "My Contexts", href: "/dashboard/contexts", icon: Lock },
-  { name: "Usage Stats", href: "/dashboard/usage", icon: BarChart3 },
-  { name: "Audit Log", href: "/audit", icon: FileText },
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+interface NavSection {
+  title?: string;
+  items: NavItem[];
+}
+
+const navSections: NavSection[] = [
+  {
+    items: [
+      { name: "Dashboard", href: "/dashboard", icon: Shield },
+      { name: "Applications", href: "/applications", icon: AppWindow },
+      { name: "Contexts", href: "/dashboard/contexts", icon: Lock },
+    ],
+  },
+  {
+    title: "Security",
+    items: [
+      { name: "Findings", href: "/dashboard/security", icon: ShieldAlert },
+      { name: "Audit Log", href: "/audit", icon: FileText },
+    ],
+  },
+  {
+    title: "Scanning Tools",
+    items: [
+      { name: "Code Scanner", href: "/dev/scanner", icon: Code },
+      { name: "Dependencies", href: "/dev/dependencies", icon: Package },
+      { name: "Certificates", href: "/dev/certificates", icon: Award },
+      { name: "CBOM Reports", href: "/cbom", icon: FileText },
+    ],
+  },
+  {
+    title: "Monitoring",
+    items: [
+      { name: "Usage Stats", href: "/dashboard/usage", icon: BarChart3 },
+    ],
+  },
 ];
 
-const toolsNavigation = [
-  { name: "Code Scanner", href: "/dev/scanner", icon: Code },
-  { name: "Dependencies", href: "/dev/dependencies", icon: Package },
-  { name: "Certificates", href: "/dev/certificates", icon: Award },
-  { name: "CBOM Reports", href: "/cbom", icon: FileText },
-];
-
-const adminNavigation = [
-  { name: "Admin", href: "/admin", icon: Settings },
-];
+const adminSection: NavSection = {
+  title: "Admin",
+  items: [
+    { name: "Admin Console", href: "/admin", icon: Settings },
+  ],
+};
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -54,10 +84,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
     window.location.href = "/";
   };
 
-  // Build navigation based on user role
-  const navigation = user?.is_admin
-    ? [...baseNavigation, ...adminNavigation]
-    : baseNavigation;
+  // Build navigation sections based on user role
+  const sections = user?.is_admin
+    ? [...navSections, adminSection]
+    : navSections;
 
   if (loading) {
     return (
@@ -87,40 +117,34 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
               <X className="h-6 w-6" />
             </button>
           </div>
-          <nav className="px-2 py-4">
-            {navigation.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={cn(
-                  "flex items-center px-3 py-2 rounded-lg mb-1",
-                  pathname === item.href
-                    ? "bg-blue-50 text-blue-600"
-                    : "text-slate-600 hover:bg-slate-100"
+          <nav className="px-2 py-4 space-y-4">
+            {sections.map((section, sectionIdx) => (
+              <div key={sectionIdx}>
+                {section.title && (
+                  <p className="px-3 mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    {section.title}
+                  </p>
                 )}
-              >
-                <item.icon className="h-5 w-5 mr-3" />
-                {item.name}
-              </Link>
+                <div className="space-y-1">
+                  {section.items.map((item) => (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      className={cn(
+                        "flex items-center px-3 py-2 rounded-lg text-sm",
+                        pathname === item.href
+                          ? "bg-blue-50 text-blue-600"
+                          : "text-slate-600 hover:bg-slate-100"
+                      )}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <item.icon className="h-5 w-5 mr-3" />
+                      {item.name}
+                    </Link>
+                  ))}
+                </div>
+              </div>
             ))}
-            <div className="mt-4 pt-4 border-t">
-              <p className="px-3 mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">Tools</p>
-              {toolsNavigation.map((item) => (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  className={cn(
-                    "flex items-center px-3 py-2 rounded-lg mb-1",
-                    pathname === item.href
-                      ? "bg-blue-50 text-blue-600"
-                      : "text-slate-600 hover:bg-slate-100"
-                  )}
-                >
-                  <item.icon className="h-5 w-5 mr-3" />
-                  {item.name}
-                </Link>
-              ))}
-            </div>
           </nav>
         </div>
       </div>
@@ -133,45 +157,35 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             <span className="ml-2 text-xl font-semibold">CryptoServe</span>
           </div>
           <nav className="flex flex-1 flex-col">
-            <ul className="flex flex-1 flex-col gap-y-1">
-              {navigation.map((item) => (
-                <li key={item.name}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      "flex items-center px-3 py-2 rounded-lg",
-                      pathname === item.href
-                        ? "bg-blue-50 text-blue-600"
-                        : "text-slate-600 hover:bg-slate-100"
-                    )}
-                  >
-                    <item.icon className="h-5 w-5 mr-3" />
-                    {item.name}
-                  </Link>
-                </li>
+            <div className="flex flex-1 flex-col gap-y-4">
+              {sections.map((section, sectionIdx) => (
+                <div key={sectionIdx}>
+                  {section.title && (
+                    <p className="px-3 mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      {section.title}
+                    </p>
+                  )}
+                  <ul className="flex flex-col gap-y-1">
+                    {section.items.map((item) => (
+                      <li key={item.name}>
+                        <Link
+                          href={item.href}
+                          className={cn(
+                            "flex items-center px-3 py-2 rounded-lg text-sm",
+                            pathname === item.href
+                              ? "bg-blue-50 text-blue-600"
+                              : "text-slate-600 hover:bg-slate-100"
+                          )}
+                        >
+                          <item.icon className="h-5 w-5 mr-3" />
+                          {item.name}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-              <li className="mt-4 pt-4 border-t">
-                <p className="px-3 mb-2 text-xs font-medium text-slate-400 uppercase tracking-wider">Tools</p>
-                <ul className="flex flex-col gap-y-1">
-                  {toolsNavigation.map((item) => (
-                    <li key={item.name}>
-                      <Link
-                        href={item.href}
-                        className={cn(
-                          "flex items-center px-3 py-2 rounded-lg",
-                          pathname === item.href
-                            ? "bg-blue-50 text-blue-600"
-                            : "text-slate-600 hover:bg-slate-100"
-                        )}
-                      >
-                        <item.icon className="h-5 w-5 mr-3" />
-                        {item.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            </ul>
+            </div>
           </nav>
         </div>
       </div>
