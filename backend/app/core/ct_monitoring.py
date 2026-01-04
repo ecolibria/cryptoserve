@@ -239,7 +239,12 @@ class CTMonitor:
         try:
             # crt.sh uses ISO format
             if "T" in date_str:
-                return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                # Handle Z suffix
+                parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                # Ensure timezone-aware (fromisoformat may return naive datetime)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed
             else:
                 return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S").replace(
                     tzinfo=timezone.utc
