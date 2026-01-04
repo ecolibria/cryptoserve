@@ -6,6 +6,35 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+## [1.3.6] - 2026-01-04
+
+### Added
+- Comprehensive examples directory with 11 working code samples
+  - `01_basic_encryption.py` - Fundamental encrypt/decrypt operations
+  - `02_string_and_json.py` - String and JSON encryption patterns
+  - `03_signing.py` - Digital signatures with verification
+  - `04_hashing.py` - Cryptographic hashing and MAC operations
+  - `05_password_hashing.py` - Secure password storage with Argon2id
+  - `06_file_encryption.py` - File encryption with metadata preservation
+  - `09_post_quantum.py` - ML-KEM and ML-DSA operations (FIPS 203/204)
+  - `fastapi_integration.py` - FastAPI web service with field-level encryption
+  - `sqlalchemy_integration.py` - Transparent ORM field encryption
+  - `error_handling.py` - Comprehensive error handling patterns
+- PQC Migration Guide (`docs/guides/pqc-migration.md`)
+  - Step-by-step migration strategy (Assessment → Hybrid → Pure PQC)
+  - Algorithm selection guide for ML-KEM, ML-DSA, SLH-DSA
+  - Performance and bandwidth considerations
+  - Compliance mapping (FIPS, HIPAA, PCI-DSS, GDPR)
+
+### Documentation
+- Enhanced README with complete feature matrix and architecture diagram
+- Post-quantum cryptography section with algorithm tables
+- 5-layer context model explanation
+- API reference tables for all endpoints
+- Updated guides index with PQC and platform migration links
+
+---
+
 ## [1.3.5] - 2026-01-04
 
 ### Fixed
@@ -283,6 +312,7 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+[1.3.6]: https://github.com/keytum/crypto-serve/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/keytum/crypto-serve/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/keytum/crypto-serve/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/keytum/crypto-serve/compare/v1.3.2...v1.3.3
