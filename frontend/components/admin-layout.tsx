@@ -23,6 +23,7 @@ import {
   Lock,
   Wrench,
   ArrowRightLeft,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -78,6 +79,7 @@ const adminNavSections: NavSection[] = [
     items: [
       { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
       { href: "/admin/audit", label: "Audit Logs", icon: FileText },
+      { href: "/admin/ct-monitoring", label: "CT Logs", icon: Globe },
     ],
   },
   {

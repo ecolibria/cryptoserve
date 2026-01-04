@@ -2014,6 +2014,57 @@ export const api = {
 
   getMigrationHistory: (limit: number = 50) =>
     fetchApi(`/api/migration/history?limit=${limit}`) as Promise<MigrationHistoryEntry[]>,
+
+  // =============================================================================
+  // Certificate Transparency Monitoring API
+  // =============================================================================
+
+  // Scan a domain for CT certificates
+  scanCTDomain: (domain: string, params?: {
+    includeSubdomains?: boolean;
+    expectedIssuers?: string[];
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.includeSubdomains !== undefined) {
+      query.set("include_subdomains", String(params.includeSubdomains));
+    }
+    if (params?.expectedIssuers?.length) {
+      params.expectedIssuers.forEach(issuer => query.append("expected_issuers", issuer));
+    }
+    const queryStr = query.toString();
+    return fetchApi(`/api/v1/ct/scan/${encodeURIComponent(domain)}${queryStr ? `?${queryStr}` : ""}`) as Promise<CTScanResponse>;
+  },
+
+  // Bulk scan multiple domains
+  scanCTDomainsBulk: (domains: CTDomainConfig[]) =>
+    fetchApi("/api/v1/ct/scan/bulk", {
+      method: "POST",
+      body: JSON.stringify({ domains }),
+    }) as Promise<CTBulkScanResponse>,
+
+  // Get recently issued certificates
+  getCTRecentCerts: (domain: string, days: number = 7) =>
+    fetchApi(`/api/v1/ct/recent/${encodeURIComponent(domain)}?days=${days}`) as Promise<CTRecentCertsResponse>,
+
+  // Get certificate details
+  getCTCertificateDetails: (certId: number) =>
+    fetchApi(`/api/v1/ct/certificate/${certId}`) as Promise<Record<string, unknown>>,
+
+  // Get CA issuers for a domain
+  getCTIssuers: (domain: string, includeSubdomains: boolean = true) =>
+    fetchApi(`/api/v1/ct/issuers/${encodeURIComponent(domain)}?include_subdomains=${includeSubdomains}`) as Promise<CTIssuersResponse>,
+
+  // Search CT logs
+  searchCTCertificates: (query: string, params?: {
+    excludeExpired?: boolean;
+    limit?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    searchParams.set("q", query);
+    if (params?.excludeExpired) searchParams.set("exclude_expired", "true");
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    return fetchApi(`/api/v1/ct/search?${searchParams}`) as Promise<CTSearchResponse>;
+  },
 };
 
 // =============================================================================
@@ -2264,4 +2315,108 @@ export interface MigrationHistoryEntry {
   migratedAt: string;
   migratedBy: string;
   success: boolean;
+}
+
+// =============================================================================
+// Certificate Transparency Monitoring Types
+// =============================================================================
+
+export type CTAlertSeverity = "critical" | "high" | "medium" | "low" | "info";
+export type CTAlertType =
+  | "unexpected_issuer"
+  | "unexpected_domain"
+  | "expired_cert"
+  | "expiring_soon"
+  | "new_cert_issued"
+  | "wildcard_issued"
+  | "revoked_cert"
+  | "duplicate_serial"
+  | "weak_algorithm";
+
+export interface CTCertificate {
+  id: number;
+  issuerName: string;
+  commonName: string;
+  domains: string[];
+  notBefore: string;
+  notAfter: string;
+  serialNumber: string;
+  fingerprint: string;
+  isExpired: boolean;
+  daysUntilExpiry: number;
+  isWildcard: boolean;
+  entryTimestamp: string | null;
+}
+
+export interface CTAlert {
+  alertType: CTAlertType;
+  severity: CTAlertSeverity;
+  domain: string;
+  message: string;
+  certificateId: number | null;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CTMonitoringSummary {
+  domain: string;
+  totalCerts: number;
+  activeCerts: number;
+  expiredCerts: number;
+  alertCount: number;
+  criticalAlerts: number;
+  highAlerts: number;
+  issuers: Record<string, number>;
+  scannedAt: string;
+}
+
+export interface CTScanResponse {
+  summary: CTMonitoringSummary;
+  certificates: CTCertificate[];
+  alerts: CTAlert[];
+}
+
+export interface CTDomainConfig {
+  domain: string;
+  includeSubdomains?: boolean;
+  expectedIssuers?: string[];
+  alertOnWildcard?: boolean;
+  expiryWarningDays?: number;
+}
+
+export interface CTBulkScanResponse {
+  results: CTMonitoringSummary[];
+  totalDomains: number;
+  totalCerts: number;
+  totalAlerts: number;
+  criticalAlerts: number;
+}
+
+export interface CTRecentCertsResponse {
+  domain: string;
+  days: number;
+  certificates: CTCertificate[];
+  count: number;
+}
+
+export interface CTIssuerStats {
+  name: string;
+  count: number;
+  activeCerts: number;
+  expiredCerts: number;
+  wildcards: number;
+}
+
+export interface CTIssuersResponse {
+  domain: string;
+  totalIssuers: number;
+  totalCertificates: number;
+  issuers: CTIssuerStats[];
+}
+
+export interface CTSearchResponse {
+  query: string;
+  totalResults: number;
+  returnedResults: number;
+  certificates: CTCertificate[];
 }
