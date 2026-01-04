@@ -127,7 +127,6 @@ class RiskScoreResponse(BaseModel):
     grade: str  # A, B, C, D, F
     trend: str  # improving, stable, declining
     factors: list[dict]  # Individual risk factors
-    premium_required: bool  # True to see detailed breakdown
 
 
 class QuantumReadinessResponse(BaseModel):
@@ -138,7 +137,6 @@ class QuantumReadinessResponse(BaseModel):
     hybrid_contexts: int
     migration_status: str  # not_started, in_progress, complete
     estimated_completion: Optional[str]  # Date estimate
-    premium_required: bool  # True for migration tools
 
 
 class ComplianceFramework(BaseModel):
@@ -154,8 +152,6 @@ class ComplianceStatusResponse(BaseModel):
     """Overall compliance status."""
     frameworks: list[ComplianceFramework]
     overall_score: int
-    export_available: bool  # Always False for OSS (premium feature)
-    premium_required: bool
 
 
 # --- Auth Dependency ---
@@ -1359,7 +1355,7 @@ async def reset_identity_rate_limit(
     return {"message": f"Rate limit reset for identity {identity_id}"}
 
 
-# --- Premium Feature Previews (OSS shows value, gates details) ---
+# --- Risk & Compliance Dashboards ---
 
 @router.get("/risk-score", response_model=RiskScoreResponse)
 async def get_risk_score(
@@ -1369,8 +1365,7 @@ async def get_risk_score(
     """
     Get crypto risk score for the organization.
 
-    OSS: Shows overall score and grade
-    Premium: Shows detailed breakdown by factor
+    Shows overall score, grade, and risk factors.
     """
     # Calculate risk factors based on actual data
     now = datetime.now(timezone.utc)
@@ -1477,7 +1472,7 @@ async def get_risk_score(
     else:
         trend = "stable"
 
-    # Factors - OSS shows names only, premium shows details
+    # Risk factors by category
     factors = [
         {"name": "Algorithm Strength", "category": "crypto"},
         {"name": "Key Rotation", "category": "keys"},
@@ -1491,7 +1486,6 @@ async def get_risk_score(
         grade=grade,
         trend=trend,
         factors=factors,
-        premium_required=True,  # Detailed scores require premium
     )
 
 
@@ -1503,8 +1497,7 @@ async def get_quantum_readiness(
     """
     Get quantum readiness assessment.
 
-    OSS: Shows readiness percentage and counts
-    Premium: Access to migration tools and detailed planning
+    Shows readiness percentage, context counts, and migration status.
     """
     # Get all contexts
     result = await db.execute(
@@ -1556,7 +1549,6 @@ async def get_quantum_readiness(
         hybrid_contexts=hybrid_contexts,
         migration_status=migration_status,
         estimated_completion=estimated_completion,
-        premium_required=True,  # Migration tools require premium
     )
 
 
@@ -1568,8 +1560,7 @@ async def get_compliance_status(
     """
     Get compliance status across frameworks.
 
-    OSS: Shows framework status and coverage
-    Premium: Export compliance reports, detailed remediation
+    Shows framework status and coverage percentage.
     """
     # Get all contexts with their compliance tags
     result = await db.execute(
@@ -1664,8 +1655,6 @@ async def get_compliance_status(
     return ComplianceStatusResponse(
         frameworks=frameworks,
         overall_score=overall_score,
-        export_available=False,  # Always false for OSS
-        premium_required=True,
     )
 
 

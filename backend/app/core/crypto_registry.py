@@ -729,6 +729,101 @@ class CryptoRegistry:
         ))
 
         # =====================================================================
+        # MESSAGE AUTHENTICATION CODES (MAC)
+        # =====================================================================
+
+        self.register(Algorithm(
+            name="HMAC-SHA256",
+            family="HMAC",
+            variant="SHA256",
+            aliases=["hmac-sha-256"],
+            algorithm_type=AlgorithmType.MAC,
+            use_cases=["message authentication", "integrity verification", "key derivation"],
+            security_bits=128,
+            output_size=256,
+            quantum_resistant=False,
+            status=SecurityStatus.RECOMMENDED,
+            standards=["FIPS 198-1", "RFC 2104"],
+            approved_by=[StandardsBody.NIST, StandardsBody.IETF],
+            compliance_frameworks=["HIPAA", "PCI-DSS", "GDPR"],
+            hardware_acceleration=True,
+            relative_speed="fast",
+            implementation_notes=[
+                "Key should be at least 128 bits",
+                "Truncation to 128 bits acceptable per FIPS 198-1",
+            ],
+            code_patterns=[r"hmac.*sha256", r"HMAC.*SHA256", r"hmac\.new.*sha256"],
+        ))
+
+        self.register(Algorithm(
+            name="HMAC-SHA512",
+            family="HMAC",
+            variant="SHA512",
+            aliases=["hmac-sha-512"],
+            algorithm_type=AlgorithmType.MAC,
+            use_cases=["message authentication", "high-security integrity"],
+            security_bits=256,
+            output_size=512,
+            quantum_resistant=False,
+            status=SecurityStatus.RECOMMENDED,
+            standards=["FIPS 198-1", "RFC 2104"],
+            approved_by=[StandardsBody.NIST, StandardsBody.IETF],
+            code_patterns=[r"hmac.*sha512", r"HMAC.*SHA512"],
+        ))
+
+        self.register(Algorithm(
+            name="KMAC128",
+            family="KMAC",
+            variant="128",
+            aliases=["kmac-128"],
+            algorithm_type=AlgorithmType.MAC,
+            use_cases=["message authentication", "PRF", "key derivation", "domain separation"],
+            security_bits=128,
+            output_size=256,  # Default, but variable
+            quantum_resistant=False,
+            quantum_security_bits=64,  # Grover's algorithm halves security
+            status=SecurityStatus.RECOMMENDED,
+            standards=["NIST SP 800-185"],
+            approved_by=[StandardsBody.NIST],
+            compliance_frameworks=["FIPS 140-3"],
+            relative_speed="medium",
+            implementation_notes=[
+                "Keccak-based MAC derived from cSHAKE128",
+                "Supports customization string for domain separation",
+                "Variable output length (XOF-based)",
+                "More efficient than HMAC-SHA3 for MAC use cases",
+                "NIST PQC Security Level 1 compatible",
+            ],
+            code_patterns=[r"KMAC128", r"kmac128", r"KMAC.*128"],
+        ))
+
+        self.register(Algorithm(
+            name="KMAC256",
+            family="KMAC",
+            variant="256",
+            aliases=["kmac-256"],
+            algorithm_type=AlgorithmType.MAC,
+            use_cases=["message authentication", "PRF", "key derivation", "high-security applications"],
+            security_bits=256,
+            output_size=512,  # Default, but variable
+            quantum_resistant=False,
+            quantum_security_bits=128,  # Grover's algorithm halves security
+            status=SecurityStatus.RECOMMENDED,
+            standards=["NIST SP 800-185"],
+            approved_by=[StandardsBody.NIST],
+            compliance_frameworks=["FIPS 140-3"],
+            relative_speed="medium",
+            implementation_notes=[
+                "Keccak-based MAC derived from cSHAKE256",
+                "Supports customization string for domain separation",
+                "Variable output length (XOF-based)",
+                "256-bit security - suitable for high-security applications",
+                "NIST PQC Security Level 5 compatible",
+            ],
+            code_patterns=[r"KMAC256", r"kmac256", r"KMAC.*256"],
+        ))
+
+        # =====================================================================
         # ASYMMETRIC ENCRYPTION / KEY EXCHANGE
         # =====================================================================
 
