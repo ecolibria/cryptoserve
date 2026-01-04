@@ -207,26 +207,36 @@ class CTMonitor:
             if not data:
                 return []
 
-            entries = []
+            # Deduplicate by serial+issuer_ca_id (same cert appears in multiple CT logs)
+            seen_certs: dict[str, CTLogEntry] = {}
             for row in data:
                 try:
+                    # Unique key: serial number + issuer CA ID
+                    serial = row.get("serial_number", "")
+                    issuer_ca_id = row.get("issuer_ca_id")
+                    unique_key = f"{serial}:{issuer_ca_id}"
+
+                    # Keep only the first occurrence (or could keep newest)
+                    if unique_key in seen_certs:
+                        continue
+
                     entry = CTLogEntry(
                         id=row.get("id", 0),
                         issuer_name=row.get("issuer_name", "Unknown"),
-                        issuer_ca_id=row.get("issuer_ca_id"),
+                        issuer_ca_id=issuer_ca_id,
                         common_name=row.get("common_name", ""),
                         name_value=row.get("name_value", ""),
                         not_before=self._parse_date(row.get("not_before")),
                         not_after=self._parse_date(row.get("not_after")),
-                        serial_number=row.get("serial_number", ""),
+                        serial_number=serial,
                         sha256_fingerprint=self._compute_fingerprint(row),
                         entry_timestamp=self._parse_date(row.get("entry_timestamp")),
                     )
-                    entries.append(entry)
+                    seen_certs[unique_key] = entry
                 except Exception as e:
                     logger.warning(f"Failed to parse CT log entry: {e}")
 
-            return entries
+            return list(seen_certs.values())
 
         except httpx.HTTPError as e:
             logger.error(f"CT log query failed for {domain}: {e}")
@@ -265,45 +275,39 @@ class CTMonitor:
     ) -> list[CTAlert]:
         """Analyze certificates and generate alerts.
 
+        Only generates actionable security alerts:
+        - Expiring soon (active certs needing renewal)
+        - Unexpected issuers (if configured)
+        - Wildcard certificates (once per unique wildcard)
+
+        Note: Duplicate serial detection removed - crt.sh deduplication
+        handles this, and same-serial from different CAs is expected.
+        Expired cert alerts removed - not actionable security alerts.
+
         Args:
-            certificates: List of CT log entries
+            certificates: List of CT log entries (already deduplicated)
             config: Domain monitoring configuration
 
         Returns:
             List of alerts generated
         """
         alerts = []
-        seen_serials = set()
+        seen_wildcards: set[str] = set()  # Track unique wildcard CNs
+        seen_expiring: set[str] = set()  # Track unique expiring CNs
+        seen_weak_issuers: set[str] = set()  # Track weak algorithm issuers
 
         for cert in certificates:
-            # Check for duplicate serials (potential CA issue)
-            if cert.serial_number in seen_serials:
-                alerts.append(CTAlert(
-                    alert_type=CTAlertType.DUPLICATE_SERIAL,
-                    severity=CTAlertSeverity.HIGH,
-                    domain=config.domain,
-                    message=f"Duplicate serial number detected: {cert.serial_number}",
-                    certificate=cert,
-                ))
-            seen_serials.add(cert.serial_number)
-
-            # Check expiration
-            if cert.is_expired:
-                alerts.append(CTAlert(
-                    alert_type=CTAlertType.EXPIRED_CERT,
-                    severity=CTAlertSeverity.LOW,
-                    domain=config.domain,
-                    message=f"Certificate expired: {cert.common_name}",
-                    certificate=cert,
-                ))
-            elif cert.days_until_expiry <= config.expiry_warning_days:
-                alerts.append(CTAlert(
-                    alert_type=CTAlertType.EXPIRING_SOON,
-                    severity=CTAlertSeverity.MEDIUM,
-                    domain=config.domain,
-                    message=f"Certificate expiring in {cert.days_until_expiry} days: {cert.common_name}",
-                    certificate=cert,
-                ))
+            # Only alert on ACTIVE certs expiring soon (actionable, dedupe by CN)
+            if not cert.is_expired and cert.days_until_expiry <= config.expiry_warning_days:
+                if cert.common_name not in seen_expiring:
+                    seen_expiring.add(cert.common_name)
+                    alerts.append(CTAlert(
+                        alert_type=CTAlertType.EXPIRING_SOON,
+                        severity=CTAlertSeverity.MEDIUM,
+                        domain=config.domain,
+                        message=f"Certificate expiring in {cert.days_until_expiry} days: {cert.common_name}",
+                        certificate=cert,
+                    ))
 
             # Check unexpected issuers
             if config.expected_issuers:
@@ -321,26 +325,32 @@ class CTMonitor:
                         details={"expected_issuers": config.expected_issuers},
                     ))
 
-            # Check wildcard issuance
+            # Check wildcard issuance (only alert once per unique wildcard CN)
             if config.alert_on_wildcard and cert.is_wildcard:
-                alerts.append(CTAlert(
-                    alert_type=CTAlertType.WILDCARD_ISSUED,
-                    severity=CTAlertSeverity.MEDIUM,
-                    domain=config.domain,
-                    message=f"Wildcard certificate issued: {cert.common_name}",
-                    certificate=cert,
-                ))
+                if cert.common_name not in seen_wildcards:
+                    seen_wildcards.add(cert.common_name)
+                    # Only alert on active wildcards
+                    if not cert.is_expired:
+                        alerts.append(CTAlert(
+                            alert_type=CTAlertType.WILDCARD_ISSUED,
+                            severity=CTAlertSeverity.INFO,  # Informational, not a problem
+                            domain=config.domain,
+                            message=f"Active wildcard certificate: {cert.common_name}",
+                            certificate=cert,
+                        ))
 
-            # Check for weak algorithms in issuer name (basic heuristic)
+            # Check for weak algorithms in issuer name (only once per issuer)
             issuer_lower = cert.issuer_name.lower()
-            if "sha1" in issuer_lower or "md5" in issuer_lower:
-                alerts.append(CTAlert(
-                    alert_type=CTAlertType.WEAK_ALGORITHM,
-                    severity=CTAlertSeverity.HIGH,
-                    domain=config.domain,
-                    message=f"Certificate may use weak algorithm: {cert.issuer_name}",
-                    certificate=cert,
-                ))
+            if ("sha1" in issuer_lower or "md5" in issuer_lower) and not cert.is_expired:
+                if cert.issuer_name not in seen_weak_issuers:
+                    seen_weak_issuers.add(cert.issuer_name)
+                    alerts.append(CTAlert(
+                        alert_type=CTAlertType.WEAK_ALGORITHM,
+                        severity=CTAlertSeverity.HIGH,
+                        domain=config.domain,
+                        message=f"Active certificate from weak-algorithm CA: {cert.issuer_name}",
+                        certificate=cert,
+                    ))
 
         return alerts
 
