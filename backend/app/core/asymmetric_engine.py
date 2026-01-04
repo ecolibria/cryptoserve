@@ -796,5 +796,297 @@ class AsymmetricEngine:
             raise AsymmetricError(f"Unsupported key type: {kty}")
 
 
+    # ==================== Key Exchange ====================
+
+    def derive_shared_secret(
+        self,
+        private_key: bytes,
+        peer_public_key: bytes,
+        algorithm: "KeyExchangeAlgorithm",
+        key_length: int = 32,
+        info: bytes | None = None,
+    ) -> bytes:
+        """Derive shared secret from key exchange.
+
+        Args:
+            private_key: Raw private key bytes
+            peer_public_key: Peer's raw public key bytes
+            algorithm: Key exchange algorithm
+            key_length: Derived key length in bytes
+            info: Optional HKDF info
+
+        Returns:
+            Derived shared secret
+        """
+        try:
+            if algorithm == KeyExchangeAlgorithm.X25519:
+                priv_key = X25519PrivateKey.from_private_bytes(private_key)
+                pub_key = X25519PublicKey.from_public_bytes(peer_public_key)
+                raw_secret = priv_key.exchange(pub_key)
+
+            elif algorithm in [KeyExchangeAlgorithm.ECDH_P256, KeyExchangeAlgorithm.ECDH_P384]:
+                # Load private key
+                curve = ec.SECP256R1() if algorithm == KeyExchangeAlgorithm.ECDH_P256 else ec.SECP384R1()
+
+                # Private key is raw scalar
+                priv_key = ec.derive_private_key(
+                    int.from_bytes(private_key, "big"),
+                    curve,
+                )
+
+                # Public key is uncompressed point
+                pub_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, peer_public_key)
+                raw_secret = priv_key.exchange(ec.ECDH(), pub_key)
+
+            else:
+                raise UnsupportedAlgorithmError(f"Unsupported key exchange: {algorithm}")
+
+            # Derive key using HKDF
+            hkdf = HKDF(
+                algorithm=hashes.SHA256(),
+                length=key_length,
+                salt=None,
+                info=info or b"cryptoserve-key-exchange",
+            )
+            return hkdf.derive(raw_secret)
+
+        except Exception as e:
+            raise AsymmetricError(f"Key exchange failed: {e}")
+
+    # ==================== Hybrid Encryption ====================
+
+    def hybrid_encrypt(
+        self,
+        plaintext: bytes,
+        recipient_public_key: bytes,
+        algorithm: str = "x25519-aes256gcm",
+        aad: bytes | None = None,
+    ) -> bytes:
+        """Hybrid encrypt (ECIES-style).
+
+        Args:
+            plaintext: Data to encrypt
+            recipient_public_key: Raw public key bytes
+            algorithm: Algorithm string (x25519-aes256gcm, ecies-p256)
+            aad: Additional authenticated data
+
+        Returns:
+            Packed ciphertext: ephemeral_pubkey || nonce || ciphertext
+        """
+        try:
+            if algorithm == "x25519-aes256gcm":
+                pub_key = X25519PublicKey.from_public_bytes(recipient_public_key)
+                # Generate ephemeral key
+                ephemeral_priv = X25519PrivateKey.generate()
+                ephemeral_pub = ephemeral_priv.public_key()
+
+                # Derive shared secret
+                shared = ephemeral_priv.exchange(pub_key)
+                enc_key = self._derive_key(shared, b"hybrid-encrypt", 32)
+
+                # Encrypt
+                nonce = os.urandom(12)
+                cipher = AESGCM(enc_key)
+                ciphertext = cipher.encrypt(nonce, plaintext, aad)
+
+                # Pack: ephemeral (32) || nonce (12) || ciphertext
+                ephemeral_bytes = ephemeral_pub.public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+                return ephemeral_bytes + nonce + ciphertext
+
+            elif algorithm in ["ecies-p256", "ecies-p384"]:
+                curve = ec.SECP256R1() if algorithm == "ecies-p256" else ec.SECP384R1()
+                pub_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, recipient_public_key)
+
+                # Generate ephemeral key
+                ephemeral_priv = ec.generate_private_key(curve)
+                ephemeral_pub = ephemeral_priv.public_key()
+
+                # Derive shared secret
+                shared = ephemeral_priv.exchange(ec.ECDH(), pub_key)
+                enc_key = self._derive_key(shared, b"hybrid-encrypt", 32)
+
+                # Encrypt
+                nonce = os.urandom(12)
+                cipher = AESGCM(enc_key)
+                ciphertext = cipher.encrypt(nonce, plaintext, aad)
+
+                # Pack
+                ephemeral_bytes = ephemeral_pub.public_bytes(
+                    encoding=serialization.Encoding.X962,
+                    format=serialization.PublicFormat.UncompressedPoint,
+                )
+                return ephemeral_bytes + nonce + ciphertext
+
+            else:
+                raise UnsupportedAlgorithmError(f"Unsupported hybrid algorithm: {algorithm}")
+
+        except Exception as e:
+            raise AsymmetricError(f"Hybrid encryption failed: {e}")
+
+    def hybrid_decrypt(
+        self,
+        ciphertext: bytes,
+        private_key: bytes,
+        algorithm: str = "x25519-aes256gcm",
+        aad: bytes | None = None,
+    ) -> bytes:
+        """Hybrid decrypt.
+
+        Args:
+            ciphertext: Packed ciphertext
+            private_key: Raw private key bytes
+            algorithm: Algorithm string
+            aad: Additional authenticated data
+
+        Returns:
+            Decrypted plaintext
+        """
+        try:
+            if algorithm == "x25519-aes256gcm":
+                priv_key = X25519PrivateKey.from_private_bytes(private_key)
+
+                # Unpack
+                ephemeral_bytes = ciphertext[:32]
+                nonce = ciphertext[32:44]
+                encrypted = ciphertext[44:]
+
+                ephemeral_pub = X25519PublicKey.from_public_bytes(ephemeral_bytes)
+
+                # Derive shared secret
+                shared = priv_key.exchange(ephemeral_pub)
+                enc_key = self._derive_key(shared, b"hybrid-encrypt", 32)
+
+                # Decrypt
+                cipher = AESGCM(enc_key)
+                return cipher.decrypt(nonce, encrypted, aad)
+
+            elif algorithm in ["ecies-p256", "ecies-p384"]:
+                curve = ec.SECP256R1() if algorithm == "ecies-p256" else ec.SECP384R1()
+                key_size = 65 if algorithm == "ecies-p256" else 97
+
+                priv_key = ec.derive_private_key(
+                    int.from_bytes(private_key, "big"),
+                    curve,
+                )
+
+                # Unpack
+                ephemeral_bytes = ciphertext[:key_size]
+                nonce = ciphertext[key_size:key_size + 12]
+                encrypted = ciphertext[key_size + 12:]
+
+                ephemeral_pub = ec.EllipticCurvePublicKey.from_encoded_point(curve, ephemeral_bytes)
+
+                # Derive shared secret
+                shared = priv_key.exchange(ec.ECDH(), ephemeral_pub)
+                enc_key = self._derive_key(shared, b"hybrid-encrypt", 32)
+
+                # Decrypt
+                cipher = AESGCM(enc_key)
+                return cipher.decrypt(nonce, encrypted, aad)
+
+            else:
+                raise UnsupportedAlgorithmError(f"Unsupported hybrid algorithm: {algorithm}")
+
+        except Exception as e:
+            raise DecryptionError(f"Hybrid decryption failed: {e}")
+
+    # ==================== RSA Convenience Methods ====================
+
+    def rsa_encrypt(
+        self,
+        plaintext: bytes,
+        public_key_pem: str,
+        hash_algorithm: str = "sha256",
+    ) -> bytes:
+        """Encrypt with RSA-OAEP using PEM key.
+
+        Args:
+            plaintext: Data to encrypt
+            public_key_pem: PEM-encoded public key
+            hash_algorithm: Hash algorithm (sha256, sha384, sha512)
+
+        Returns:
+            Ciphertext
+        """
+        try:
+            public_key = serialization.load_pem_public_key(public_key_pem.encode())
+
+            if not isinstance(public_key, rsa.RSAPublicKey):
+                raise AsymmetricError("Not an RSA public key")
+
+            hash_alg = {
+                "sha256": hashes.SHA256(),
+                "sha384": hashes.SHA384(),
+                "sha512": hashes.SHA512(),
+            }.get(hash_algorithm, hashes.SHA256())
+
+            # Check message size
+            key_size_bytes = public_key.key_size // 8
+            max_plaintext = key_size_bytes - 2 * hash_alg.digest_size - 2
+
+            if len(plaintext) > max_plaintext:
+                raise AsymmetricError(
+                    f"Plaintext too large ({len(plaintext)} bytes). "
+                    f"Max for this key: {max_plaintext} bytes. Use hybrid encryption."
+                )
+
+            return public_key.encrypt(
+                plaintext,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hash_alg),
+                    algorithm=hash_alg,
+                    label=None,
+                ),
+            )
+
+        except Exception as e:
+            raise AsymmetricError(f"RSA encryption failed: {e}")
+
+    def rsa_decrypt(
+        self,
+        ciphertext: bytes,
+        private_key_pem: str,
+        hash_algorithm: str = "sha256",
+    ) -> bytes:
+        """Decrypt with RSA-OAEP using PEM key.
+
+        Args:
+            ciphertext: Data to decrypt
+            private_key_pem: PEM-encoded private key
+            hash_algorithm: Hash algorithm (sha256, sha384, sha512)
+
+        Returns:
+            Plaintext
+        """
+        try:
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode(), password=None
+            )
+
+            if not isinstance(private_key, rsa.RSAPrivateKey):
+                raise AsymmetricError("Not an RSA private key")
+
+            hash_alg = {
+                "sha256": hashes.SHA256(),
+                "sha384": hashes.SHA384(),
+                "sha512": hashes.SHA512(),
+            }.get(hash_algorithm, hashes.SHA256())
+
+            return private_key.decrypt(
+                ciphertext,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hash_alg),
+                    algorithm=hash_alg,
+                    label=None,
+                ),
+            )
+
+        except Exception as e:
+            raise DecryptionError(f"RSA decryption failed: {e}")
+
+
 # Singleton instance
 asymmetric_engine = AsymmetricEngine()
