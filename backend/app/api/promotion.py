@@ -114,8 +114,12 @@ async def check_app_promotion_readiness(
             detail=f"Application is already in {target} environment",
         )
 
-    # Check readiness
-    readiness = await check_promotion_readiness(db, application, target)
+    # Check readiness with user trust score
+    readiness = await check_promotion_readiness(
+        db, application, target,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+    )
 
     # Generate message
     if readiness.is_ready:
@@ -168,8 +172,12 @@ async def request_promotion(
             detail=f"Application not found: {app_id}",
         )
 
-    # Check readiness
-    readiness = await check_promotion_readiness(db, application, data.target_environment)
+    # Check readiness with user trust score
+    readiness = await check_promotion_readiness(
+        db, application, data.target_environment,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+    )
 
     if not readiness.is_ready:
         raise HTTPException(

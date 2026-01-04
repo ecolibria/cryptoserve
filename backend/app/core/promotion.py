@@ -383,9 +383,27 @@ async def check_promotion_readiness(
     db: AsyncSession,
     application: Application,
     target_environment: str = "production",
+    user_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> PromotionReadiness:
-    """Check if an application is ready for promotion."""
+    """Check if an application is ready for promotion.
+
+    Args:
+        db: Database session
+        application: Application to check
+        target_environment: Target environment for promotion
+        user_id: Optional user ID for trust score calculation
+        tenant_id: Optional tenant ID for trust score calculation
+
+    Returns:
+        PromotionReadiness with calculated trust score if user/tenant provided
+    """
     contexts = application.allowed_contexts or []
+
+    # Calculate trust score if user context is provided
+    trust_score = 1.0  # Default for backwards compatibility
+    if user_id and tenant_id:
+        trust_score = await calculate_user_trust_score(db, user_id, tenant_id)
 
     if not contexts:
         return PromotionReadiness(
@@ -400,6 +418,7 @@ async def check_promotion_readiness(
             total_count=0,
             blocking_contexts=[],
             estimated_ready_at=None,
+            developer_trust_score=trust_score,
         )
 
     # Check each context
@@ -434,6 +453,7 @@ async def check_promotion_readiness(
         total_count=total_count,
         blocking_contexts=blocking_contexts,
         estimated_ready_at=estimated_ready_at,
+        developer_trust_score=trust_score,
     )
 
 

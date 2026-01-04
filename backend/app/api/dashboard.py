@@ -305,8 +305,12 @@ async def get_dashboard_metrics(
             }
 
             for app in dev_apps:
-                # Check promotion readiness
-                readiness = await check_promotion_readiness(db, app, "production")
+                # Check promotion readiness with user trust score
+                readiness = await check_promotion_readiness(
+                    db, app, "production",
+                    user_id=user.id,
+                    tenant_id=user.tenant_id,
+                )
 
                 # Update tier distribution
                 for ctx in app.allowed_contexts or []:
