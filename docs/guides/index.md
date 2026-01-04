@@ -36,6 +36,22 @@ Practical how-to guides for common tasks and use cases.
 
     [:octicons-arrow-right-24: Production Guide](production.md)
 
+-   :material-atom:{ .lg .middle } **Post-Quantum Migration**
+
+    ---
+
+    Migrate to quantum-resistant cryptography
+
+    [:octicons-arrow-right-24: PQC Migration Guide](pqc-migration.md)
+
+-   :material-swap-horizontal:{ .lg .middle } **Platform Migration**
+
+    ---
+
+    Migrate from AWS KMS, Vault, or libraries
+
+    [:octicons-arrow-right-24: Migration Guide](migration.md)
+
 </div>
 
 ## Quick Links
@@ -46,4 +62,6 @@ Practical how-to guides for common tasks and use cases.
 | Set up HIPAA compliance | [Compliance Guide](compliance.md#hipaa) |
 | Deploy to AWS | [Production Guide](production.md#aws) |
 | Rotate encryption keys | [Key Rotation Guide](key-rotation.md) |
-| Enable post-quantum encryption | [PQC Concepts](../concepts/post-quantum.md) |
+| Migrate to post-quantum | [PQC Migration Guide](pqc-migration.md) |
+| Migrate from AWS KMS | [Migration Guide](migration.md#aws-kms) |
+| Migrate from HashiCorp Vault | [Migration Guide](migration.md#hashicorp-vault) |
