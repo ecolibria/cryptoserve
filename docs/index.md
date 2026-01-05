@@ -53,7 +53,7 @@ Eliminate the complexity of implementing encryption correctly. Download a person
 
     AES-256-GCM with key commitment, HKDF key derivation, Ed25519 authentication, and FIPS compliance modes.
 
-    [:octicons-arrow-right-24: Security Whitepaper](security/whitepaper.md)
+    [:octicons-arrow-right-24: Technical Reference](security/technical-reference.md)
 
 -   :material-atom:{ .lg .middle } **Post-Quantum Ready**
 
@@ -187,7 +187,7 @@ CryptoServe automatically selects the optimal cryptographic algorithm based on f
 | ML-DSA-65 | FIPS 204 | Level 3 | Digital signatures |
 | ML-DSA-87 | FIPS 204 | Level 5 | Maximum security |
 
-[:octicons-arrow-right-24: Full algorithm reference](security/whitepaper.md#appendix-a-algorithm-reference)
+[:octicons-arrow-right-24: Full algorithm reference](security/technical-reference.md#appendix-a-algorithm-reference)
 
 ---
 

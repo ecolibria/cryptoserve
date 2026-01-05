@@ -58,5 +58,5 @@ Before you begin, ensure you have:
 ## Need Help?
 
 - Check the [API Reference](../api-reference/index.md) for endpoint details
-- Read the [Security Whitepaper](../security/whitepaper.md) for cryptographic details
+- Read the [Technical Reference](../security/technical-reference.md) for cryptographic details
 - Open an issue on [GitHub](https://github.com/keytum/crypto-serve/issues)

@@ -357,4 +357,4 @@ The hybrid approach ensures:
 - [FIPS 203: ML-KEM Standard](https://csrc.nist.gov/pubs/fips/203/final)
 - [FIPS 204: ML-DSA Standard](https://csrc.nist.gov/pubs/fips/204/final)
 - [Open Quantum Safe Project](https://openquantumsafe.org/)
-- [CryptoServe Security Whitepaper](../security/whitepaper.md)
+- [CryptoServe Technical Reference](../security/technical-reference.md)

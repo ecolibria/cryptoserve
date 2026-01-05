@@ -386,7 +386,7 @@ for record in records:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Client Applications                       │
-│         Python SDK  |  TypeScript SDK  |  REST API          │
+│       Python SDK  |  TypeScript (Soon)  |  REST API         │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼

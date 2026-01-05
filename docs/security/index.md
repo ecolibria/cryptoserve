@@ -6,13 +6,13 @@ CryptoServe is designed with security as a first-class concern. This section doc
 
 <div class="grid cards" markdown>
 
--   :material-file-document:{ .lg .middle } **Security Whitepaper**
+-   :material-file-document:{ .lg .middle } **Technical Reference**
 
     ---
 
     Comprehensive documentation of cryptographic implementation for security researchers
 
-    [:octicons-arrow-right-24: Security Whitepaper](whitepaper.md)
+    [:octicons-arrow-right-24: Technical Reference](technical-reference.md)
 
 -   :material-shield-alert:{ .lg .middle } **Threat Model**
 

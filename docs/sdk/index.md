@@ -14,11 +14,11 @@ CryptoServe provides client SDKs with embedded identity for zero-configuration e
 
     [:octicons-arrow-right-24: Python SDK](python.md)
 
--   :material-language-typescript:{ .lg .middle } **TypeScript SDK**
+-   :material-language-typescript:{ .lg .middle } **TypeScript SDK** *(Coming Soon)*
 
     ---
 
-    Type-safe SDK for Node.js and browsers
+    Type-safe SDK for Node.js and browsers - in development
 
     [:octicons-arrow-right-24: TypeScript SDK](typescript.md)
 

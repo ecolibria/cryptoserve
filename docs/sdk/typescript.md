@@ -1,9 +1,9 @@
 # TypeScript SDK
 
-The official TypeScript SDK for CryptoServe.
+!!! warning "Coming Soon"
+    The TypeScript SDK is currently in development. This documentation describes the **planned API** and is subject to change. For production use, please use the [Python SDK](python.md).
 
-!!! note "Coming Soon"
-    The TypeScript SDK is currently in development. This documentation describes the planned API.
+The official TypeScript SDK for CryptoServe will provide type-safe cryptographic operations for Node.js and browser environments.
 
 ## Installation
 

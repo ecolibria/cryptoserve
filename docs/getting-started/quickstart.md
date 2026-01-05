@@ -280,9 +280,9 @@ except ContextNotFoundError as e:
 
     ---
 
-    Read the security whitepaper
+    Read the technical reference
 
-    [:octicons-arrow-right-24: Security](../security/whitepaper.md)
+    [:octicons-arrow-right-24: Security](../security/technical-reference.md)
 
 -   :material-rocket-launch:{ .lg .middle } **Production**
 

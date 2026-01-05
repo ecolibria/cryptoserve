@@ -2,6 +2,9 @@
 
 Common patterns and use cases for CryptoServe SDKs.
 
+!!! note "TypeScript SDK Coming Soon"
+    TypeScript examples show the planned API. For production use today, use the Python SDK.
+
 ## Basic Encryption
 
 ### Encrypt and Decrypt a String
