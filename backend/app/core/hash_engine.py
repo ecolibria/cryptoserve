@@ -36,6 +36,17 @@ try:
 except ImportError:
     TUPLEHASH_AVAILABLE = False
 
+# ParallelHash support (custom implementation) - NIST SP 800-185
+try:
+    from app.core.parallel_hash import (
+        parallel_hash_128,
+        parallel_hash_256,
+        parallel_hash_available,
+    )
+    PARALLELHASH_AVAILABLE = parallel_hash_available()
+except ImportError:
+    PARALLELHASH_AVAILABLE = False
+
 # BLAKE3 support (optional)
 try:
     import blake3
@@ -66,6 +77,10 @@ class HashAlgorithm(str, Enum):
     # TupleHash (NIST SP 800-185) - hash of tuples
     TUPLEHASH128 = "tuplehash128"
     TUPLEHASH256 = "tuplehash256"
+
+    # ParallelHash (NIST SP 800-185) - parallelizable hash
+    PARALLELHASH128 = "parallelhash128"
+    PARALLELHASH256 = "parallelhash256"
 
     # BLAKE family
     BLAKE2B = "blake2b"
@@ -140,6 +155,8 @@ class HashEngine:
         HashAlgorithm.CSHAKE256: {"bits": 256, "block_size": 136, "xof": True, "customizable": True},
         HashAlgorithm.TUPLEHASH128: {"bits": 128, "block_size": 168, "xof": True, "tuple": True},
         HashAlgorithm.TUPLEHASH256: {"bits": 256, "block_size": 136, "xof": True, "tuple": True},
+        HashAlgorithm.PARALLELHASH128: {"bits": 128, "block_size": 168, "xof": True, "parallel": True},
+        HashAlgorithm.PARALLELHASH256: {"bits": 256, "block_size": 136, "xof": True, "parallel": True},
         HashAlgorithm.BLAKE2B: {"bits": 512, "block_size": 128},
         HashAlgorithm.BLAKE2S: {"bits": 256, "block_size": 64},
         HashAlgorithm.BLAKE3: {"bits": 256, "block_size": 64},
@@ -201,6 +218,20 @@ class HashEngine:
             length = output_length or 32
             h = cSHAKE256.new(data=data, custom=customization)
             digest = h.read(length)
+        elif algorithm == HashAlgorithm.PARALLELHASH128:
+            if not PARALLELHASH_AVAILABLE:
+                raise UnsupportedAlgorithmError(
+                    "ParallelHash requires pycryptodome. Install with: pip install pycryptodome"
+                )
+            length = output_length or 16
+            digest = parallel_hash_128(data, output_length=length, customization=customization)
+        elif algorithm == HashAlgorithm.PARALLELHASH256:
+            if not PARALLELHASH_AVAILABLE:
+                raise UnsupportedAlgorithmError(
+                    "ParallelHash requires pycryptodome. Install with: pip install pycryptodome"
+                )
+            length = output_length or 32
+            digest = parallel_hash_256(data, output_length=length, customization=customization)
         elif algorithm == HashAlgorithm.BLAKE2B:
             length = output_length or 64
             digest = hashlib.blake2b(data, digest_size=length).digest()

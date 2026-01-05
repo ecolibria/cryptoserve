@@ -24,6 +24,12 @@ from app.core.ct_monitoring import (
     CTMonitoringResult,
     DomainConfig,
 )
+from app.core.sct_validator import (
+    sct_validator,
+    SCTValidator,
+    SCT,
+    SCTValidationResult,
+)
 
 
 router = APIRouter(prefix="/api/v1/ct", tags=["certificate-transparency"])
@@ -491,4 +497,151 @@ async def search_certificates(
         "totalResults": len(certs),
         "returnedResults": len(limited_certs),
         "certificates": [_cert_to_response(c) for c in limited_certs],
+    }
+
+
+# =============================================================================
+# SCT Validation Models
+# =============================================================================
+
+
+class SCTResponse(BaseModel):
+    """Signed Certificate Timestamp response."""
+    logId: str
+    logName: str | None
+    timestamp: datetime
+    valid: bool
+    error: str | None = None
+
+
+class SCTValidationResponse(BaseModel):
+    """SCT validation result for a certificate."""
+    certificateSubject: str
+    totalScts: int
+    validScts: int
+    meetsMinimum: bool
+    minimumRequired: int
+    scts: list[SCTResponse]
+    logsUsed: list[str]
+
+
+class ValidateSCTRequest(BaseModel):
+    """Request to validate SCTs in a certificate."""
+    certificate: str = Field(..., description="PEM-encoded certificate")
+    minScts: int = Field(default=2, ge=1, le=5, description="Minimum SCTs required")
+
+
+# =============================================================================
+# SCT Validation Endpoints
+# =============================================================================
+
+
+@router.post("/sct/validate", response_model=SCTValidationResponse)
+async def validate_certificate_scts(
+    request: ValidateSCTRequest,
+    identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
+):
+    """Validate Signed Certificate Timestamps (SCTs) in a certificate.
+
+    SCTs prove that a certificate was logged to Certificate Transparency
+    logs before being issued. Chrome, Safari, and other browsers require
+    certificates to have valid SCTs.
+
+    This endpoint:
+    1. Extracts embedded SCTs from the certificate
+    2. Validates each SCT against known CT logs
+    3. Checks if the certificate meets browser requirements
+
+    Browser Requirements (Chrome CT Policy):
+    - Certificates with lifetime < 180 days: 2 SCTs required
+    - Certificates with lifetime >= 180 days: 3 SCTs required
+
+    Input:
+    - PEM-encoded X.509 certificate
+
+    Returns:
+    - List of SCTs found and their validation status
+    - Whether the certificate meets minimum SCT requirements
+    """
+    try:
+        cert_pem = request.certificate.encode()
+
+        # Load certificate
+        from cryptography import x509
+        try:
+            cert = x509.load_pem_x509_certificate(cert_pem)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid PEM certificate: {str(e)}",
+            )
+
+        # Calculate required SCTs based on cert lifetime
+        required_scts = sct_validator.get_required_scts(cert)
+        min_scts = max(request.minScts, required_scts)
+
+        # Validate SCTs
+        result = sct_validator.validate_certificate_scts(cert, min_scts)
+
+        # Convert to response
+        sct_responses = []
+        for sct_result in result["results"]:
+            sct_responses.append(SCTResponse(
+                logId=sct_result.sct.log_id_hex,
+                logName=sct_result.log_name,
+                timestamp=sct_result.sct.timestamp,
+                valid=sct_result.valid,
+                error=sct_result.error,
+            ))
+
+        return SCTValidationResponse(
+            certificateSubject=result["certificate_subject"],
+            totalScts=result["total_scts"],
+            validScts=result["valid_scts"],
+            meetsMinimum=result["meets_minimum"],
+            minimumRequired=result["minimum_required"],
+            scts=sct_responses,
+            logsUsed=result["logs_used"],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SCT validation failed: {str(e)}",
+        )
+
+
+@router.get("/sct/info")
+async def get_sct_info(
+    identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
+):
+    """Get information about known CT logs.
+
+    Returns the list of CT logs that are recognized for SCT validation.
+    This is useful for understanding which logs are trusted and their status.
+    """
+    logs = []
+    for log_id, log_info in sct_validator.known_logs.items():
+        logs.append({
+            "logId": log_id,
+            "name": log_info.name,
+            "url": log_info.url,
+            "operator": log_info.operator,
+            "status": log_info.status,
+        })
+
+    return {
+        "knownLogs": logs,
+        "totalLogs": len(logs),
+        "browserRequirements": {
+            "chrome": {
+                "lifetime_under_180_days": 2,
+                "lifetime_180_days_plus": 3,
+            },
+            "safari": {
+                "minimum": 2,
+            },
+        },
     }
