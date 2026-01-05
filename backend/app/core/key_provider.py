@@ -255,6 +255,93 @@ class LocalKeyProvider(KeyProvider):
         """Get metadata from cache."""
         return self._key_cache.get(key_id)
 
+    async def wrap_key(
+        self,
+        key: bytes,
+        wrapping_key_id: str,
+    ) -> WrappedKey:
+        """Wrap a key using AES-GCM with a derived wrapping key.
+
+        The wrapping key is derived from the master key using HKDF with
+        the wrapping_key_id as the context. This provides key separation
+        between data keys and wrapping keys.
+
+        Args:
+            key: Key material to wrap
+            wrapping_key_id: ID used to derive the wrapping key
+
+        Returns:
+            WrappedKey containing encrypted key material
+        """
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import os
+
+        # Derive a wrapping key from master key
+        wrapping_key = await self.derive_key(
+            context=f"wrap:{wrapping_key_id}",
+            version=1,
+            key_size=32,  # AES-256
+        )
+
+        # Encrypt the key using AES-GCM
+        aesgcm = AESGCM(wrapping_key)
+        nonce = os.urandom(12)  # 96-bit nonce for GCM
+        ciphertext = aesgcm.encrypt(nonce, key, associated_data=wrapping_key_id.encode())
+
+        # Combine nonce and ciphertext
+        wrapped_data = nonce + ciphertext
+
+        return WrappedKey(
+            wrapped_key_data=wrapped_data,
+            wrapping_algorithm="AES-256-GCM",
+            wrapping_key_id=wrapping_key_id,
+            key_metadata=KeyMetadata(
+                key_id=f"wrapped_{wrapping_key_id}",
+                version=1,
+                algorithm="AES-256-GCM",
+                key_size_bits=len(key) * 8,
+                created_at=datetime.now(timezone.utc),
+                provider=KeyProviderType.LOCAL,
+                wrapped=True,
+            ),
+        )
+
+    async def unwrap_key(
+        self,
+        wrapped_key: WrappedKey,
+    ) -> bytes:
+        """Unwrap a key that was wrapped with wrap_key.
+
+        Args:
+            wrapped_key: The wrapped key to unwrap
+
+        Returns:
+            Unwrapped key material
+        """
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        # Derive the same wrapping key
+        wrapping_key = await self.derive_key(
+            context=f"wrap:{wrapped_key.wrapping_key_id}",
+            version=1,
+            key_size=32,  # AES-256
+        )
+
+        # Extract nonce and ciphertext
+        wrapped_data = wrapped_key.wrapped_key_data
+        nonce = wrapped_data[:12]
+        ciphertext = wrapped_data[12:]
+
+        # Decrypt the key
+        aesgcm = AESGCM(wrapping_key)
+        key = aesgcm.decrypt(
+            nonce,
+            ciphertext,
+            associated_data=wrapped_key.wrapping_key_id.encode(),
+        )
+
+        return key
+
 
 # Factory function to get the appropriate provider
 # Note: For cloud KMS (AWS, GCP, Azure), use the kms/ module instead:

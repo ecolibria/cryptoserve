@@ -134,13 +134,131 @@ class HealthReport:
 
 
 # =============================================================================
-# Mock Data Store (In production, this connects to CryptoServe backend)
+# Data Store Interface and Implementations
 # =============================================================================
 
-class MockDataStore:
-    """Mock data store for demonstration.
+import os
+import urllib.request
+import urllib.error
 
-    In production, this would connect to the CryptoServe backend API.
+# Configuration from environment
+CRYPTOSERVE_API_URL = os.environ.get("CRYPTOSERVE_API_URL", "").rstrip("/")
+CRYPTOSERVE_API_TOKEN = os.environ.get("CRYPTOSERVE_API_TOKEN", "")
+
+# Flag to indicate demo mode is active
+_DEMO_MODE = not (CRYPTOSERVE_API_URL and CRYPTOSERVE_API_TOKEN)
+
+
+class DataStoreInterface:
+    """Interface for data stores."""
+
+    def get_keys(self, context: str | None = None) -> list[dict]:
+        raise NotImplementedError
+
+    def get_contexts(self) -> list[dict]:
+        raise NotImplementedError
+
+    def get_key(self, key_id: str) -> dict | None:
+        raise NotImplementedError
+
+
+class APIDataStore(DataStoreInterface):
+    """Live API data store connecting to CryptoServe backend.
+
+    Uses the CryptoServe REST API to fetch real data about keys and contexts.
+    Requires CRYPTOSERVE_API_URL and CRYPTOSERVE_API_TOKEN environment variables.
+    """
+
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url
+        self.token = token
+        self._cache: dict[str, Any] = {}
+
+    def _request(self, endpoint: str) -> dict | list:
+        """Make authenticated API request."""
+        url = f"{self.base_url}{endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"API error {e.code}: {e.reason}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Connection error: {e.reason}") from e
+
+    def get_keys(self, context: str | None = None) -> list[dict]:
+        """Fetch keys from API."""
+        # Get all contexts first to build key list
+        contexts = self.get_contexts()
+        all_keys = []
+
+        for ctx in contexts:
+            ctx_name = ctx.get("name")
+            if context and ctx_name != context:
+                continue
+
+            try:
+                # Fetch key bundle for this context
+                bundle = self._request(f"/api/v1/contexts/{ctx_name}/keys")
+
+                # Build key entries from bundle
+                if bundle.get("encryptionKey"):
+                    enc_key = bundle["encryptionKey"]
+                    all_keys.append({
+                        "id": enc_key.get("id", f"{ctx_name}-enc"),
+                        "context": ctx_name,
+                        "algorithm": enc_key.get("algorithm", "AES-256-GCM"),
+                        "created_at": datetime.fromisoformat(enc_key.get("createdAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")),
+                        "last_rotated": datetime.fromisoformat(enc_key.get("lastRotatedAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")),
+                        "rotation_days": enc_key.get("rotationScheduleDays", 90),
+                        "data_encrypted_count": 0,  # Not available from bundle API
+                    })
+            except Exception as e:
+                print(f"Warning: Could not fetch keys for context {ctx_name}: {e}", file=sys.stderr)
+
+        return all_keys
+
+    def get_contexts(self) -> list[dict]:
+        """Fetch contexts from API."""
+        if "contexts" in self._cache:
+            return self._cache["contexts"]
+
+        try:
+            response = self._request("/api/v1/contexts")
+            contexts = []
+            for ctx in response:
+                contexts.append({
+                    "name": ctx.get("name"),
+                    "algorithm": ctx.get("algorithm", "AES-256-GCM"),
+                    "quantum_resistant": ctx.get("quantumResistant", False),
+                    "compliance": ctx.get("compliance", []),
+                })
+            self._cache["contexts"] = contexts
+            return contexts
+        except Exception as e:
+            print(f"Warning: Could not fetch contexts: {e}", file=sys.stderr)
+            return []
+
+    def get_key(self, key_id: str) -> dict | None:
+        """Fetch a specific key by ID."""
+        keys = self.get_keys()
+        for key in keys:
+            if key.get("id") == key_id:
+                return key
+        return None
+
+
+class DemoDataStore(DataStoreInterface):
+    """Demo data store for testing when API is not configured.
+
+    Provides synthetic data for demonstrating heal CLI capabilities.
+    Used automatically when CRYPTOSERVE_API_URL/TOKEN are not set.
     """
 
     def __init__(self):
@@ -223,8 +341,23 @@ class MockDataStore:
         return self._keys.get(key_id)
 
 
-# Global mock store
-_data_store = MockDataStore()
+def create_data_store() -> DataStoreInterface:
+    """Create appropriate data store based on environment configuration."""
+    if CRYPTOSERVE_API_URL and CRYPTOSERVE_API_TOKEN:
+        return APIDataStore(CRYPTOSERVE_API_URL, CRYPTOSERVE_API_TOKEN)
+    return DemoDataStore()
+
+
+# Global data store - initialized on first use
+_data_store: DataStoreInterface | None = None
+
+
+def get_data_store() -> DataStoreInterface:
+    """Get or create the global data store."""
+    global _data_store
+    if _data_store is None:
+        _data_store = create_data_store()
+    return _data_store
 
 
 # =============================================================================
@@ -307,12 +440,12 @@ def assess_system_health() -> HealthReport:
     issues = []
 
     # Check all keys
-    for key in _data_store.get_keys():
+    for key in get_data_store().get_keys():
         key_issues = assess_key_health(key)
         issues.extend(key_issues)
 
     # Check for quantum readiness
-    contexts = _data_store.get_contexts()
+    contexts = get_data_store().get_contexts()
     non_quantum = [c for c in contexts if not c.get("quantum_resistant")]
     if non_quantum:
         issues.append(HealthIssue(
@@ -341,7 +474,7 @@ def assess_system_health() -> HealthReport:
     issues.sort(key=lambda x: x.priority)
 
     # Collect stats
-    keys = _data_store.get_keys()
+    keys = get_data_store().get_keys()
     stats = {
         "total_keys": len(keys),
         "total_contexts": len(contexts),
@@ -433,7 +566,7 @@ def cmd_reencrypt(args) -> int:
     print("=" * 60)
 
     # Get keys for context
-    keys = _data_store.get_keys(context)
+    keys = get_data_store().get_keys(context)
     if not keys:
         print(colored(f"No keys found for context: {context}", Colors.YELLOW))
         return 2
@@ -495,15 +628,15 @@ def cmd_rotate_keys(args) -> int:
     print("=" * 60)
 
     if key_id:
-        keys = [_data_store.get_key(key_id)]
+        keys = [get_data_store().get_key(key_id)]
         if not keys[0]:
             print(colored(f"Key not found: {key_id}", Colors.RED))
             return 2
     elif context:
-        keys = _data_store.get_keys(context)
+        keys = get_data_store().get_keys(context)
     else:
         # Rotate all overdue keys
-        keys = _data_store.get_keys()
+        keys = get_data_store().get_keys()
         keys = [k for k in keys if (datetime.now(timezone.utc) - k["last_rotated"]).days > k["rotation_days"]]
 
     if not keys:
@@ -547,8 +680,8 @@ def cmd_upgrade_quantum(args) -> int:
     print(f"\n{colored('Quantum Readiness Assessment', Colors.BOLD + Colors.MAGENTA)}")
     print("=" * 60)
 
-    contexts = _data_store.get_contexts()
-    keys = _data_store.get_keys()
+    contexts = get_data_store().get_contexts()
+    keys = get_data_store().get_keys()
 
     # Assess current state
     classical_keys = [k for k in keys if not crypto_registry.is_quantum_resistant(k["algorithm"])]
@@ -715,6 +848,21 @@ Examples:
     return parser
 
 
+def print_mode_banner():
+    """Print mode banner (demo or live)."""
+    print()
+    if _DEMO_MODE:
+        print(colored("=" * 70, Colors.YELLOW))
+        print(colored("  DEMO MODE - Using synthetic data for demonstration", Colors.YELLOW))
+        print(colored("  For production: set CRYPTOSERVE_API_URL and CRYPTOSERVE_API_TOKEN", Colors.YELLOW))
+        print(colored("=" * 70, Colors.YELLOW))
+    else:
+        print(colored("=" * 70, Colors.GREEN))
+        print(colored(f"  LIVE MODE - Connected to {CRYPTOSERVE_API_URL}", Colors.GREEN))
+        print(colored("=" * 70, Colors.GREEN))
+    print()
+
+
 def main() -> int:
     """Main entry point."""
     parser = create_parser()
@@ -726,6 +874,9 @@ def main() -> int:
     if not args.command:
         parser.print_help()
         return 0
+
+    # Show mode banner (demo or live)
+    print_mode_banner()
 
     if args.command == "status":
         return cmd_status(args)

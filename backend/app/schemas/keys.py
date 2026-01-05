@@ -123,3 +123,32 @@ class RotateKeyResponse(BaseModel):
     old_version: int
     new_version: int
     key_bundle: KeyBundle
+
+
+class UpdateKeyScheduleRequest(BaseModel):
+    """Request to update key rotation schedule."""
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    rotation_schedule_days: int = Field(
+        ge=1,
+        le=3650,
+        description="Days between key rotations (1-3650)"
+    )
+
+
+class UpdateKeyScheduleResponse(BaseModel):
+    """Response after updating key schedule."""
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    success: bool
+    message: str
+    key_type: KeyType
+    old_schedule_days: int
+    new_schedule_days: int
+    next_rotation_at: datetime

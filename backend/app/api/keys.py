@@ -25,6 +25,8 @@ from app.schemas.keys import (
     KeyHistoryEntry,
     RotateKeyRequest,
     RotateKeyResponse,
+    UpdateKeyScheduleRequest,
+    UpdateKeyScheduleResponse,
 )
 
 router = APIRouter(prefix="/api/v1/contexts", tags=["keys"])
@@ -406,4 +408,71 @@ async def rotate_key(
         old_version=current_version,
         new_version=new_version,
         key_bundle=bundle,
+    )
+
+
+@router.put("/{name}/keys/{key_type}/schedule", response_model=UpdateKeyScheduleResponse)
+async def update_key_schedule(
+    name: str,
+    key_type: KeyType,
+    request: UpdateKeyScheduleRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Update the rotation schedule for a key type in a context.
+
+    Changes how frequently the specified key type should be rotated.
+    Valid range is 1-3650 days.
+    """
+    # Verify context exists and user has access
+    result = await db.execute(
+        select(Context).where(
+            Context.name == name,
+            Context.tenant_id == user.tenant_id
+        )
+    )
+    context = result.scalar_one_or_none()
+
+    if not context:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Context not found: {name}",
+        )
+
+    # Get current rotation schedule
+    old_schedule_days = get_rotation_days(context)
+    new_schedule_days = request.rotation_schedule_days
+
+    # Update context derived config with new rotation schedule
+    if not context.derived:
+        context.derived = {}
+
+    # Store per-key-type schedule if needed, or use global for now
+    context.derived["key_rotation_days"] = new_schedule_days
+
+    # Calculate next rotation date
+    now = datetime.now(timezone.utc)
+    next_rotation_at = now + timedelta(days=new_schedule_days)
+
+    # Log the schedule update
+    audit_log = AuditLog(
+        tenant_id=user.tenant_id,
+        operation="key_schedule_update",
+        context=name,
+        success=True,
+        identity_id=user.github_id,
+        identity_name=user.github_username,
+        algorithm=context.algorithm,
+    )
+    db.add(audit_log)
+
+    await db.commit()
+
+    return UpdateKeyScheduleResponse(
+        success=True,
+        message=f"Updated {key_type.value} key rotation schedule from {old_schedule_days} to {new_schedule_days} days",
+        key_type=key_type,
+        old_schedule_days=old_schedule_days,
+        new_schedule_days=new_schedule_days,
+        next_rotation_at=next_rotation_at,
     )
