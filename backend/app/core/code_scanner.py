@@ -166,6 +166,13 @@ ALGORITHM_DB = {
     "sphincs": {"category": "signing", "quantum_risk": QuantumRisk.NONE, "is_weak": False},
     "slh-dsa": {"category": "signing", "quantum_risk": QuantumRisk.NONE, "is_weak": False},
 
+    # HPKE (RFC 9180 - Hybrid Public Key Encryption)
+    "hpke": {"category": "encryption", "quantum_risk": QuantumRisk.HIGH, "is_weak": False,
+             "recommendation": "Plan migration to post-quantum variants"},
+    "hpke-x25519": {"category": "encryption", "quantum_risk": QuantumRisk.HIGH, "is_weak": False},
+    "hpke-p256": {"category": "encryption", "quantum_risk": QuantumRisk.HIGH, "is_weak": False},
+    "hpke-p384": {"category": "encryption", "quantum_risk": QuantumRisk.HIGH, "is_weak": False},
+
     # Hash Functions
     "sha256": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
     "sha-256": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
@@ -178,6 +185,16 @@ ALGORITHM_DB = {
     "blake2b": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
     "blake2s": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
     "blake3": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+
+    # SP 800-185 SHA-3 Derived Functions
+    "cshake128": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "cshake256": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "tuplehash128": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "tuplehash256": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "parallelhash128": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "parallelhash256": {"category": "hashing", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "kmac128": {"category": "mac", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
+    "kmac256": {"category": "mac", "quantum_risk": QuantumRisk.LOW, "is_weak": False},
 
     # Weak Hash Functions
     "md5": {"category": "hashing", "quantum_risk": QuantumRisk.CRITICAL, "is_weak": True,
@@ -275,6 +292,22 @@ LIBRARY_PATTERNS = {
                 (r"Crypto\.PublicKey\.RSA", "rsa", "encryption"),
                 (r"Crypto\.PublicKey\.DSA", "dsa", "signing"),
                 (r"Crypto\.PublicKey\.ECC", "ecdsa", "signing"),
+                # SP 800-185 functions
+                (r"Crypto\.Hash\.cSHAKE128", "cshake128", "hashing"),
+                (r"Crypto\.Hash\.cSHAKE256", "cshake256", "hashing"),
+                (r"Crypto\.Hash\.KMAC128", "kmac128", "mac"),
+                (r"Crypto\.Hash\.KMAC256", "kmac256", "mac"),
+                (r"Crypto\.Hash\.TupleHash128", "tuplehash128", "hashing"),
+                (r"Crypto\.Hash\.TupleHash256", "tuplehash256", "hashing"),
+            ],
+        },
+        "pyhpke": {
+            "imports": ["pyhpke"],
+            "patterns": [
+                (r"CipherSuite\.new", "hpke", "encryption"),
+                (r"DHKEM_X25519", "hpke-x25519", "encryption"),
+                (r"DHKEM_P256", "hpke-p256", "encryption"),
+                (r"DHKEM_P384", "hpke-p384", "encryption"),
             ],
         },
         "nacl": {
@@ -310,6 +343,14 @@ LIBRARY_PATTERNS = {
                 (r"\.derive_shared_secret\s*\(", "x25519", "key_exchange"),
                 (r"\.jws_sign\s*\(", "ed25519", "signing"),
                 (r"\.jwe_encrypt\s*\(", "aes-gcm", "encryption"),
+                # HPKE endpoints
+                (r"\.hpke_encrypt\s*\(", "hpke", "encryption"),
+                (r"\.hpke_decrypt\s*\(", "hpke", "encryption"),
+                (r"\.hpke_keypair\s*\(", "hpke", "encryption"),
+                # ParallelHash
+                (r"\.parallelhash\s*\(", "parallelhash128", "hashing"),
+                (r"parallelhash128", "parallelhash128", "hashing"),
+                (r"parallelhash256", "parallelhash256", "hashing"),
             ],
         },
     },

@@ -40,6 +40,7 @@ from app.api import (
     passwords_router,
     jose_router,
     asymmetric_router,
+    hpke_router,
     secrets_router,
     discovery_router,
     code_analysis_router,
@@ -657,6 +658,7 @@ app.include_router(hashing_router)
 app.include_router(passwords_router)
 app.include_router(jose_router)
 app.include_router(asymmetric_router)
+app.include_router(hpke_router)
 app.include_router(secrets_router)
 app.include_router(discovery_router)
 app.include_router(code_analysis_router)

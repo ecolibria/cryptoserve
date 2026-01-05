@@ -1164,6 +1164,97 @@ class CryptoRegistry:
         ))
 
         # =====================================================================
+        # HPKE (Hybrid Public Key Encryption) - RFC 9180
+        # =====================================================================
+
+        self.register(Algorithm(
+            name="HPKE-X25519-SHA256-AES128GCM",
+            family="HPKE",
+            variant="X25519-SHA256-AES128GCM",
+            aliases=["hpke-x25519-aes128gcm", "x25519-sha256-aes128gcm"],
+            algorithm_type=AlgorithmType.ASYMMETRIC_ENCRYPTION,
+            use_cases=["hybrid encryption", "key encapsulation", "secure messaging"],
+            security_bits=128,
+            key_sizes=[256],
+            quantum_resistant=False,
+            status=SecurityStatus.RECOMMENDED,
+            standards=["RFC 9180"],
+            approved_by=[StandardsBody.IETF],
+            relative_speed="fast",
+            implementation_notes=[
+                "DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + AES-128-GCM",
+                "Recommended for most applications",
+                "Supports Base, PSK, Auth, and AuthPSK modes",
+            ],
+            code_patterns=[r"hpke", r"HPKE", r"x25519.*aes.*gcm"],
+        ))
+
+        self.register(Algorithm(
+            name="HPKE-X25519-SHA256-ChaCha20",
+            family="HPKE",
+            variant="X25519-SHA256-ChaCha20Poly1305",
+            aliases=["hpke-x25519-chacha20", "x25519-sha256-chacha20poly1305"],
+            algorithm_type=AlgorithmType.ASYMMETRIC_ENCRYPTION,
+            use_cases=["hybrid encryption", "key encapsulation", "secure messaging"],
+            security_bits=128,
+            key_sizes=[256],
+            quantum_resistant=False,
+            status=SecurityStatus.RECOMMENDED,
+            standards=["RFC 9180"],
+            approved_by=[StandardsBody.IETF],
+            relative_speed="fast",
+            implementation_notes=[
+                "DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + ChaCha20-Poly1305",
+                "Good alternative when hardware AES acceleration unavailable",
+            ],
+            code_patterns=[r"hpke.*chacha", r"x25519.*chacha"],
+        ))
+
+        self.register(Algorithm(
+            name="HPKE-P256-SHA256-AES128GCM",
+            family="HPKE",
+            variant="P256-SHA256-AES128GCM",
+            aliases=["hpke-p256-aes128gcm", "p256-sha256-aes128gcm"],
+            algorithm_type=AlgorithmType.ASYMMETRIC_ENCRYPTION,
+            use_cases=["hybrid encryption", "NIST compliance", "government applications"],
+            security_bits=128,
+            key_sizes=[256],
+            quantum_resistant=False,
+            status=SecurityStatus.RECOMMENDED,
+            standards=["RFC 9180"],
+            approved_by=[StandardsBody.IETF, StandardsBody.NIST],
+            compliance_frameworks=["FIPS 140-3"],
+            relative_speed="medium",
+            implementation_notes=[
+                "DHKEM(P-256, HKDF-SHA256) + HKDF-SHA256 + AES-128-GCM",
+                "Uses NIST P-256 curve for compliance requirements",
+            ],
+            code_patterns=[r"hpke.*p256", r"p256.*aes.*gcm"],
+        ))
+
+        self.register(Algorithm(
+            name="HPKE-P384-SHA384-AES256GCM",
+            family="HPKE",
+            variant="P384-SHA384-AES256GCM",
+            aliases=["hpke-p384-aes256gcm", "p384-sha384-aes256gcm"],
+            algorithm_type=AlgorithmType.ASYMMETRIC_ENCRYPTION,
+            use_cases=["hybrid encryption", "high-security", "government applications"],
+            security_bits=192,
+            key_sizes=[384],
+            quantum_resistant=False,
+            status=SecurityStatus.RECOMMENDED,
+            standards=["RFC 9180"],
+            approved_by=[StandardsBody.IETF, StandardsBody.NIST],
+            compliance_frameworks=["FIPS 140-3"],
+            relative_speed="medium",
+            implementation_notes=[
+                "DHKEM(P-384, HKDF-SHA384) + HKDF-SHA384 + AES-256-GCM",
+                "Higher security level for sensitive applications",
+            ],
+            code_patterns=[r"hpke.*p384", r"p384.*aes.*gcm"],
+        ))
+
+        # =====================================================================
         # DIGITAL SIGNATURES
         # =====================================================================
 

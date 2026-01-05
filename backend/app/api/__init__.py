@@ -13,6 +13,7 @@ from app.api.hashing import router as hashing_router
 from app.api.passwords import router as passwords_router
 from app.api.jose import router as jose_router
 from app.api.asymmetric import router as asymmetric_router
+from app.api.hpke import router as hpke_router
 from app.api.secrets import router as secrets_router
 from app.api.discovery import router as discovery_router
 from app.api.code_analysis import router as code_analysis_router
@@ -37,6 +38,7 @@ __all__ = [
     "passwords_router",
     "jose_router",
     "asymmetric_router",
+    "hpke_router",
     "secrets_router",
     "discovery_router",
     "code_analysis_router",
