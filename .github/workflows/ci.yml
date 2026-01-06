@@ -24,54 +24,10 @@ jobs:
           cd backend
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run tests with coverage
+      - name: Run tests
         run: |
           cd backend
-          pytest -v --tb=short --junitxml=test-results.xml --cov=app --cov-report=xml --cov-report=term 2>&1 | tee test-output.txt
-
-      - name: Extract test count
-        id: test_count
-        run: |
-          # Extract passed test count from pytest output
-          PASSED=$(grep -oP '\d+(?= passed)' backend/test-output.txt | head -1 || echo "0")
-          FAILED=$(grep -oP '\d+(?= failed)' backend/test-output.txt | head -1 || echo "0")
-          TOTAL=$((PASSED + FAILED))
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-
-      - name: Create test badge
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        if: github.ref == 'refs/heads/main'
-        with:
-          auth: ${{ secrets.GIST_TOKEN }}
-          gistID: ${{ secrets.BADGE_GIST_ID }}
-          filename: test-results.json
-          label: tests
-          message: "${{ steps.test_count.outputs.passed }} passed"
-          color: ${{ steps.test_count.outputs.failed == '0' && 'brightgreen' || 'red' }}
-
-      - name: Create coverage badge
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        if: github.ref == 'refs/heads/main'
-        with:
-          auth: ${{ secrets.GIST_TOKEN }}
-          gistID: ${{ secrets.BADGE_GIST_ID }}
-          filename: coverage-results.json
-          label: coverage
-          message: "${{ env.COVERAGE }}%"
-          valColorRange: ${{ env.COVERAGE }}
-          maxColorRange: 100
-          minColorRange: 0
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: |
-            backend/test-results.xml
-            backend/coverage.xml
+          pytest -v --tb=short
 
   lint:
     runs-on: ubuntu-latest
