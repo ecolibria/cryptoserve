@@ -409,53 +409,53 @@ This solves the enterprise problem where:
 - Developers don't want to learn cryptographic details
 - The same data type needs different optimal algorithms for different use cases
 
-### Usage Constants
+### Runtime Usage Hints
 
 ```python
-from cryptoserve import CryptoServe, AT_REST, IN_TRANSIT, IN_USE, STREAMING, DISK
+from cryptoserve import CryptoServe
 
 crypto = CryptoServe(app_name="my-app", team="platform")
 
 # Same context ("customer-pii"), different usage = different optimal algorithms!
 
-# AT_REST - Data being stored (databases, files, backups)
+# "at_rest" - Data being stored (databases, files, backups)
 # Platform selects: AES-256-GCM (optimized for storage)
 db_record = crypto.encrypt(
     ssn.encode(),
     context="customer-pii",
-    usage=AT_REST
+    usage="at_rest"
 )
 
-# IN_TRANSIT - Data being transmitted (API calls, network)
+# "in_transit" - Data being transmitted (API calls, network)
 # Platform selects: AES-256-GCM (optimized for network)
 api_response = crypto.encrypt(
     ssn.encode(),
     context="customer-pii",
-    usage=IN_TRANSIT
+    usage="in_transit"
 )
 
-# IN_USE - Data in active memory/processing
+# "in_use" - Data in active memory/processing
 # Platform selects: AES-256-GCM-SIV (nonce-misuse resistant)
 memory_data = crypto.encrypt(
     ssn.encode(),
     context="customer-pii",
-    usage=IN_USE
+    usage="in_use"
 )
 
-# STREAMING - Real-time data streams
+# "streaming" - Real-time data streams
 # Platform selects: ChaCha20-Poly1305 (optimized for streams)
 stream_chunk = crypto.encrypt(
     video_chunk,
     context="media-content",
-    usage=STREAMING
+    usage="streaming"
 )
 
-# DISK - Volume/disk encryption
+# "disk" - Volume/disk encryption
 # Platform selects: Based on context policy (XTS mode)
 disk_sector = crypto.encrypt(
     sector_data,
     context="disk-encryption",
-    usage=DISK
+    usage="disk"
 )
 ```
 
@@ -477,7 +477,7 @@ disk_sector = crypto.encrypt(
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Developer provides USAGE at runtime:                               │
 │                                                                     │
-│    crypto.encrypt(data, context="customer-pii", usage=AT_REST)      │
+│    crypto.encrypt(data, context="customer-pii", usage="at_rest")    │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
@@ -485,13 +485,13 @@ disk_sector = crypto.encrypt(
 ┌─────────────────────────────────────────────────────────────────────┐
 │  CryptoServe combines CONTEXT + USAGE → Optimal Algorithm           │
 │                                                                     │
-│    customer-pii + AT_REST     → AES-256-GCM                         │
-│    customer-pii + IN_TRANSIT  → AES-256-GCM                         │
-│    customer-pii + IN_USE      → AES-256-GCM-SIV (nonce-resistant)   │
-│    customer-pii + STREAMING   → ChaCha20-Poly1305                   │
+│    customer-pii + "at_rest"    → AES-256-GCM                        │
+│    customer-pii + "in_transit" → AES-256-GCM                        │
+│    customer-pii + "in_use"     → AES-256-GCM-SIV (nonce-resistant)  │
+│    customer-pii + "streaming"  → ChaCha20-Poly1305                  │
 │                                                                     │
 │    If context requires quantum_resistant:                           │
-│    customer-pii + AT_REST     → AES-256-GCM + ML-KEM-768 (hybrid)   │
+│    customer-pii + "at_rest"    → AES-256-GCM + ML-KEM-768 (hybrid)  │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -500,11 +500,11 @@ disk_sector = crypto.encrypt(
 
 | Usage | Description | Default Algorithm |
 |-------|-------------|-------------------|
-| `AT_REST` | Database storage, file encryption | AES-256-GCM |
-| `IN_TRANSIT` | Network transmission, API payloads | AES-256-GCM |
-| `IN_USE` | Memory encryption, active processing | AES-256-GCM-SIV |
-| `STREAMING` | Real-time data streams | ChaCha20-Poly1305 |
-| `DISK` | Volume/disk encryption | Per context policy |
+| `"at_rest"` | Database storage, file encryption | AES-256-GCM |
+| `"in_transit"` | Network transmission, API payloads | AES-256-GCM |
+| `"in_use"` | Memory encryption, active processing | AES-256-GCM-SIV |
+| `"streaming"` | Real-time data streams | ChaCha20-Poly1305 |
+| `"disk"` | Volume/disk encryption | Per context policy |
 
 ### Admin Analytics
 
@@ -530,7 +530,7 @@ This helps admins understand actual data flow and adjust context policies accord
 ### Real-World Example
 
 ```python
-from cryptoserve import CryptoServe, AT_REST, IN_TRANSIT, IN_USE, STREAMING
+from cryptoserve import CryptoServe
 
 crypto = CryptoServe(app_name="healthcare-api", team="platform")
 
@@ -542,7 +542,7 @@ class PatientService:
         encrypted = crypto.encrypt_json(
             patient_record,
             context="patient-phi",
-            usage=AT_REST  # Database storage
+            usage="at_rest"  # Database storage
         )
         db.save(encrypted)
         return encrypted
@@ -552,7 +552,7 @@ class PatientService:
         return crypto.encrypt_json(
             patient_record,
             context="patient-phi",
-            usage=IN_TRANSIT  # Network transmission
+            usage="in_transit"  # Network transmission
         )
 
     def process_in_memory(self, patient_record: dict) -> bytes:
@@ -560,7 +560,7 @@ class PatientService:
         return crypto.encrypt_json(
             patient_record,
             context="patient-phi",
-            usage=IN_USE  # Memory-safe encryption
+            usage="in_use"  # Memory-safe encryption
         )
 
     def stream_to_archive(self, records_stream):
@@ -569,7 +569,7 @@ class PatientService:
             yield crypto.encrypt_json(
                 record,
                 context="patient-phi",
-                usage=STREAMING  # Optimized for streams
+                usage="streaming"  # Optimized for streams
             )
 ```
 
