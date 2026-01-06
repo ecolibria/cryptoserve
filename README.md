@@ -255,24 +255,24 @@ The 5-layer context model automatically selects appropriate algorithms:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 1: Data Identity                                       │
-│   Sensitivity: low | medium | high | critical                │
-│   Data Types: PII, PHI, PCI, financial, secrets              │
+│ Layer 1: Data Identity                                      │
+│   Sensitivity: low | medium | high | critical               │
+│   Data Types: PII, PHI, PCI, financial, secrets             │
 ├─────────────────────────────────────────────────────────────┤
-│ Layer 2: Regulatory                                          │
+│ Layer 2: Regulatory                                         │
 │   Frameworks: HIPAA, GDPR, PCI-DSS, SOC2, FedRAMP           │
 ├─────────────────────────────────────────────────────────────┤
-│ Layer 3: Threat Model                                        │
+│ Layer 3: Threat Model                                       │
 │   Adversary: script-kiddie | criminal | nation-state        │
 │   Quantum Timeline: none | 5yr | 10yr | 15yr+               │
 ├─────────────────────────────────────────────────────────────┤
-│ Layer 4: Access Patterns                                     │
-│   Frequency: rare | occasional | frequent | continuous       │
+│ Layer 4: Access Patterns                                    │
+│   Frequency: rare | occasional | frequent | continuous      │
 │   Latency: strict (<10ms) | normal | relaxed                │
 ├─────────────────────────────────────────────────────────────┤
-│ Layer 5: Technical                                           │
+│ Layer 5: Technical                                          │
 │   Hardware: HSM, TPM, software-only                         │
-│   Key Size: minimum bits required                            │
+│   Key Size: minimum bits required                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -403,30 +403,30 @@ for record in records:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Client Applications                       │
+│                    Client Applications                      │
 │       Python SDK  |  TypeScript (Soon)  |  REST API         │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                     CryptoServe Server                       │
+│                     CryptoServe Server                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │ Auth Layer  │  │   Policy    │  │   Crypto Engines    │  │
 │  │ JWT / OAuth │  │   Engine    │  │ AES | PQC | Hybrid  │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │              Key Management Layer                        ││
+│  │              Key Management Layer                       ││
 │  │         HKDF | KMS Integration | Key Rotation           ││
 │  └─────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │                 Audit & Compliance                       ││
+│  │                 Audit & Compliance                      ││
 │  │        SIEM Export | CBOM | Compliance Reports          ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              PostgreSQL / SQLite / MySQL                     │
+│              PostgreSQL / SQLite / MySQL                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
