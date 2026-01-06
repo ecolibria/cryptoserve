@@ -2444,3 +2444,124 @@ export interface CTSearchResponse {
   returnedResults: number;
   certificates: CTCertificate[];
 }
+
+// ===== Onboarding Types =====
+
+export interface SetupStatus {
+  setupCompleted: boolean;
+  setupCompletedAt: string | null;
+  hasAdmin: boolean;
+  userCount: number;
+  provisioningMode: string;
+  allowedDomains: string[];
+  allowedGithubOrgs: string[];
+  defaultRole: string;
+  organizationName: string | null;
+}
+
+export interface CompleteSetupRequest {
+  organizationName?: string;
+  allowedDomains?: string[];
+  allowedGithubOrgs?: string[];
+  provisioningMode?: string;
+  defaultRole?: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: string;
+  status: "pending" | "accepted" | "expired" | "revoked";
+  token: string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  invitedBy: string;
+}
+
+export interface CreateInvitationRequest {
+  email: string;
+  role?: string;
+  expiresDays?: number;
+}
+
+export interface InvitationValidation {
+  valid: boolean;
+  error: string | null;
+  email: string | null;
+  role: string | null;
+  expiresAt: string | null;
+}
+
+export interface ProvisioningConfig {
+  provisioningMode: string;
+  defaultRole: string;
+  allowedDomains: string[];
+  allowedGithubOrgs: string[];
+}
+
+// ===== Onboarding API Functions =====
+
+export async function getSetupStatus(): Promise<SetupStatus> {
+  return fetchApi("/api/onboarding/setup/status");
+}
+
+export async function completeSetup(data: CompleteSetupRequest): Promise<SetupStatus> {
+  return fetchApi("/api/onboarding/setup/complete", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createInvitation(data: CreateInvitationRequest): Promise<Invitation> {
+  return fetchApi("/api/onboarding/invitations", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listInvitations(status?: string): Promise<Invitation[]> {
+  const url = status
+    ? `/api/onboarding/invitations?status_filter=${status}`
+    : "/api/onboarding/invitations";
+  return fetchApi(url);
+}
+
+export async function revokeInvitation(id: string): Promise<void> {
+  return fetchApi(`/api/onboarding/invitations/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function validateInvitation(token: string): Promise<InvitationValidation> {
+  return fetchApi(`/api/onboarding/invitations/validate/${token}`);
+}
+
+export async function getProvisioningConfig(): Promise<ProvisioningConfig> {
+  return fetchApi("/api/onboarding/config/provisioning");
+}
+
+export async function updateProvisioningConfig(config: Partial<ProvisioningConfig>): Promise<ProvisioningConfig> {
+  return fetchApi("/api/onboarding/config/provisioning", {
+    method: "PUT",
+    body: JSON.stringify({
+      provisioningMode: config.provisioningMode,
+      defaultRole: config.defaultRole,
+      allowedDomains: config.allowedDomains,
+      allowedGithubOrgs: config.allowedGithubOrgs,
+    }),
+  });
+}
+
+export async function addAllowedGithubOrg(organization: string): Promise<{ allowedGithubOrgs: string[] }> {
+  return fetchApi("/api/onboarding/config/github-orgs", {
+    method: "POST",
+    body: JSON.stringify({ organization }),
+  });
+}
+
+export async function removeAllowedGithubOrg(org: string): Promise<{ allowedGithubOrgs: string[] }> {
+  return fetchApi(`/api/onboarding/config/github-orgs/${encodeURIComponent(org)}`, {
+    method: "DELETE",
+  });
+}

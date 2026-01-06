@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
-import { Settings, Key, Clock, Trash2, CheckCircle, AlertTriangle, XCircle, Server, Rocket, Code, ArrowUpCircle, Activity, TrendingUp, Shield, Zap } from "lucide-react";
+import { Settings, Key, Clock, Trash2, CheckCircle, AlertTriangle, XCircle, Server, Rocket, Code, ArrowUpCircle, Activity, TrendingUp, Shield, Zap, Download, Copy, Check } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,14 @@ import { api, Application } from "@/lib/api";
 export default function ApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showSdkSetup, setShowSdkSetup] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyToClipboard = async (text: string, field: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
 
   useEffect(() => {
     api.listApplications()
@@ -316,6 +324,15 @@ export default function ApplicationsPage() {
                             </div>
                           </div>
                           <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowSdkSetup(showSdkSetup === app.id ? null : app.id)}
+                              className={showSdkSetup === app.id ? "bg-blue-50 border-blue-200" : ""}
+                            >
+                              <Download className="h-4 w-4 mr-1.5" />
+                              SDK
+                            </Button>
                             <Link href={`/applications/${app.id}/tokens`}>
                               <Button variant="outline" size="sm">
                                 <Settings className="h-4 w-4 mr-1.5" />
@@ -327,6 +344,55 @@ export default function ApplicationsPage() {
                             </Button>
                           </div>
                         </div>
+
+                        {/* SDK Setup Instructions */}
+                        {showSdkSetup === app.id && (
+                          <div className="mt-4 pt-4 border-t border-slate-100">
+                            <h4 className="text-sm font-semibold text-slate-700 mb-3">SDK Setup Instructions</h4>
+                            <div className="space-y-3">
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 mb-1">1. Install the SDK</p>
+                                <div className="flex items-center gap-2 bg-slate-50 rounded-md p-2">
+                                  <code className="text-xs text-slate-700 flex-1 font-mono">pip install -e sdk/python/</code>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0"
+                                    onClick={() => copyToClipboard("pip install -e sdk/python/", `install-${app.id}`)}
+                                  >
+                                    {copiedField === `install-${app.id}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 mb-1">2. Use in your code</p>
+                                <div className="bg-slate-50 rounded-md p-2 relative">
+                                  <pre className="text-xs text-slate-700 font-mono overflow-x-auto">{`from cryptoserve import CryptoServe
+
+crypto = CryptoServe(
+    app_name="${app.name}",
+    team="${app.team}",
+    environment="${app.environment}"
+)
+
+# Encrypt data
+encrypted = crypto.encrypt(b"data", context="${app.allowed_contexts[0] || 'default'}")`}</pre>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute top-1 right-1 h-6 w-6 p-0"
+                                    onClick={() => copyToClipboard(`from cryptoserve import CryptoServe\n\ncrypto = CryptoServe(\n    app_name="${app.name}",\n    team="${app.team}",\n    environment="${app.environment}"\n)\n\n# Encrypt data\nencrypted = crypto.encrypt(b"data", context="${app.allowed_contexts[0] || 'default'}")`, `code-${app.id}`)}
+                                  >
+                                    {copiedField === `code-${app.id}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                Run <code className="bg-slate-100 px-1 rounded">cryptoserve login</code> once to authenticate. The SDK will auto-register your app.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -395,6 +461,15 @@ export default function ApplicationsPage() {
                             </div>
                           </div>
                           <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowSdkSetup(showSdkSetup === app.id ? null : app.id)}
+                              className={showSdkSetup === app.id ? "bg-blue-50 border-blue-200" : ""}
+                            >
+                              <Download className="h-4 w-4 mr-1.5" />
+                              SDK
+                            </Button>
                             <Link href={`/applications/${app.id}/tokens`}>
                               <Button variant="outline" size="sm">
                                 <Settings className="h-4 w-4 mr-1.5" />
@@ -406,6 +481,55 @@ export default function ApplicationsPage() {
                             </Button>
                           </div>
                         </div>
+
+                        {/* SDK Setup Instructions */}
+                        {showSdkSetup === app.id && (
+                          <div className="mt-4 pt-4 border-t border-slate-100">
+                            <h4 className="text-sm font-semibold text-slate-700 mb-3">SDK Setup Instructions</h4>
+                            <div className="space-y-3">
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 mb-1">1. Install the SDK</p>
+                                <div className="flex items-center gap-2 bg-slate-50 rounded-md p-2">
+                                  <code className="text-xs text-slate-700 flex-1 font-mono">pip install -e sdk/python/</code>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0"
+                                    onClick={() => copyToClipboard("pip install -e sdk/python/", `install-${app.id}`)}
+                                  >
+                                    {copiedField === `install-${app.id}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 mb-1">2. Use in your code</p>
+                                <div className="bg-slate-50 rounded-md p-2 relative">
+                                  <pre className="text-xs text-slate-700 font-mono overflow-x-auto">{`from cryptoserve import CryptoServe
+
+crypto = CryptoServe(
+    app_name="${app.name}",
+    team="${app.team}",
+    environment="${app.environment}"
+)
+
+# Encrypt data
+encrypted = crypto.encrypt(b"data", context="${app.allowed_contexts[0] || 'default'}")`}</pre>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute top-1 right-1 h-6 w-6 p-0"
+                                    onClick={() => copyToClipboard(`from cryptoserve import CryptoServe\n\ncrypto = CryptoServe(\n    app_name="${app.name}",\n    team="${app.team}",\n    environment="${app.environment}"\n)\n\n# Encrypt data\nencrypted = crypto.encrypt(b"data", context="${app.allowed_contexts[0] || 'default'}")`, `code-${app.id}`)}
+                                  >
+                                    {copiedField === `code-${app.id}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                Run <code className="bg-slate-100 px-1 rounded">cryptoserve login</code> once to authenticate. The SDK will auto-register your app.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -480,6 +604,15 @@ export default function ApplicationsPage() {
                             </div>
                           </div>
                           <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowSdkSetup(showSdkSetup === app.id ? null : app.id)}
+                              className={showSdkSetup === app.id ? "bg-blue-50 border-blue-200" : ""}
+                            >
+                              <Download className="h-4 w-4 mr-1.5" />
+                              SDK
+                            </Button>
                             <Link href={`/applications/${app.id}/tokens`}>
                               <Button variant="outline" size="sm">
                                 <Settings className="h-4 w-4 mr-1.5" />
@@ -491,6 +624,55 @@ export default function ApplicationsPage() {
                             </Button>
                           </div>
                         </div>
+
+                        {/* SDK Setup Instructions */}
+                        {showSdkSetup === app.id && (
+                          <div className="mt-4 pt-4 border-t border-slate-100">
+                            <h4 className="text-sm font-semibold text-slate-700 mb-3">SDK Setup Instructions</h4>
+                            <div className="space-y-3">
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 mb-1">1. Install the SDK</p>
+                                <div className="flex items-center gap-2 bg-slate-50 rounded-md p-2">
+                                  <code className="text-xs text-slate-700 flex-1 font-mono">pip install -e sdk/python/</code>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0"
+                                    onClick={() => copyToClipboard("pip install -e sdk/python/", `install-${app.id}`)}
+                                  >
+                                    {copiedField === `install-${app.id}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 mb-1">2. Use in your code</p>
+                                <div className="bg-slate-50 rounded-md p-2 relative">
+                                  <pre className="text-xs text-slate-700 font-mono overflow-x-auto">{`from cryptoserve import CryptoServe
+
+crypto = CryptoServe(
+    app_name="${app.name}",
+    team="${app.team}",
+    environment="${app.environment}"
+)
+
+# Encrypt data
+encrypted = crypto.encrypt(b"data", context="${app.allowed_contexts[0] || 'default'}")`}</pre>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute top-1 right-1 h-6 w-6 p-0"
+                                    onClick={() => copyToClipboard(`from cryptoserve import CryptoServe\n\ncrypto = CryptoServe(\n    app_name="${app.name}",\n    team="${app.team}",\n    environment="${app.environment}"\n)\n\n# Encrypt data\nencrypted = crypto.encrypt(b"data", context="${app.allowed_contexts[0] || 'default'}")`, `code-${app.id}`)}
+                                  >
+                                    {copiedField === `code-${app.id}` ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                Run <code className="bg-slate-100 px-1 rounded">cryptoserve login</code> once to authenticate. The SDK will auto-register your app.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

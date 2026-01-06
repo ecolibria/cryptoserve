@@ -120,11 +120,27 @@ That's it. Your app auto-registers and is ready for production.
 
 ### Installation
 
+**Option 1: CLI Install (Recommended)**
+
 ```bash
-pip install cryptoserve  # Coming soon to PyPI
-# For now:
-pip install -e crypto-serve/sdk/python/
+pip install -e sdk/python/
+cryptoserve login  # Opens browser for GitHub auth
 ```
+
+Your app auto-registers on first use - no manual setup needed.
+
+**Option 2: Dashboard Download**
+
+1. Go to **Applications** in the dashboard (`http://localhost:3000/applications`)
+2. Create or select an application
+3. Click **Download SDK**
+4. Install the downloaded wheel:
+
+```bash
+pip install cryptoserve-*.whl
+```
+
+This embeds your credentials directly in the SDK package.
 
 ### Initialization
 

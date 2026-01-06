@@ -68,6 +68,18 @@ class User(Base):
         doc="Permissions explicitly denied (overrides role)"
     )
 
+    # Provisioning tracking
+    provisioning_source: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        doc="How user was provisioned: first_user, domain, github_org, invitation, admin"
+    )
+    invitation_id: Mapped[str | None] = mapped_column(
+        GUID(),
+        ForeignKey("user_invitations.id"),
+        nullable=True
+    )
+
     # Relationships
     tenant: Mapped["Tenant"] = relationship(
         "Tenant",

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import User
+from app.models import User, UserInvitation
 from app.auth.jwt import create_access_token
 from app.auth.providers import get_provider, get_enabled_providers
 from app.auth.providers.registry import list_providers
@@ -182,6 +182,7 @@ async def oauth_callback(
     This is the redirect target after user authorizes with the provider.
     """
     from app.core.domain_service import domain_service
+    from app.core.onboarding_service import onboarding_service
     from app.core.tenant import get_or_create_default_tenant
 
     if not code:
@@ -241,44 +242,17 @@ async def oauth_callback(
             detail=str(e),
         )
 
-    # Check domain authorization
-    allowed_email = None
-    for email in user_info.verified_emails:
-        if await domain_service.is_domain_allowed(email, db):
-            allowed_email = email
-            break
-
-    # If no verified email matches allowed domains, check if domain restriction applies
-    if not allowed_email:
-        org_settings = await domain_service.get_org_settings(db)
-        if org_settings.require_domain_match and not org_settings.allow_any_github_user:
-            allowed_domains = await domain_service.get_allowed_domains(db)
-            if allowed_domains:
-                cli_callback = request.cookies.get("cli_callback")
-                if cli_callback:
-                    from urllib.parse import urlencode
-                    callback_params = urlencode({
-                        "error": "domain_not_allowed",
-                        "message": "Your email domain is not authorized",
-                    })
-                    response = RedirectResponse(
-                        url=f"{cli_callback}?{callback_params}",
-                        status_code=status.HTTP_302_FOUND,
-                    )
-                    response.delete_cookie("cli_callback")
-                    response.delete_cookie("oauth_state")
-                    return response
-
-                response = RedirectResponse(
-                    url=f"{settings.frontend_url}/?error=domain_not_allowed",
-                    status_code=status.HTTP_302_FOUND,
-                )
-                response.delete_cookie("oauth_state")
-                return response
-
-    # Use allowed email if found, otherwise use primary email
-    email = allowed_email or user_info.email
+    # Use primary email
+    email = user_info.email
     email_domain = domain_service.extract_domain(email) if email else None
+
+    # Check auto-provisioning for new users
+    # (existing users are handled below)
+    should_provision, provision_role, provision_source = await onboarding_service.check_auto_provisioning(
+        db=db,
+        email=email,
+        github_orgs=user_info.groups,  # GitHub orgs come through groups
+    )
 
     # Get or create default tenant
     default_tenant = await get_or_create_default_tenant(db)
@@ -301,9 +275,6 @@ async def oauth_callback(
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
 
-    # Determine if user should be admin
-    should_be_admin = await domain_service.should_be_admin(email, db)
-
     if user:
         # Update existing user
         user.github_username = user_info.username
@@ -317,12 +288,38 @@ async def oauth_callback(
         if provider == "github" and not user.github_id:
             user.github_id = int(user_info.provider_id)
 
-        # Don't demote existing admins, but promote if needed
-        if should_be_admin and not user.is_admin:
+        # Don't demote existing admins, but promote if first user
+        if provision_source == "first_user" and not user.is_admin:
             user.is_admin = True
+            user.role = "admin"
     else:
-        # Create new user
+        # New user - check if they should be provisioned
+        if not should_provision:
+            cli_callback = request.cookies.get("cli_callback")
+            if cli_callback:
+                from urllib.parse import urlencode
+                callback_params = urlencode({
+                    "error": "not_authorized",
+                    "message": "You are not authorized to access this system. Contact an administrator for an invitation.",
+                })
+                response = RedirectResponse(
+                    url=f"{cli_callback}?{callback_params}",
+                    status_code=status.HTTP_302_FOUND,
+                )
+                response.delete_cookie("cli_callback")
+                response.delete_cookie("oauth_state")
+                return response
+
+            response = RedirectResponse(
+                url=f"{settings.frontend_url}/?error=not_authorized",
+                status_code=status.HTTP_302_FOUND,
+            )
+            response.delete_cookie("oauth_state")
+            return response
+
+        # Create new user with provisioning info
         github_id = int(user_info.provider_id) if provider == "github" else 0
+        is_admin = provision_source == "first_user" or provision_role in ["admin", "owner"]
         user = User(
             tenant_id=default_tenant.id,
             github_id=github_id,
@@ -332,9 +329,25 @@ async def oauth_callback(
             email_domain=email_domain,
             avatar_url=user_info.avatar_url,
             last_login_at=datetime.now(timezone.utc),
-            is_admin=should_be_admin,
+            is_admin=is_admin,
+            role=provision_role,
+            provisioning_source=provision_source,
         )
         db.add(user)
+
+        # If provisioned via invitation, accept it
+        if provision_source == "invitation" and email:
+            from app.models.invitation import InvitationStatus
+            invitation_result = await db.execute(
+                select(UserInvitation).where(
+                    UserInvitation.email == email.lower(),
+                    UserInvitation.status == InvitationStatus.PENDING.value,
+                )
+            )
+            invitation = invitation_result.scalar_one_or_none()
+            if invitation and invitation.is_valid:
+                await db.flush()  # Ensure user has ID
+                await onboarding_service.accept_invitation(db, invitation, user)
 
     await db.commit()
     await db.refresh(user)

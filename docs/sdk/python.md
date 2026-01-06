@@ -4,9 +4,32 @@ The official Python SDK for CryptoServe with zero-configuration setup.
 
 ## Installation
 
+### Option 1: CLI Install (Recommended)
+
 ```bash
-pip install cryptoserve
+# Install from local SDK
+pip install -e sdk/python/
+
+# One-time login
+cryptoserve login
 ```
+
+This approach uses auto-registration - your app registers automatically on first use.
+
+### Option 2: Dashboard Download
+
+You can also download a pre-configured SDK from the dashboard:
+
+1. Go to **Applications** in the dashboard
+2. Create or select an application
+3. Click **Download SDK**
+4. Install the downloaded wheel:
+
+```bash
+pip install cryptoserve-*.whl
+```
+
+This approach embeds your credentials in the SDK package.
 
 ## Requirements
 
@@ -15,7 +38,7 @@ pip install cryptoserve
 
 ---
 
-## Quick Start (Recommended)
+## Quick Start
 
 The `CryptoServe` class provides auto-registration - your app is automatically registered on first use:
 
