@@ -46,6 +46,10 @@ try:
 except ImportError:
     LIBOQS_AVAILABLE = False
     logger.warning("liboqs not available - PQC operations will fail")
+except RuntimeError as e:
+    # liboqs-python installed but underlying C library not found
+    LIBOQS_AVAILABLE = False
+    logger.warning(f"liboqs C library not found - PQC operations will fail: {e}")
 
 
 class PQCError(Exception):
