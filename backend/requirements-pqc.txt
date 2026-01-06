@@ -1,0 +1,9 @@
+# Optional Post-Quantum Cryptography dependencies
+#
+# These require the liboqs C library to be installed first.
+# On macOS: brew install liboqs
+# On Ubuntu: see https://github.com/open-quantum-safe/liboqs#building-and-installing
+#
+# Install with: pip install -r requirements-pqc.txt
+
+liboqs-python>=0.10.0  # ML-KEM (Kyber) and ML-DSA (Dilithium) - NIST FIPS 203/204
