@@ -650,9 +650,8 @@ class CryptoEngine:
             if usage_algorithm:
                 # Check if context requires quantum resistance
                 threat_model = config.get("threat_model", {})
-                quantum_required = (
-                    derived.get("quantum_resistant", False)
-                    or threat_model.get("quantum_resistant_required", False)
+                quantum_required = derived.get("quantum_resistant", False) or threat_model.get(
+                    "quantum_resistant_required", False
                 )
 
                 if quantum_required:
