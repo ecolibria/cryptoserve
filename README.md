@@ -11,20 +11,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/keytum/crypto-serve/actions"><img src="https://img.shields.io/github/actions/workflow/status/keytum/crypto-serve/ci.yml?branch=main&style=flat-square" alt="Build Status"></a>
-  <a href="https://github.com/keytum/crypto-serve/releases"><img src="https://img.shields.io/github/v/release/keytum/crypto-serve?style=flat-square" alt="Release"></a>
-  <a href="https://github.com/keytum/crypto-serve/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://cryptoserve.dev"><img src="https://img.shields.io/badge/website-cryptoserve.dev-06b6d4?style=flat-square" alt="Website"></a>
+  <a href="https://github.com/ecolibria/crypto-serve/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square" alt="Python 3.10+"></a>
-  <a href="https://keytum.github.io/crypto-serve/"><img src="https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square" alt="Documentation"></a>
+  <a href="https://cryptoserve.dev/docs/"><img src="https://img.shields.io/badge/docs-cryptoserve.dev-brightgreen.svg?style=flat-square" alt="Documentation"></a>
 </p>
 
 <p align="center">
+  <a href="https://cryptoserve.dev">Website</a> •
+  <a href="https://cryptoserve.dev/docs/">Documentation</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#features">Features</a> •
   <a href="#sdk-reference">SDK</a> •
   <a href="#post-quantum-cryptography">Post-Quantum</a> •
-  <a href="docs/security/technical-reference.md">Security</a> •
-  <a href="docs/api-reference/">API</a> •
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -55,7 +54,7 @@ Cryptography is hard. Key management is harder. CryptoServe eliminates the compl
 ### 1. Start the Server
 
 ```bash
-git clone https://github.com/keytum/crypto-serve.git
+git clone https://github.com/ecolibria/crypto-serve.git
 cd crypto-serve
 cp .env.example .env
 docker compose up -d
@@ -437,7 +436,7 @@ for record in records:
 ### Docker Compose (Recommended)
 
 ```bash
-git clone https://github.com/keytum/crypto-serve.git
+git clone https://github.com/ecolibria/crypto-serve.git
 cd crypto-serve
 cp .env.example .env
 ```
@@ -468,7 +467,7 @@ docker compose up -d
 
 ### Production Configuration
 
-For production deployments, see the [Production Guide](https://keytum.github.io/crypto-serve/guides/production/).
+For production deployments, see the [Production Guide](https://cryptoserve.dev/docs/configuration/).
 
 Key requirements:
 - Generate unique secrets (never use defaults)
@@ -523,7 +522,7 @@ Key requirements:
 | `/health/ready` | GET | Readiness probe |
 | `/health/deep` | GET | Deep health check (all dependencies) |
 
-Full API documentation: [API Reference](https://keytum.github.io/crypto-serve/api-reference/)
+Full API documentation: [API Reference](https://cryptoserve.dev/docs/api-reference/)
 
 ---
 
@@ -563,13 +562,13 @@ pytest tests/test_api/             # API endpoint tests
 
 | Resource | Description |
 |----------|-------------|
-| [Quick Start](https://keytum.github.io/crypto-serve/getting-started/quickstart/) | Get running in 5 minutes |
-| [Concepts](https://keytum.github.io/crypto-serve/concepts/) | Architecture, context model, key management |
-| [SDK Reference](https://keytum.github.io/crypto-serve/sdk/python/) | Complete Python SDK documentation |
-| [API Reference](https://keytum.github.io/crypto-serve/api-reference/) | REST API documentation |
+| [Quick Start](https://cryptoserve.dev/docs/getting-started/) | Get running in 5 minutes |
+| [Architecture](https://cryptoserve.dev/docs/architecture/) | Architecture and context model |
+| [SDK Reference](https://cryptoserve.dev/docs/sdk/) | Complete Python SDK documentation |
+| [API Reference](https://cryptoserve.dev/docs/api-reference/) | REST API documentation |
+| [Security](https://cryptoserve.dev/docs/security/fips/) | FIPS compliance and post-quantum cryptography |
+| [Examples](https://cryptoserve.dev/docs/examples/) | Real-world integration patterns |
 | [Technical Reference](docs/security/technical-reference.md) | Cryptographic design and threat model |
-| [Migration Guide](https://keytum.github.io/crypto-serve/guides/migration/) | Migrate from AWS KMS, Vault, or crypto libraries |
-| [Production Guide](https://keytum.github.io/crypto-serve/guides/production/) | Production deployment best practices |
 
 ---
 
@@ -596,7 +595,7 @@ ruff check app/ tests/
 
 ## Security
 
-**Report vulnerabilities** to security@cryptoserve.io or via [GitHub Security Advisories](https://github.com/keytum/crypto-serve/security/advisories).
+**Report vulnerabilities** to [info@cryptoserve.dev](mailto:info@cryptoserve.dev) or via [GitHub Security Advisories](https://github.com/ecolibria/crypto-serve/security/advisories).
 
 See [SECURITY.md](SECURITY.md) and [Technical Reference](docs/security/technical-reference.md).
 
@@ -605,6 +604,14 @@ See [SECURITY.md](SECURITY.md) and [Technical Reference](docs/security/technical
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+---
+
+## Contact
+
+- **Website:** [https://cryptoserve.dev](https://cryptoserve.dev)
+- **Email:** [info@cryptoserve.dev](mailto:info@cryptoserve.dev)
+- **GitHub:** [ecolibria/crypto-serve](https://github.com/ecolibria/crypto-serve)
 
 ---
 
