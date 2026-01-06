@@ -281,6 +281,31 @@ class AlgorithmRationale(BaseModel):
     )
 
 
+class AlgorithmSuite(BaseModel):
+    """Complete cryptographic algorithm suite for a context.
+
+    Provides the full set of algorithms resolved for symmetric encryption,
+    digital signatures, hashing, and key derivation.
+    """
+
+    # Symmetric encryption
+    symmetric: str = Field(description="Symmetric encryption algorithm (e.g., AES-256-GCM)")
+    symmetric_mode: CipherMode = Field(default=CipherMode.GCM, description="Cipher mode")
+    symmetric_key_bits: int = Field(default=256, description="Key size in bits")
+
+    # Digital signatures
+    signing: str = Field(default="ECDSA-P256", description="Digital signature algorithm")
+    signing_key_bits: int = Field(default=256, description="Signing key size in bits")
+
+    # Hashing
+    hash: str = Field(default="SHA-256", description="Hash algorithm")
+    hash_bits: int = Field(default=256, description="Hash output size in bits")
+
+    # Key derivation
+    kdf: str = Field(default="HKDF-SHA256", description="Key derivation function")
+    kdf_iterations: int | None = Field(default=None, description="KDF iterations (for PBKDF2/Argon2)")
+
+
 class DerivedRequirements(BaseModel):
     """Layer 5: Computed optimal cryptography settings.
 
@@ -301,6 +326,10 @@ class DerivedRequirements(BaseModel):
     rationale: list[str] = Field(default_factory=list, description="Legacy: Simple explanation list")
     detailed_rationale: AlgorithmRationale | None = Field(
         default=None, description="Detailed explanation with factors and alternatives"
+    )
+    # Full algorithm suite (new in v1.3.7)
+    algorithm_suite: AlgorithmSuite | None = Field(
+        default=None, description="Complete cryptographic algorithm suite"
     )
 
 
