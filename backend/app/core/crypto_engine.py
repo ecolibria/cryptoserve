@@ -337,6 +337,81 @@ class CipherFactory:
         chacha = ChaCha20Poly1305(key)
         return chacha.decrypt(nonce[:12], ciphertext, associated_data)
 
+    @staticmethod
+    def encrypt_xts(key: bytes, plaintext: bytes, tweak: bytes) -> bytes:
+        """Encrypt using AES-XTS with HMAC for integrity.
+
+        XTS (IEEE 1619) is designed for sector-based encryption and doesn't provide
+        authentication. We add HMAC for integrity verification.
+
+        Args:
+            key: 64-byte key (two 256-bit keys for XTS)
+            plaintext: Data to encrypt (must be >= 16 bytes)
+            tweak: 16-byte tweak value (like sector number)
+
+        Returns:
+            ciphertext + hmac (32 bytes)
+        """
+        if len(key) != 64:
+            raise CryptoError("XTS requires 64-byte key (two 256-bit keys)")
+        if len(tweak) != 16:
+            raise CryptoError("XTS requires 16-byte tweak")
+        if len(plaintext) < 16:
+            raise CryptoError("XTS requires plaintext >= 16 bytes")
+
+        # XTS encryption using cryptography library
+        # XTS mode uses the full 64-byte key internally (splits into two 256-bit keys)
+        cipher = Cipher(
+            algorithms.AES(key),
+            modes.XTS(tweak),
+            backend=default_backend(),
+        )
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+
+        # Add HMAC for integrity (XTS doesn't provide authentication)
+        mac_key = CipherFactory.derive_enc_mac_keys(key[:32])[1]
+        mac = hmac.new(mac_key, tweak + ciphertext, hashlib.sha256).digest()
+
+        return ciphertext + mac
+
+    @staticmethod
+    def decrypt_xts(key: bytes, data: bytes, tweak: bytes) -> bytes:
+        """Decrypt AES-XTS with HMAC verification.
+
+        Args:
+            key: 64-byte key (two 256-bit keys)
+            data: ciphertext + hmac
+            tweak: 16-byte tweak value (must match encryption)
+
+        Returns:
+            Decrypted plaintext
+        """
+        if len(key) != 64:
+            raise CryptoError("XTS requires 64-byte key (two 256-bit keys)")
+        if len(tweak) != 16:
+            raise CryptoError("XTS requires 16-byte tweak")
+        if len(data) < 48:  # Minimum: 16-byte ciphertext + 32-byte HMAC
+            raise CryptoError("XTS ciphertext too short")
+
+        ciphertext = data[:-32]
+        mac = data[-32:]
+
+        # Verify HMAC first
+        mac_key = CipherFactory.derive_enc_mac_keys(key[:32])[1]
+        expected_mac = hmac.new(mac_key, tweak + ciphertext, hashlib.sha256).digest()
+        if not hmac.compare_digest(mac, expected_mac):
+            raise DecryptionError("HMAC verification failed")
+
+        # XTS decryption
+        cipher = Cipher(
+            algorithms.AES(key),
+            modes.XTS(tweak),
+            backend=default_backend(),
+        )
+        decryptor = cipher.decryptor()
+        return decryptor.update(ciphertext) + decryptor.finalize()
+
 
 class CryptoEngine:
     """Handles encryption and decryption operations with policy enforcement."""
@@ -853,14 +928,14 @@ class CryptoEngine:
         elif mode == CipherMode.CCM:
             return CipherFactory.encrypt_ccm(key, plaintext, nonce, associated_data)
         elif mode == CipherMode.XTS:
-            # XTS (IEEE 1619) is designed for disk/storage encryption, not API crypto.
-            # It requires sector-based data units and doesn't provide authentication.
-            # For API-based encryption, GCM is strongly recommended.
-            raise UnsupportedModeError(
-                "XTS mode is not supported for API encryption. "
-                "XTS is designed for disk/storage encryption (IEEE 1619). "
-                "Use AES-256-GCM for authenticated encryption."
-            )
+            # XTS (IEEE 1619) for disk/storage encryption
+            # We add HMAC for integrity since XTS doesn't provide authentication
+            # XTS requires 16-byte tweak (we use/pad nonce as tweak)
+            if len(nonce) != 16:
+                tweak = nonce[:16] if len(nonce) > 16 else nonce + b"\x00" * (16 - len(nonce))
+            else:
+                tweak = nonce
+            return CipherFactory.encrypt_xts(key, plaintext, tweak)
         elif mode == CipherMode.HYBRID:
             # Hybrid PQC mode - handled separately in encrypt()
             # This should not be called directly since hybrid uses different key management
@@ -904,10 +979,13 @@ class CryptoEngine:
         elif mode == CipherMode.CCM:
             return CipherFactory.decrypt_ccm(key, ciphertext, nonce, associated_data)
         elif mode == CipherMode.XTS:
-            # XTS not supported - see _encrypt_with_mode for rationale
-            raise UnsupportedModeError(
-                "XTS mode is not supported for API encryption. " "Use AES-256-GCM for authenticated encryption."
-            )
+            # XTS (IEEE 1619) for disk/storage encryption
+            # XTS requires 16-byte tweak (we use/pad nonce as tweak)
+            if len(nonce) != 16:
+                tweak = nonce[:16] if len(nonce) > 16 else nonce + b"\x00" * (16 - len(nonce))
+            else:
+                tweak = nonce
+            return CipherFactory.decrypt_xts(key, ciphertext, tweak)
         elif mode == CipherMode.HYBRID:
             # Hybrid PQC mode - handled separately
             raise UnsupportedModeError(

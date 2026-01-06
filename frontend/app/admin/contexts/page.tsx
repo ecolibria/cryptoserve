@@ -15,6 +15,7 @@ import {
   Plus,
   Edit,
   ChevronRight,
+  ChevronDown,
   X,
   Zap,
   Clock,
@@ -28,6 +29,9 @@ import {
   Cpu,
   Radio,
   KeyRound,
+  Hash,
+  PenTool,
+  Fingerprint,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,6 +54,8 @@ import {
   AccessFrequency,
   AlgorithmPolicy,
   PolicyEnforcement,
+  AlgorithmSuite,
+  DerivedRequirements,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -197,6 +203,11 @@ export default function AdminContextsPage() {
   const [loading, setLoading] = useState(true);
   const [rotating, setRotating] = useState<string | null>(null);
 
+  // Expanded context state for algorithm suite display
+  const [expandedContexts, setExpandedContexts] = useState<Set<string>>(new Set());
+  const [contextSuites, setContextSuites] = useState<Record<string, DerivedRequirements | null>>({});
+  const [loadingSuites, setLoadingSuites] = useState<Set<string>>(new Set());
+
   // Modal state
   const [showModal, setShowModal] = useState(false);
   const [editingContext, setEditingContext] = useState<string | null>(null);
@@ -238,6 +249,34 @@ export default function AdminContextsPage() {
   useEffect(() => {
     loadContexts();
   }, [loadContexts]);
+
+  // Toggle expanded state and load algorithm suite if needed
+  const toggleContextExpansion = async (contextName: string) => {
+    const newExpanded = new Set(expandedContexts);
+    if (newExpanded.has(contextName)) {
+      newExpanded.delete(contextName);
+    } else {
+      newExpanded.add(contextName);
+      // Load algorithm suite if not already loaded
+      if (!contextSuites[contextName] && !loadingSuites.has(contextName)) {
+        setLoadingSuites(prev => new Set([...prev, contextName]));
+        try {
+          const derived = await api.resolveContextAlgorithm(contextName);
+          setContextSuites(prev => ({ ...prev, [contextName]: derived }));
+        } catch (error) {
+          console.error(`Failed to load algorithm suite for ${contextName}:`, error);
+          setContextSuites(prev => ({ ...prev, [contextName]: null }));
+        } finally {
+          setLoadingSuites(prev => {
+            const next = new Set(prev);
+            next.delete(contextName);
+            return next;
+          });
+        }
+      }
+    }
+    setExpandedContexts(newExpanded);
+  };
 
   const handleRotateKey = async (contextName: string) => {
     if (!confirm(`Are you sure you want to rotate the encryption key for "${contextName}"? This action will create a new key version. Existing encrypted data will continue to be decryptable.`)) {
@@ -1161,6 +1200,18 @@ export default function AdminContextsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          onClick={() => toggleContextExpansion(context.name)}
+                          className="h-8 w-8 p-0"
+                          title={expandedContexts.has(context.name) ? "Hide Algorithm Suite" : "Show Algorithm Suite"}
+                        >
+                          <ChevronDown className={cn(
+                            "h-4 w-4 transition-transform",
+                            expandedContexts.has(context.name) && "rotate-180"
+                          )} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => router.push(`/admin/contexts/${context.name}/keys`)}
                           className="h-8 w-8 p-0"
                           title="Manage Keys"
@@ -1240,6 +1291,54 @@ export default function AdminContextsPage() {
                         {rotating === context.name ? "..." : "Rotate"}
                       </Button>
                     </div>
+
+                    {/* Expandable Algorithm Suite */}
+                    {expandedContexts.has(context.name) && (
+                      <div className="mt-3 pt-3 border-t bg-slate-50 -mx-4 -mb-4 px-4 pb-4 rounded-b-lg">
+                        <div className="text-xs font-medium text-slate-700 mb-2">Algorithm Suite</div>
+                        {loadingSuites.has(context.name) ? (
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            <span className="animate-spin h-3 w-3 border-2 border-slate-400 border-t-transparent rounded-full" />
+                            Loading...
+                          </div>
+                        ) : contextSuites[context.name]?.algorithm_suite ? (
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="flex items-center gap-1.5 p-2 bg-white rounded border">
+                              <Lock className="h-3.5 w-3.5 text-blue-500" />
+                              <div>
+                                <div className="text-slate-500">Symmetric</div>
+                                <div className="font-medium">{contextSuites[context.name]?.algorithm_suite?.symmetric}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 p-2 bg-white rounded border">
+                              <PenTool className="h-3.5 w-3.5 text-purple-500" />
+                              <div>
+                                <div className="text-slate-500">Signing</div>
+                                <div className="font-medium">{contextSuites[context.name]?.algorithm_suite?.signing}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 p-2 bg-white rounded border">
+                              <Hash className="h-3.5 w-3.5 text-green-500" />
+                              <div>
+                                <div className="text-slate-500">Hash</div>
+                                <div className="font-medium">{contextSuites[context.name]?.algorithm_suite?.hash}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 p-2 bg-white rounded border">
+                              <Fingerprint className="h-3.5 w-3.5 text-amber-500" />
+                              <div>
+                                <div className="text-slate-500">KDF</div>
+                                <div className="font-medium">{contextSuites[context.name]?.algorithm_suite?.kdf}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-slate-500">
+                            Algorithm suite not available
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

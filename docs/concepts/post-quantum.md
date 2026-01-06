@@ -287,7 +287,7 @@ ML-KEM and ML-DSA are NIST-standardized:
 |-----------|----------|-------------|
 | ML-KEM | FIPS 203 | Approved |
 | ML-DSA | FIPS 204 | Approved |
-| SLH-DSA | FIPS 205 | Approved (not yet in CryptoServe) |
+| SLH-DSA | FIPS 205 | Approved |
 
 ```bash
 # Enable FIPS mode with PQC
@@ -351,10 +351,125 @@ The hybrid approach ensures:
 
 ---
 
+## Hybrid Key Exchange (X25519 + ML-KEM)
+
+CryptoServe provides hybrid key exchange combining classical X25519 with post-quantum ML-KEM for quantum-safe key agreement.
+
+### Why Hybrid Key Exchange?
+
+- **Defense in depth**: If either X25519 or ML-KEM is broken, the combined scheme remains secure
+- **Transition strategy**: Gradually migrate from classical to post-quantum
+- **Compliance**: Meets NIST recommendations for PQC transition
+
+### Supported Modes
+
+| Mode | Classical | Post-Quantum | NIST Level |
+|------|-----------|--------------|------------|
+| X25519+ML-KEM-768 | X25519 | ML-KEM-768 | Level 3 (recommended) |
+| X25519+ML-KEM-1024 | X25519 | ML-KEM-1024 | Level 5 (maximum security) |
+
+### Usage
+
+```python
+from app.core.hybrid_kex import HybridKeyExchange, HybridKEXMode
+
+# Recipient generates keypair
+kex = HybridKeyExchange(HybridKEXMode.X25519_MLKEM_768)
+keypair = kex.generate_keypair()
+
+# Share public keys: keypair.x25519_public, keypair.mlkem_public
+
+# Sender encapsulates (creates shared secret)
+encap, shared_secret_sender = kex.encapsulate(
+    keypair.x25519_public, keypair.mlkem_public
+)
+
+# Recipient decapsulates (recovers same shared secret)
+shared_secret_recipient = kex.decapsulate(encap, keypair)
+
+# Both parties now have identical 32-byte shared secrets
+assert shared_secret_sender == shared_secret_recipient
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/kex/modes` | GET | List available hybrid KEX modes |
+| `/api/v1/kex/keys/generate` | POST | Generate hybrid keypair |
+| `/api/v1/kex/encapsulate` | POST | Create shared secret |
+| `/api/v1/kex/decapsulate` | POST | Recover shared secret |
+
+---
+
+## SLH-DSA (FIPS 205)
+
+Stateless Hash-based Digital Signature Algorithm - the most conservative post-quantum signature scheme.
+
+### Variants
+
+| Variant | Security Level | Public Key | Signature | Performance |
+|---------|----------------|------------|-----------|-------------|
+| SLH-DSA-SHA2-128f | Level 1 | 32 B | 17 KB | Fast |
+| SLH-DSA-SHA2-128s | Level 1 | 32 B | 8 KB | Small |
+| SLH-DSA-SHA2-192f | Level 3 | 48 B | 36 KB | Fast |
+| SLH-DSA-SHA2-192s | Level 3 | 48 B | 16 KB | Small |
+| SLH-DSA-SHA2-256f | Level 5 | 64 B | 50 KB | Fast |
+| SLH-DSA-SHA2-256s | Level 5 | 64 B | 30 KB | Small |
+
+### When to Use SLH-DSA
+
+- **Conservative security**: Hash-based, no lattice assumptions
+- **Long-term signatures**: Documents that must remain valid for decades
+- **Size not critical**: Signatures are large (8-50 KB)
+
+---
+
+## AES-XTS Disk Encryption
+
+For full-disk and sector-based encryption, CryptoServe supports AES-256-XTS with HMAC integrity.
+
+### Why XTS?
+
+- **IEEE 1619 standard**: Industry standard for disk encryption
+- **Sector-based**: Each sector encrypted independently with tweakable encryption
+- **Efficient**: Parallelizable, no ciphertext expansion
+
+### Usage
+
+```python
+from app.core.crypto_engine import CipherFactory
+import os
+
+# XTS requires 64-byte key (two 256-bit keys)
+key = os.urandom(64)
+
+# Tweak is typically the sector number (16 bytes)
+sector_number = 12345
+tweak = sector_number.to_bytes(16, 'little')
+
+# Encrypt sector data
+plaintext = b"sector data..." * 32  # Must be >= 16 bytes
+ciphertext = CipherFactory.encrypt_xts(key, plaintext, tweak)
+
+# Decrypt sector data
+decrypted = CipherFactory.decrypt_xts(key, ciphertext, tweak)
+assert decrypted == plaintext
+```
+
+### Security Notes
+
+- XTS itself doesn't provide authentication; CryptoServe adds HMAC for integrity
+- Different tweaks MUST be used for different sectors
+- Minimum plaintext size: 16 bytes
+
+---
+
 ## Further Reading
 
 - [NIST Post-Quantum Cryptography](https://csrc.nist.gov/projects/post-quantum-cryptography)
 - [FIPS 203: ML-KEM Standard](https://csrc.nist.gov/pubs/fips/203/final)
 - [FIPS 204: ML-DSA Standard](https://csrc.nist.gov/pubs/fips/204/final)
+- [FIPS 205: SLH-DSA Standard](https://csrc.nist.gov/pubs/fips/205/final)
 - [Open Quantum Safe Project](https://openquantumsafe.org/)
 - [CryptoServe Technical Reference](../security/technical-reference.md)

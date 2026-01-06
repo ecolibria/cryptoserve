@@ -21,6 +21,7 @@ from app.schemas.context import (
     CipherMode,
     AlgorithmRationale,
     AlgorithmAlternative,
+    AlgorithmSuite,
 )
 
 
@@ -226,6 +227,196 @@ SENSITIVITY_REQUIREMENTS = {
     },
 }
 
+# =============================================================================
+# Signing Algorithm Registry
+# =============================================================================
+
+SIGNING_ALGORITHMS = {
+    "ECDSA-P256": {
+        "family": "ECDSA",
+        "curve": "P-256",
+        "key_bits": 256,
+        "security_bits": 128,
+        "quantum_resistant": False,
+        "description": "ECDSA with NIST P-256 curve (FIPS 186-5)",
+        "standards": ["FIPS 186-5"],
+    },
+    "ECDSA-P384": {
+        "family": "ECDSA",
+        "curve": "P-384",
+        "key_bits": 384,
+        "security_bits": 192,
+        "quantum_resistant": False,
+        "description": "ECDSA with NIST P-384 curve (FIPS 186-5)",
+        "standards": ["FIPS 186-5"],
+    },
+    "Ed25519": {
+        "family": "EdDSA",
+        "curve": "Curve25519",
+        "key_bits": 256,
+        "security_bits": 128,
+        "quantum_resistant": False,
+        "description": "EdDSA with Curve25519 (RFC 8032)",
+        "standards": ["RFC 8032"],
+    },
+    "ML-DSA-44": {
+        "family": "ML-DSA",
+        "key_bits": 1312,  # Public key size in bytes
+        "security_bits": 128,
+        "quantum_resistant": True,
+        "nist_level": 2,
+        "description": "ML-DSA Level 2 (FIPS 204)",
+        "standards": ["FIPS 204"],
+    },
+    "ML-DSA-65": {
+        "family": "ML-DSA",
+        "key_bits": 1952,
+        "security_bits": 192,
+        "quantum_resistant": True,
+        "nist_level": 3,
+        "description": "ML-DSA Level 3 (FIPS 204)",
+        "standards": ["FIPS 204"],
+    },
+    "ML-DSA-87": {
+        "family": "ML-DSA",
+        "key_bits": 2592,
+        "security_bits": 256,
+        "quantum_resistant": True,
+        "nist_level": 5,
+        "description": "ML-DSA Level 5 (FIPS 204)",
+        "standards": ["FIPS 204"],
+    },
+}
+
+# =============================================================================
+# Hash Algorithm Registry
+# =============================================================================
+
+HASH_ALGORITHMS = {
+    "SHA-256": {
+        "family": "SHA-2",
+        "output_bits": 256,
+        "security_bits": 128,
+        "description": "SHA-256 (FIPS 180-4)",
+        "standards": ["FIPS 180-4"],
+    },
+    "SHA-384": {
+        "family": "SHA-2",
+        "output_bits": 384,
+        "security_bits": 192,
+        "description": "SHA-384 (FIPS 180-4)",
+        "standards": ["FIPS 180-4"],
+    },
+    "SHA-512": {
+        "family": "SHA-2",
+        "output_bits": 512,
+        "security_bits": 256,
+        "description": "SHA-512 (FIPS 180-4)",
+        "standards": ["FIPS 180-4"],
+    },
+    "SHA3-256": {
+        "family": "SHA-3",
+        "output_bits": 256,
+        "security_bits": 128,
+        "description": "SHA3-256 (FIPS 202)",
+        "standards": ["FIPS 202"],
+    },
+    "SHA3-384": {
+        "family": "SHA-3",
+        "output_bits": 384,
+        "security_bits": 192,
+        "description": "SHA3-384 (FIPS 202)",
+        "standards": ["FIPS 202"],
+    },
+    "SHA3-512": {
+        "family": "SHA-3",
+        "output_bits": 512,
+        "security_bits": 256,
+        "description": "SHA3-512 (FIPS 202)",
+        "standards": ["FIPS 202"],
+    },
+}
+
+# =============================================================================
+# Key Derivation Function Registry
+# =============================================================================
+
+KDF_ALGORITHMS = {
+    "HKDF-SHA256": {
+        "family": "HKDF",
+        "hash": "SHA-256",
+        "security_bits": 128,
+        "iterations": None,  # HKDF doesn't use iterations
+        "description": "HKDF with SHA-256 (RFC 5869)",
+        "standards": ["RFC 5869"],
+        "use_case": "key_derivation",
+    },
+    "HKDF-SHA384": {
+        "family": "HKDF",
+        "hash": "SHA-384",
+        "security_bits": 192,
+        "iterations": None,
+        "description": "HKDF with SHA-384 (RFC 5869)",
+        "standards": ["RFC 5869"],
+        "use_case": "key_derivation",
+    },
+    "HKDF-SHA512": {
+        "family": "HKDF",
+        "hash": "SHA-512",
+        "security_bits": 256,
+        "iterations": None,
+        "description": "HKDF with SHA-512 (RFC 5869)",
+        "standards": ["RFC 5869"],
+        "use_case": "key_derivation",
+    },
+    "Argon2id": {
+        "family": "Argon2",
+        "hash": None,
+        "security_bits": 256,
+        "iterations": 3,  # Default: 3 iterations, 64MB memory, 4 parallelism
+        "description": "Argon2id password hashing (RFC 9106)",
+        "standards": ["RFC 9106"],
+        "use_case": "password_hashing",
+    },
+    "PBKDF2-SHA256": {
+        "family": "PBKDF2",
+        "hash": "SHA-256",
+        "security_bits": 128,
+        "iterations": 600000,  # OWASP 2023 recommendation
+        "description": "PBKDF2 with SHA-256 (NIST SP 800-132)",
+        "standards": ["NIST SP 800-132"],
+        "use_case": "password_hashing",
+    },
+}
+
+# Sensitivity to algorithm suite mapping
+SENSITIVITY_SUITE_MAP = {
+    Sensitivity.CRITICAL: {
+        "signing": "ECDSA-P384",
+        "signing_pqc": "ML-DSA-87",
+        "hash": "SHA-384",
+        "kdf": "HKDF-SHA384",
+    },
+    Sensitivity.HIGH: {
+        "signing": "ECDSA-P256",
+        "signing_pqc": "ML-DSA-65",
+        "hash": "SHA-256",
+        "kdf": "HKDF-SHA256",
+    },
+    Sensitivity.MEDIUM: {
+        "signing": "ECDSA-P256",
+        "signing_pqc": "ML-DSA-44",
+        "hash": "SHA-256",
+        "kdf": "HKDF-SHA256",
+    },
+    Sensitivity.LOW: {
+        "signing": "ECDSA-P256",
+        "signing_pqc": "ML-DSA-44",
+        "hash": "SHA-256",
+        "kdf": "HKDF-SHA256",
+    },
+}
+
 
 class AlgorithmResolver:
     """Resolves optimal cryptographic algorithm based on context configuration.
@@ -298,6 +489,14 @@ class AlgorithmResolver:
             alternatives=self.alternatives,
         )
 
+        # Step 8: Resolve full algorithm suite
+        algorithm_suite = self._resolve_algorithm_suite(
+            algorithm=algorithm,
+            mode=mode,
+            key_bits=key_bits,
+            quantum_resistant=quantum_resistant,
+        )
+
         return DerivedRequirements(
             minimum_security_bits=min_bits,
             quantum_resistant=quantum_resistant,
@@ -309,6 +508,7 @@ class AlgorithmResolver:
             hardware_acceleration=hw_acceleration,
             rationale=self.factors,  # Legacy compatibility
             detailed_rationale=detailed_rationale,
+            algorithm_suite=algorithm_suite,
         )
 
     def _needs_quantum_resistance(self) -> bool:
@@ -505,6 +705,51 @@ class AlgorithmResolver:
             return f"Post-quantum hybrid encryption for {context_desc} with {mode.value.upper()} mode"
 
         return f"AEAD encryption for {context_desc} with {mode.value.upper()} mode"
+
+    def _resolve_algorithm_suite(
+        self,
+        algorithm: str,
+        mode: CipherMode,
+        key_bits: int,
+        quantum_resistant: bool,
+    ) -> AlgorithmSuite:
+        """Resolve the complete cryptographic algorithm suite.
+
+        Based on sensitivity, quantum requirements, and the selected symmetric algorithm,
+        this method chooses appropriate signing, hash, and KDF algorithms.
+        """
+        sensitivity = self.config.data_identity.sensitivity
+        suite_map = SENSITIVITY_SUITE_MAP.get(sensitivity, SENSITIVITY_SUITE_MAP[Sensitivity.MEDIUM])
+
+        # Select signing algorithm
+        if quantum_resistant:
+            signing = suite_map["signing_pqc"]
+        else:
+            signing = suite_map["signing"]
+        signing_props = SIGNING_ALGORITHMS.get(signing, SIGNING_ALGORITHMS["ECDSA-P256"])
+        signing_key_bits = signing_props["key_bits"]
+
+        # Select hash algorithm
+        hash_algo = suite_map["hash"]
+        hash_props = HASH_ALGORITHMS.get(hash_algo, HASH_ALGORITHMS["SHA-256"])
+        hash_bits = hash_props["output_bits"]
+
+        # Select KDF algorithm
+        kdf = suite_map["kdf"]
+        kdf_props = KDF_ALGORITHMS.get(kdf, KDF_ALGORITHMS["HKDF-SHA256"])
+        kdf_iterations = kdf_props.get("iterations")
+
+        return AlgorithmSuite(
+            symmetric=algorithm,
+            symmetric_mode=mode,
+            symmetric_key_bits=key_bits,
+            signing=signing,
+            signing_key_bits=signing_key_bits,
+            hash=hash_algo,
+            hash_bits=hash_bits,
+            kdf=kdf,
+            kdf_iterations=kdf_iterations,
+        )
 
 
 def resolve_algorithm(config: ContextConfig) -> DerivedRequirements:

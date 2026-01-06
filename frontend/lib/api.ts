@@ -97,6 +97,23 @@ export interface AlgorithmRationale {
   alternatives: AlgorithmAlternative[];
 }
 
+// Complete cryptographic algorithm suite for a context
+export interface AlgorithmSuite {
+  // Symmetric encryption
+  symmetric: string;
+  symmetric_mode: CipherMode;
+  symmetric_key_bits: number;
+  // Digital signatures
+  signing: string;
+  signing_key_bits: number;
+  // Hashing
+  hash: string;
+  hash_bits: number;
+  // Key derivation
+  kdf: string;
+  kdf_iterations: number | null;
+}
+
 export interface DataIdentity {
   category: DataCategory;
   subcategory?: string | null;
@@ -160,6 +177,7 @@ export interface DerivedRequirements {
   hardware_acceleration: boolean;
   rationale: string[];
   detailed_rationale?: AlgorithmRationale | null;
+  algorithm_suite?: AlgorithmSuite | null;
 }
 
 export interface ContextFullResponse {

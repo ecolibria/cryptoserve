@@ -6,6 +6,56 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+## [1.3.7] - 2026-01-06
+
+### Added
+- **AES-256-XTS Disk Encryption**: Full IEEE 1619 compliant disk encryption with HMAC integrity
+  - `CipherFactory.encrypt_xts()` and `decrypt_xts()` methods
+  - Support for sector-based encryption with 16-byte tweaks
+  - HMAC verification for tamper detection
+- **Hybrid Key Exchange (X25519 + ML-KEM)**: Quantum-safe key agreement
+  - New `HybridKeyExchange` class combining classical X25519 with post-quantum ML-KEM
+  - Support for ML-KEM-768 (Level 3) and ML-KEM-1024 (Level 5)
+  - Complete API endpoints at `/api/v1/kex/*`
+  - Serialization support for encapsulation data and keypairs
+- **All ML-DSA Sizes**: Complete FIPS 204 support
+  - ML-DSA-44 (NIST Level 2, 128-bit)
+  - ML-DSA-65 (NIST Level 3, 192-bit)
+  - ML-DSA-87 (NIST Level 5, 256-bit)
+- **Full Algorithm Suite Resolution**: Complete cryptographic profile per context
+  - Automatic resolution of symmetric, signing, hash, and KDF algorithms
+  - Sensitivity-based algorithm selection (CRITICAL→SHA-384/ECDSA-P384, etc.)
+  - Quantum-resistant signing (ML-DSA) when quantum threat detected
+  - New `AlgorithmSuite` schema with full algorithm details
+
+### UI Enhancements
+- **Expandable Algorithm Suite Display**: Context cards now show full crypto profile
+  - Click chevron to expand/collapse algorithm details
+  - Shows symmetric, signing, hash, and KDF algorithms with icons
+  - Lazy-loads algorithm suite on first expansion
+
+### API Endpoints
+- `GET /api/v1/kex/modes` - List available hybrid KEX modes
+- `POST /api/v1/kex/keys/generate` - Generate X25519+ML-KEM keypair
+- `GET /api/v1/kex/keys` - List hybrid KEX keys
+- `GET /api/v1/kex/keys/{key_id}` - Get hybrid KEX key details
+- `DELETE /api/v1/kex/keys/{key_id}` - Delete hybrid KEX key
+- `POST /api/v1/kex/encapsulate` - Create shared secret (sender)
+- `POST /api/v1/kex/decapsulate` - Recover shared secret (recipient)
+
+### Documentation
+- Updated README with hybrid key exchange and AES-XTS examples
+- New sections in post-quantum.md for hybrid KEX, SLH-DSA, and XTS
+- API reference updated with new endpoints
+
+### Testing
+- 34 new tests for PQC enhancements
+- All ML-DSA sizes tested with FIPS 204 compliance
+- AES-XTS HMAC integrity verification tests
+- Hybrid KEX encapsulation/decapsulation roundtrip tests
+
+---
+
 ## [1.3.6] - 2026-01-04
 
 ### Added
@@ -312,6 +362,7 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+[1.3.7]: https://github.com/ecolibria/crypto-serve/compare/v1.3.6...v1.3.7
 [1.3.6]: https://github.com/ecolibria/crypto-serve/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/ecolibria/crypto-serve/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/ecolibria/crypto-serve/compare/v1.3.3...v1.3.4

@@ -101,7 +101,9 @@ That's it. Your app auto-registers and is ready for production.
 | **Hashing** | SHA-256/384/512, SHA-3, BLAKE2b/3 | Integrity verification |
 | **Password Hashing** | Argon2id, bcrypt, scrypt, PBKDF2 | User authentication |
 | **Key Derivation** | HKDF-SHA256, PBKDF2, scrypt | Deriving keys from passwords |
-| **Post-Quantum** | ML-KEM-768/1024, ML-DSA-65/87, SLH-DSA | Quantum-resistant encryption |
+| **Post-Quantum** | ML-KEM-768/1024, ML-DSA-44/65/87, SLH-DSA | Quantum-resistant encryption |
+| **Hybrid Key Exchange** | X25519 + ML-KEM-768/1024 | Quantum-safe key agreement |
+| **Disk Encryption** | AES-256-XTS | Full-disk/sector encryption |
 
 ### Platform Capabilities
 
@@ -217,20 +219,46 @@ CryptoServe implements NIST FIPS 203, 204, and 205 standards for post-quantum cr
 | **ML-DSA-44** | FIPS 204 | Digital Signature | 128-bit |
 | **ML-DSA-65** | FIPS 204 | Digital Signature | 192-bit |
 | **ML-DSA-87** | FIPS 204 | Digital Signature | 256-bit |
-| **SLH-DSA-128** | FIPS 205 | Digital Signature | 128-bit |
-| **SLH-DSA-192** | FIPS 205 | Digital Signature | 192-bit |
-| **SLH-DSA-256** | FIPS 205 | Digital Signature | 256-bit |
+| **SLH-DSA-128f/s** | FIPS 205 | Digital Signature | 128-bit |
+| **SLH-DSA-192f/s** | FIPS 205 | Digital Signature | 192-bit |
+| **SLH-DSA-256f/s** | FIPS 205 | Digital Signature | 256-bit |
+
+### Hybrid Key Exchange (X25519 + ML-KEM)
+
+Quantum-safe key agreement combining classical X25519 with ML-KEM:
+
+```python
+# Generate hybrid key pair
+from app.core.hybrid_kex import HybridKeyExchange, HybridKEXMode
+
+kex = HybridKeyExchange(HybridKEXMode.X25519_MLKEM_768)
+keypair = kex.generate_keypair()
+
+# Sender: encapsulate to create shared secret
+encap, shared_secret = kex.encapsulate(
+    keypair.x25519_public, keypair.mlkem_public
+)
+
+# Recipient: decapsulate to recover shared secret
+shared_secret = kex.decapsulate(encap, keypair)
+```
+
+**API Endpoints:**
+- `GET /api/v1/kex/modes` - List available hybrid KEX modes
+- `POST /api/v1/kex/keys/generate` - Generate hybrid key pair
+- `POST /api/v1/kex/encapsulate` - Create shared secret (sender)
+- `POST /api/v1/kex/decapsulate` - Recover shared secret (recipient)
 
 ### Hybrid Encryption
 
 Combine classical and post-quantum for defense-in-depth:
 
 ```python
-# Hybrid encryption: X25519 + ML-KEM-768
+# Hybrid encryption: AES-GCM + ML-KEM-768
 ciphertext = crypto.encrypt(
     plaintext,
     context="quantum-ready",
-    algorithm="hybrid-x25519-mlkem768"
+    algorithm="hybrid-aes-mlkem768"
 )
 
 # Hybrid signatures: Ed25519 + ML-DSA-65
@@ -239,6 +267,24 @@ signature = crypto.sign(
     key_id="hybrid-signing-key",
     algorithm="hybrid-ed25519-mldsa65"
 )
+```
+
+### AES-XTS Disk Encryption
+
+Full-disk encryption with HMAC integrity protection:
+
+```python
+from app.core.crypto_engine import CipherFactory
+
+# 64-byte key (two 256-bit keys for XTS)
+key = os.urandom(64)
+tweak = sector_number.to_bytes(16, 'little')
+
+# Encrypt sector
+ciphertext = CipherFactory.encrypt_xts(key, sector_data, tweak)
+
+# Decrypt sector
+plaintext = CipherFactory.decrypt_xts(key, ciphertext, tweak)
 ```
 
 ### Migration Path
@@ -687,9 +733,21 @@ Key requirements:
 | `/api/v1/asymmetric/ml-kem/keygen` | POST | Generate ML-KEM keypair |
 | `/api/v1/asymmetric/ml-kem/encapsulate` | POST | Encapsulate shared secret |
 | `/api/v1/asymmetric/ml-kem/decapsulate` | POST | Decapsulate shared secret |
-| `/api/v1/signatures/ml-dsa/keygen` | POST | Generate ML-DSA keypair |
-| `/api/v1/signatures/ml-dsa/sign` | POST | Sign with ML-DSA |
-| `/api/v1/signatures/ml-dsa/verify` | POST | Verify ML-DSA signature |
+| `/api/v1/pqc/keys/generate` | POST | Generate PQC signing keypair (ML-DSA/SLH-DSA) |
+| `/api/v1/pqc/sign` | POST | Sign with PQC algorithm |
+| `/api/v1/pqc/verify` | POST | Verify PQC signature |
+
+### Hybrid Key Exchange
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/kex/modes` | GET | List available hybrid KEX modes |
+| `/api/v1/kex/keys/generate` | POST | Generate X25519+ML-KEM keypair |
+| `/api/v1/kex/keys` | GET | List hybrid KEX keys |
+| `/api/v1/kex/keys/{key_id}` | GET | Get hybrid KEX key details |
+| `/api/v1/kex/keys/{key_id}` | DELETE | Delete hybrid KEX key |
+| `/api/v1/kex/encapsulate` | POST | Create shared secret (sender) |
+| `/api/v1/kex/decapsulate` | POST | Recover shared secret (recipient) |
 
 ### Health & Monitoring
 

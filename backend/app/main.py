@@ -68,6 +68,7 @@ from app.api.teams import router as teams_router
 from app.api.security_dashboard import router as security_dashboard_router
 from app.api.migration import router as migration_router
 from app.api.pqc_signatures import router as pqc_signatures_router
+from app.api.hybrid_kex import router as hybrid_kex_router
 from app.api.ct_monitoring import router as ct_monitoring_router
 from app.api.onboarding import router as onboarding_router
 from app.models import Context
@@ -704,6 +705,7 @@ app.include_router(teams_router)
 app.include_router(security_dashboard_router)
 app.include_router(migration_router)
 app.include_router(pqc_signatures_router)
+app.include_router(hybrid_kex_router)
 app.include_router(ct_monitoring_router)
 app.include_router(onboarding_router)
 
