@@ -158,9 +158,7 @@ class TestHybridKeyExchange:
         keypair = kex.generate_keypair()
 
         # Encapsulate (sender)
-        encap, shared_secret_sender = kex.encapsulate(
-            keypair.x25519_public, keypair.mlkem_public
-        )
+        encap, shared_secret_sender = kex.encapsulate(keypair.x25519_public, keypair.mlkem_public)
 
         # Decapsulate (recipient)
         shared_secret_recipient = kex.decapsulate(encap, keypair)
@@ -189,9 +187,7 @@ class TestHybridKeyExchange:
         kex = HybridKeyExchange(HybridKEXMode.X25519_MLKEM_768)
         keypair = kex.generate_keypair()
 
-        encap, shared_secret1 = kex.encapsulate(
-            keypair.x25519_public, keypair.mlkem_public
-        )
+        encap, shared_secret1 = kex.encapsulate(keypair.x25519_public, keypair.mlkem_public)
 
         # Serialize and deserialize
         serialized = kex.serialize_encapsulation(encap)
@@ -286,9 +282,7 @@ class TestMLDSAAllSizes:
             ("ML-DSA-87", 2592, 4896, 4627, 5),
         ],
     )
-    def test_mldsa_key_sizes(
-        self, algorithm, expected_pk_len, expected_sk_len, expected_sig_len, level
-    ):
+    def test_mldsa_key_sizes(self, algorithm, expected_pk_len, expected_sk_len, expected_sig_len, level):
         """Test ML-DSA key and signature sizes match FIPS 204."""
         sig = get_mldsa(algorithm)
         public_key = sig.generate_keypair()
