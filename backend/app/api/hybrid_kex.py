@@ -6,7 +6,6 @@ post-quantum transition period.
 """
 
 import base64
-import secrets
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -23,7 +22,6 @@ from app.core.hybrid_kex import (
     HybridKeyExchange,
     HybridKEXMode,
     HybridKEXKeyPair,
-    HybridKEXEncapsulation,
     get_hybrid_kex_info,
 )
 

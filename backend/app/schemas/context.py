@@ -328,9 +328,7 @@ class DerivedRequirements(BaseModel):
         default=None, description="Detailed explanation with factors and alternatives"
     )
     # Full algorithm suite (new in v1.3.7)
-    algorithm_suite: AlgorithmSuite | None = Field(
-        default=None, description="Complete cryptographic algorithm suite"
-    )
+    algorithm_suite: AlgorithmSuite | None = Field(default=None, description="Complete cryptographic algorithm suite")
 
 
 # =============================================================================
