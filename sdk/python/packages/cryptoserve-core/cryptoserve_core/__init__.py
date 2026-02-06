@@ -19,6 +19,8 @@ from cryptoserve_core.keys import (
 from cryptoserve_core.encoding import (
     encode_ciphertext,
     decode_ciphertext,
+    to_base64,
+    from_base64,
 )
 
 __version__ = "0.1.0"
@@ -34,4 +36,6 @@ __all__ = [
     # Encoding
     "encode_ciphertext",
     "decode_ciphertext",
+    "to_base64",
+    "from_base64",
 ]

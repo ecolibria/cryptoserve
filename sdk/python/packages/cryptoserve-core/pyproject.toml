@@ -7,7 +7,7 @@ name = "cryptoserve-core"
 version = "0.1.0"
 description = "CryptoServe Core - Pure cryptographic primitives"
 readme = "README.md"
-license = {text = "AGPL-3.0"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "CryptoServe", email = "hello@cryptoserve.dev"}
@@ -29,9 +29,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cryptoserve/cryptoserve"
+Homepage = "https://github.com/ecolibria/crypto-serve"
 Documentation = "https://docs.cryptoserve.dev"
-Repository = "https://github.com/cryptoserve/cryptoserve"
+Repository = "https://github.com/ecolibria/crypto-serve"
 
 [project.optional-dependencies]
 dev = [
