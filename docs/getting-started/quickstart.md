@@ -6,7 +6,7 @@ Get up and running with CryptoServe in 5 minutes.
 
 - CryptoServe server running (see [Installation](installation.md))
 - GitHub account for authentication
-- Python 3.10+
+- Python 3.9+
 
 ---
 
@@ -131,7 +131,7 @@ print(f"Encrypted {len(original)} bytes successfully")
 
 ## Step 6: View in Community Dashboard
 
-Open the dashboard at [http://localhost:3001](http://localhost:3001) to see:
+Open the dashboard at [http://localhost:3003](http://localhost:3003) to see:
 
 - **Your Applications** - View auto-registered apps
 - **Usage Analytics** - Monitor encryption/decryption operations

@@ -42,9 +42,9 @@ The services will be available at:
 
 | Service | URL |
 |---------|-----|
-| Dashboard | http://localhost:3001 |
-| API | http://localhost:8001 |
-| API Docs | http://localhost:8001/docs |
+| Dashboard | http://localhost:3003 |
+| API | http://localhost:8003 |
+| API Docs | http://localhost:8003/docs |
 
 ---
 
@@ -77,7 +77,7 @@ cp ../.env.example .env
 python -c "from app.database import init_db; import asyncio; asyncio.run(init_db())"
 
 # Start the server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8003
 ```
 
 ### Frontend Setup
@@ -90,7 +90,7 @@ npm install
 
 # Create environment file
 cat > .env.local << EOF
-NEXT_PUBLIC_API_URL=http://localhost:8001
+NEXT_PUBLIC_API_URL=http://localhost:8003
 EOF
 
 # Start development server
@@ -194,7 +194,7 @@ After installation, verify everything is working:
 
 ```bash
 # Check API health
-curl http://localhost:8001/health
+curl http://localhost:8003/health
 
 # Expected response:
 # {"status":"healthy","version":"1.0.0"}
@@ -202,7 +202,7 @@ curl http://localhost:8001/health
 
 ```bash
 # Check available contexts
-curl http://localhost:8001/api/contexts
+curl http://localhost:8003/api/contexts
 
 # Expected: List of default contexts
 ```
@@ -235,7 +235,7 @@ curl http://localhost:8001/api/contexts
 
     Verify your GitHub OAuth app callback URL matches exactly:
     ```
-    http://localhost:8001/auth/github/callback
+    http://localhost:8003/auth/github/callback
     ```
 
 ??? question "liboqs import errors"

@@ -212,7 +212,7 @@ def resolve_algorithm(config: ContextConfig) -> DerivedRequirements:
 ### Via API
 
 ```bash
-curl -X POST http://localhost:8001/api/contexts \
+curl -X POST http://localhost:8003/api/contexts \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

@@ -22,7 +22,7 @@ Eliminate the complexity of implementing encryption correctly. Download a person
 
 [Get Started](getting-started/quickstart.md){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/ecolibria/crypto-serve){ .md-button }
-[API Docs :material-api:](http://localhost:8001/docs){ .md-button }
+[API Docs :material-api:](http://localhost:8003/docs){ .md-button }
 
 </div>
 

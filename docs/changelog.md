@@ -6,6 +6,27 @@ This project follows [Semantic Versioning](https://semver.org/) and [Keep a Chan
 
 ---
 
+## [SDK 1.0.1] - 2026-02-06
+
+### Fixed
+- CLI commands (`verify`, `info`, `configure`, `status`) crashed due to removed `crypto` singleton
+- Added missing `pyyaml>=6.0` dependency for `cryptoserve gate` command
+- Fixed `AESGCMCipher.encrypt()` docstring showing incorrect return type
+
+---
+
+## [SDK 1.0.0] - 2026-02-06
+
+### Added
+- Published 4 SDK packages to PyPI: `cryptoserve`, `cryptoserve-core`, `cryptoserve-client`, `cryptoserve-auto`
+- Install with `pip install cryptoserve` (Python 3.9+)
+- Local key caching with ~250x speedup over server round-trips
+- Usage hints (`at_rest`, `in_transit`, `in_use`, `streaming`, `disk`) for automatic algorithm selection
+- FastAPI and SQLAlchemy integrations
+- CLI with 18 commands
+
+---
+
 ## [1.3.7] - 2026-01-06
 
 ### Added

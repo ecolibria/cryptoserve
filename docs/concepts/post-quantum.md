@@ -142,7 +142,7 @@ class HybridEncryption:
 Configure a context with quantum threat consideration:
 
 ```bash
-curl -X POST http://localhost:8001/api/contexts \
+curl -X POST http://localhost:8003/api/contexts \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "long-term-secrets",
@@ -165,7 +165,7 @@ The algorithm resolver will select `AES-256-GCM+ML-KEM-768`.
 
 ```bash
 # Encrypt with hybrid mode
-curl -X POST http://localhost:8001/v1/crypto/encrypt \
+curl -X POST http://localhost:8003/v1/crypto/encrypt \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "plaintext": "c2VjcmV0IGRhdGE=",
@@ -224,7 +224,7 @@ PQC private keys are stored encrypted:
 
 ```bash
 # Rotate PQC keys for a context
-curl -X POST http://localhost:8001/api/admin/contexts/long-term-secrets/rotate-pqc-key
+curl -X POST http://localhost:8003/api/admin/contexts/long-term-secrets/rotate-pqc-key
 ```
 
 ---

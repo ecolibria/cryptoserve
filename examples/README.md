@@ -7,7 +7,7 @@ This directory contains comprehensive examples for using CryptoServe in various 
 Before running these examples, ensure:
 
 1. CryptoServe server is running (`docker compose up -d`)
-2. SDK is installed (`pip install -e sdk/python/`)
+2. SDK is installed (`pip install cryptoserve`)
 3. You've authenticated (`cryptoserve login`)
 
 ## Examples
@@ -65,7 +65,7 @@ pytest examples/ -v
 Some examples may require environment variables:
 
 ```bash
-export CRYPTOSERVE_URL=http://localhost:8000
+export CRYPTOSERVE_URL=http://localhost:8003
 export CRYPTOSERVE_APP_NAME=example-app
 export CRYPTOSERVE_TEAM=examples
 ```

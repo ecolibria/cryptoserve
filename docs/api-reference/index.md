@@ -15,7 +15,7 @@ Complete reference documentation for the CryptoServe REST API.
 
         Interactive API explorer with live request testing
 
-        [:octicons-arrow-right-24: Open Swagger UI](http://localhost:8001/docs){ .md-button }
+        [:octicons-arrow-right-24: Open Swagger UI](http://localhost:8003/docs){ .md-button }
 
     -   :material-file-document-outline:{ .lg .middle } **ReDoc**
 
@@ -23,11 +23,11 @@ Complete reference documentation for the CryptoServe REST API.
 
         Beautiful, three-panel API documentation
 
-        [:octicons-arrow-right-24: Open ReDoc](http://localhost:8001/redoc){ .md-button }
+        [:octicons-arrow-right-24: Open ReDoc](http://localhost:8003/redoc){ .md-button }
 
     </div>
 
-    **OpenAPI Specification**: [`/openapi.json`](http://localhost:8001/openapi.json) - Import into Postman, Insomnia, or any OpenAPI-compatible tool.
+    **OpenAPI Specification**: [`/openapi.json`](http://localhost:8003/openapi.json) - Import into Postman, Insomnia, or any OpenAPI-compatible tool.
 
 ---
 
@@ -35,7 +35,7 @@ Complete reference documentation for the CryptoServe REST API.
 
 ```
 https://api.cryptoserve.io/v1    # Production
-http://localhost:8001            # Development
+http://localhost:8003            # Development
 ```
 
 ## Authentication

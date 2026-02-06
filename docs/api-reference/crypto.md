@@ -51,7 +51,7 @@ POST /v1/crypto/encrypt
 === "cURL"
 
     ```bash
-    curl -X POST http://localhost:8001/v1/crypto/encrypt \
+    curl -X POST http://localhost:8003/v1/crypto/encrypt \
       -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: application/json" \
       -d '{
@@ -67,7 +67,7 @@ POST /v1/crypto/encrypt
     import base64
 
     response = requests.post(
-        "http://localhost:8001/v1/crypto/encrypt",
+        "http://localhost:8003/v1/crypto/encrypt",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "plaintext": base64.b64encode(b"Hello World!").decode(),
@@ -128,7 +128,7 @@ POST /v1/crypto/decrypt
 === "cURL"
 
     ```bash
-    curl -X POST http://localhost:8001/v1/crypto/decrypt \
+    curl -X POST http://localhost:8003/v1/crypto/decrypt \
       -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: application/json" \
       -d '{
@@ -140,7 +140,7 @@ POST /v1/crypto/decrypt
 
     ```python
     response = requests.post(
-        "http://localhost:8001/v1/crypto/decrypt",
+        "http://localhost:8003/v1/crypto/decrypt",
         headers={"Authorization": f"Bearer {token}"},
         json={"ciphertext": ciphertext}
     )

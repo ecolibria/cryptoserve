@@ -110,7 +110,7 @@ POST /api/identities
   "status": "active",
   "sdk_download": {
     "token": "eyJhbGciOiJIUzI1NiIs...",
-    "url": "http://localhost:8001/sdk/download/eyJhbG.../python",
+    "url": "http://localhost:8003/sdk/download/eyJhbG.../python",
     "expires_at": "2024-01-15T11:00:00Z"
   }
 }
@@ -198,7 +198,7 @@ POST /api/identities/{id}/regenerate
   "id": "id_abc123",
   "sdk_download": {
     "token": "eyJhbGciOiJIUzI1NiIs...",
-    "url": "http://localhost:8001/sdk/download/eyJhbG.../python",
+    "url": "http://localhost:8003/sdk/download/eyJhbG.../python",
     "expires_at": "2024-01-15T17:30:00Z"
   },
   "previous_tokens_revoked": true
@@ -230,10 +230,10 @@ POST /api/identities/{id}/sdk-download
 
 ```json
 {
-  "url": "http://localhost:8001/sdk/download/eyJhbG.../python",
+  "url": "http://localhost:8003/sdk/download/eyJhbG.../python",
   "token": "eyJhbGciOiJIUzI1NiIs...",
   "expires_at": "2024-01-15T11:00:00Z",
-  "install_command": "pip install http://localhost:8001/sdk/download/eyJhbG.../python"
+  "install_command": "pip install http://localhost:8003/sdk/download/eyJhbG.../python"
 }
 ```
 

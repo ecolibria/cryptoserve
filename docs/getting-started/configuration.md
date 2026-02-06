@@ -25,8 +25,8 @@ GITHUB_CLIENT_SECRET=secret123...
 !!! info "Setting up GitHub OAuth"
     1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
     2. Click **New OAuth App**
-    3. Set **Homepage URL**: `http://localhost:3001`
-    4. Set **Callback URL**: `http://localhost:8001/auth/github/callback`
+    3. Set **Homepage URL**: `http://localhost:3003`
+    4. Set **Callback URL**: `http://localhost:8003/auth/github/callback`
     5. Copy the Client ID and generate a Client Secret
 
 ### Security Keys
@@ -53,10 +53,10 @@ JWT_SECRET_KEY=another-secure-random-key-for-jwt
 
 ```bash
 # Frontend URL (for OAuth redirects)
-FRONTEND_URL=http://localhost:3001
+FRONTEND_URL=http://localhost:3003
 
 # Backend URL (for SDK downloads)
-BACKEND_URL=http://localhost:8001
+BACKEND_URL=http://localhost:8003
 ```
 
 ### Database
@@ -122,7 +122,7 @@ RATE_LIMIT_ENABLED=true
 
 ```bash
 # Allowed origins (comma-separated)
-CORS_ORIGINS=http://localhost:3001,https://myapp.example.com
+CORS_ORIGINS=http://localhost:3003,https://myapp.example.com
 
 # Allow credentials
 CORS_ALLOW_CREDENTIALS=true

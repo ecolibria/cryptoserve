@@ -5,6 +5,41 @@ All notable changes to CryptoServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [SDK 1.0.1] - 2026-02-06
+
+### Fixed
+- CLI commands (`verify`, `info`, `configure`, `status`) crashed due to removed `crypto` singleton (removed in v0.7.0)
+- Added missing `pyyaml>=6.0` dependency for `cryptoserve gate` command
+- Fixed `AESGCMCipher.encrypt()` docstring showing incorrect 3-tuple return (actual: 2-tuple)
+
+---
+
+## [SDK 1.0.0] - 2026-02-06
+
+### Added
+
+#### PyPI Publication
+- Published 4 packages to PyPI: `cryptoserve`, `cryptoserve-core`, `cryptoserve-client`, `cryptoserve-auto`
+- Install with `pip install cryptoserve` (no more local editable installs required)
+- Modular architecture: use individual packages for specific needs
+
+#### Python SDK Features
+- `CryptoServe` class with auto-registration and local key caching (~250x speedup)
+- `encrypt()` / `decrypt()` with context-based key management
+- `encrypt_string()` / `decrypt_string()` for string convenience
+- `encrypt_json()` / `decrypt_json()` for JSON objects
+- Usage hints (`at_rest`, `in_transit`, `in_use`, `streaming`, `disk`) for automatic algorithm selection
+- FastAPI integration with `EncryptedStr` type annotation
+- SQLAlchemy integration with `EncryptedString` column type
+- CLI with 18 commands: `login`, `logout`, `verify`, `info`, `wizard`, `scan`, `cbom`, `pqc`, `gate`, `certs`, `backup`, `restore`, `ceremony`, and more
+
+#### SDK Packages
+- `cryptoserve-core` (0.1.0): Pure crypto primitives (AES-GCM, ChaCha20-Poly1305, RSA, hashing)
+- `cryptoserve-client` (0.1.0): HTTP client for CryptoServe API
+- `cryptoserve-auto` (0.1.0): Auto-protect third-party libraries
+
+---
+
 ## [1.1.0] - 2026-01-03
 
 ### Added

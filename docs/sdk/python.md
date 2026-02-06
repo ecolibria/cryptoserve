@@ -4,37 +4,28 @@ The official Python SDK for CryptoServe with zero-configuration setup.
 
 ## Installation
 
-### Option 1: CLI Install (Recommended)
+```bash
+pip install cryptoserve
+```
+
+Individual packages are also available:
 
 ```bash
-# Install from local SDK
-pip install -e sdk/python/
+pip install cryptoserve-core    # Pure crypto primitives only
+pip install cryptoserve-client  # API client only
+pip install cryptoserve-auto    # Auto-protect third-party libraries
+```
 
-# One-time login
+After installing, run a one-time login:
+
+```bash
 cryptoserve login
 ```
 
-This approach uses auto-registration - your app registers automatically on first use.
-
-### Option 2: Dashboard Download
-
-You can also download a pre-configured SDK from the dashboard:
-
-1. Go to **Applications** in the dashboard
-2. Create or select an application
-3. Click **Download SDK**
-4. Install the downloaded wheel:
-
-```bash
-pip install cryptoserve-*.whl
-```
-
-This approach embeds your credentials in the SDK package.
-
 ## Requirements
 
-- Python 3.10+
-- `requests` library (installed automatically)
+- Python 3.9+
+- `requests`, `cryptography`, `pyyaml` (installed automatically)
 
 ---
 
@@ -100,12 +91,16 @@ crypto = CryptoServe(
 
 ## Cryptographic Operations
 
-### `encrypt(plaintext, context)`
+### `encrypt(plaintext, context, usage=None)`
 
-Encrypt binary data.
+Encrypt binary data. Optionally pass a `usage` hint to let the platform select the optimal algorithm.
 
 ```python
 encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
+
+# With usage hint for automatic algorithm selection
+from cryptoserve import Usage
+encrypted = crypto.encrypt(b"sensitive data", context="user-pii", usage=Usage.AT_REST)
 ```
 
 **Parameters:**
@@ -114,6 +109,8 @@ encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
 |------|------|----------|-------------|
 | `plaintext` | `bytes` | Yes | Data to encrypt |
 | `context` | `str` | Yes | Encryption context name |
+| `associated_data` | `bytes` | No | Authenticated but unencrypted data |
+| `usage` | `Usage \| str` | No | Runtime usage hint: `at_rest`, `in_transit`, `in_use`, `streaming`, `disk` |
 
 **Returns:** `bytes` - Ciphertext
 
@@ -278,16 +275,17 @@ encrypted = crypto.encrypt_json(user, context="user-pii")
 
 ### Decryption
 
-#### `decrypt(ciphertext, **kwargs)`
+#### `decrypt(ciphertext, context, **kwargs)`
 
 Decrypt binary data.
 
 ```python
-plaintext = crypto.decrypt(encrypted_bytes)
+plaintext = crypto.decrypt(encrypted_bytes, context="user-pii")
 
 # With associated data
 plaintext = crypto.decrypt(
     encrypted_bytes,
+    context="user-pii",
     associated_data=b"metadata"  # Must match encryption
 )
 ```
@@ -297,26 +295,27 @@ plaintext = crypto.decrypt(
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `ciphertext` | bytes | Yes | Ciphertext to decrypt |
+| `context` | str | Yes | Encryption context name |
 | `associated_data` | bytes | No | Must match encryption AAD |
 
 **Returns:** `bytes` - Plaintext
 
-#### `decrypt_string(ciphertext, **kwargs)`
+#### `decrypt_string(ciphertext, context, **kwargs)`
 
 Decrypt to a string.
 
 ```python
-text = crypto.decrypt_string(encrypted_string)
+text = crypto.decrypt_string(encrypted_string, context="user-pii")
 ```
 
 **Returns:** `str` - Decrypted string
 
-#### `decrypt_json(ciphertext, **kwargs)`
+#### `decrypt_json(ciphertext, context, **kwargs)`
 
 Decrypt to a JSON object.
 
 ```python
-user = crypto.decrypt_json(encrypted_string)
+user = crypto.decrypt_json(encrypted_string, context="user-pii")
 print(user["name"])  # "John"
 ```
 

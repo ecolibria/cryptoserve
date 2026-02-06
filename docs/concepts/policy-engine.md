@@ -127,7 +127,7 @@ CryptoServe includes default policies:
 ### Via API
 
 ```bash
-curl -X POST http://localhost:8001/api/policies \
+curl -X POST http://localhost:8003/api/policies \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -249,7 +249,7 @@ Attach policies to specific contexts:
 Test policies without performing operations:
 
 ```bash
-curl -X POST http://localhost:8001/api/policies/evaluate \
+curl -X POST http://localhost:8003/api/policies/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "context": "user-pii",
@@ -279,7 +279,7 @@ curl -X POST http://localhost:8001/api/policies/evaluate \
 Test new policies before enabling:
 
 ```bash
-curl -X POST http://localhost:8001/api/policies/simulate \
+curl -X POST http://localhost:8003/api/policies/simulate \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "policy": {
@@ -396,7 +396,7 @@ Policy evaluations are logged:
 Query policy violations:
 
 ```bash
-curl "http://localhost:8001/api/audit?policy_violation=true" \
+curl "http://localhost:8003/api/audit?policy_violation=true" \
   -H "Authorization: Bearer $TOKEN"
 ```
 

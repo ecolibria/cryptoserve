@@ -195,7 +195,7 @@ FIPS_MODE=enabled
 Or via API:
 
 ```bash
-curl -X PUT http://localhost:8001/api/admin/config \
+curl -X PUT http://localhost:8003/api/admin/config \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"fips_mode": "enabled"}'
 ```
@@ -203,7 +203,7 @@ curl -X PUT http://localhost:8001/api/admin/config \
 ### Create Compliance Policy
 
 ```bash
-curl -X POST http://localhost:8001/api/policies \
+curl -X POST http://localhost:8003/api/policies \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "compliance-encryption",
@@ -220,7 +220,7 @@ curl -X POST http://localhost:8001/api/policies \
 ### Configure Compliant Context
 
 ```bash
-curl -X POST http://localhost:8001/api/contexts \
+curl -X POST http://localhost:8003/api/contexts \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "regulated-data",
@@ -243,12 +243,12 @@ curl -X POST http://localhost:8001/api/contexts \
 
 ```bash
 # JSON format
-curl "http://localhost:8001/api/admin/audit/export?format=json&start=2024-01-01&end=2024-01-31" \
+curl "http://localhost:8003/api/admin/audit/export?format=json&start=2024-01-01&end=2024-01-31" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -o audit-january.json
 
 # CSV format
-curl "http://localhost:8001/api/admin/audit/export?format=csv&start=2024-01-01&end=2024-01-31" \
+curl "http://localhost:8003/api/admin/audit/export?format=csv&start=2024-01-01&end=2024-01-31" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -o audit-january.csv
 ```

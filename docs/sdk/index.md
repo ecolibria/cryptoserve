@@ -10,7 +10,7 @@ CryptoServe provides client SDKs with embedded identity for zero-configuration e
 
     ---
 
-    Full-featured SDK for Python 3.8+
+    Full-featured SDK for Python 3.9+ — available on [PyPI](https://pypi.org/project/cryptoserve/)
 
     [:octicons-arrow-right-24: Python SDK](python.md)
 
@@ -138,14 +138,18 @@ response = requests.post(
 
 ## Installation
 
-Each identity gets a unique download URL:
+Install from PyPI:
+
+```bash
+pip install cryptoserve
+```
+
+Or download a pre-configured SDK from the dashboard:
 
 ```bash
 # From the dashboard, copy your install command
-pip install http://localhost:8001/sdk/download/YOUR_TOKEN/python
+pip install http://localhost:8003/sdk/download/YOUR_TOKEN/python
 ```
-
-The download token is single-use and expires after 1 hour.
 
 ## SDK vs Direct API
 

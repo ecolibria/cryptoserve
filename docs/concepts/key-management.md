@@ -161,7 +161,7 @@ sequenceDiagram
 
 ```bash
 # Rotate key for a context
-curl -X POST http://localhost:8001/api/admin/contexts/user-pii/rotate-key \
+curl -X POST http://localhost:8003/api/admin/contexts/user-pii/rotate-key \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -388,7 +388,7 @@ Set up automated rotation:
 
 ```bash
 # Rotate all context keys monthly
-0 0 1 * * curl -X POST http://localhost:8001/api/admin/rotate-all-keys
+0 0 1 * * curl -X POST http://localhost:8003/api/admin/rotate-all-keys
 ```
 
 ### 3. Monitor Key Usage
