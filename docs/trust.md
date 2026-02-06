@@ -234,7 +234,6 @@ Transparency about boundaries is as important as capabilities.
 - **Not a TLS terminator.** Deploy behind a reverse proxy or load balancer for TLS.
 - **No forward secrecy for symmetric encryption.** If a key is compromised, data encrypted under that key is exposed. Mitigate with key rotation and short key lifetimes.
 - **No guaranteed memory clearing.** Python's garbage collector limits what can be guaranteed. For highest assurance, pair with a hardware security module.
-- **No streaming encryption.** Data must fit in memory. Planned for a future release.
 - **No FIPS 140-2 certification.** CryptoServe supports FIPS-approved algorithms and can operate in FIPS mode, but the platform itself is not FIPS certified. Certification is deployment-specific.
 
 ---
