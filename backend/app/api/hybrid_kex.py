@@ -215,6 +215,7 @@ async def get_sdk_identity(
                         return ApplicationIdentity(app)
                 except Exception as e:
                     import logging
+
                     logging.getLogger(__name__).debug("Application token verification failed: %s", e)
 
     raise HTTPException(

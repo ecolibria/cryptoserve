@@ -73,9 +73,7 @@ class Settings(BaseSettings):
             if not self.oauth_state_secret:
                 missing.append("OAUTH_STATE_SECRET")
             if missing:
-                raise ValueError(
-                    f"Missing required secrets (set DEV_MODE=true for development): {', '.join(missing)}"
-                )
+                raise ValueError(f"Missing required secrets (set DEV_MODE=true for development): {', '.join(missing)}")
         return self
 
     # Cookie security

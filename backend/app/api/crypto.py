@@ -380,7 +380,9 @@ async def decrypt(
 class KeyBundleRequest(BaseModel):
     """Request for encryption key bundle."""
 
-    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context name")
+    context: str = Field(
+        ..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context name"
+    )
 
 
 class KeyBundleResponse(BaseModel):
@@ -489,7 +491,12 @@ class BatchEncryptItem(BaseModel):
 class BatchEncryptRequest(BaseModel):
     """Batch encryption request."""
 
-    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context (all items use same context)")
+    context: str = Field(
+        ...,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        description="Encryption context (all items use same context)",
+    )
     usage: EncryptionUsageContext | None = Field(
         default=None,
         description="Runtime usage hint for all items in this batch. "
@@ -536,7 +543,12 @@ class BatchDecryptItem(BaseModel):
 class BatchDecryptRequest(BaseModel):
     """Batch decryption request."""
 
-    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context (all items use same context)")
+    context: str = Field(
+        ...,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        description="Encryption context (all items use same context)",
+    )
     items: list[BatchDecryptItem] = Field(
         ...,
         description="Items to decrypt (max 100 per batch)",
@@ -635,7 +647,9 @@ async def batch_encrypt(
         except Exception as e:
             logger.warning(
                 "Batch encrypt failed for item %s in context %s: %s",
-                item.id, data.context, e,
+                item.id,
+                data.context,
+                e,
             )
             # Sanitize error messages - never expose internal details to client
             if isinstance(e, AuthorizationError):
@@ -726,7 +740,9 @@ async def batch_decrypt(
         except Exception as e:
             logger.warning(
                 "Batch decrypt failed for item %s in context %s: %s",
-                item.id, data.context, e,
+                item.id,
+                data.context,
+                e,
             )
             # Sanitize error messages - never expose internal details to client
             if isinstance(e, AuthorizationError):

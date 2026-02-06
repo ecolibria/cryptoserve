@@ -223,6 +223,7 @@ async def revoke_token_endpoint(
 
     # Persist revocation to database (survives restarts)
     from datetime import datetime, timezone
+
     exp = payload.get("exp")
     expires_at = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else datetime.now(timezone.utc)
     await revoke_token_db(db, jti, expires_at)

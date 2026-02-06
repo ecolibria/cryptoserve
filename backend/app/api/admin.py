@@ -2428,6 +2428,7 @@ async def playground_operation(
 
     class PlaygroundIdentity:
         """Lightweight identity wrapper for playground operations."""
+
         def __init__(self, user, context_name):
             self.id = user.id
             self.tenant_id = user.tenant_id

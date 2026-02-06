@@ -21,12 +21,8 @@ class RevokedToken(Base):
 
     id: Mapped[str] = mapped_column(GUID(), primary_key=True, default=lambda: str(uuid4()))
     jti: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    revoked_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
-    )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
     def __repr__(self) -> str:
         return f"<RevokedToken jti={self.jti}>"

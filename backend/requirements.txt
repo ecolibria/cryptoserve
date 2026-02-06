@@ -1,7 +1,7 @@
 # FastAPI and server
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-python-multipart==0.0.6
+fastapi==0.116.2
+uvicorn[standard]==0.34.0
+python-multipart==0.0.22
 
 # Database
 sqlalchemy[asyncio]==2.0.25
@@ -10,7 +10,7 @@ alembic==1.16.4
 
 # Authentication
 pyjwt==2.10.1
-cryptography==43.0.3
+cryptography==44.0.1
 httpx==0.28.1
 
 # Validation

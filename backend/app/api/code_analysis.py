@@ -156,7 +156,6 @@ class CodeScanResponse(BaseModel):
     scan_time_ms: float
 
 
-
 class QuickAnalysisRequest(BaseModel):
     """Quick analysis request."""
 

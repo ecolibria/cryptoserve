@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.core.logging import setup_logging, RequestLoggingMiddleware, get_logger
 
 import os as _os
+
 _is_production = _os.environ.get("ENVIRONMENT", "development").lower() == "production"
 setup_logging(json_output=_is_production, level="INFO")
 
@@ -572,6 +573,7 @@ async def lifespan(app: FastAPI):
     # Load revoked tokens from database into memory cache
     from app.auth.jwt import load_revoked_tokens, cleanup_expired_tokens
     from app.database import get_session_maker
+
     async with get_session_maker()() as db_session:
         await cleanup_expired_tokens(db_session)
         await load_revoked_tokens(db_session)

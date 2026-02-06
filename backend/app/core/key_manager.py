@@ -250,7 +250,9 @@ class KeyManager:
             return None
 
         return await self.derive_key(
-            key_record.context, key_record.version, key_size,
+            key_record.context,
+            key_record.version,
+            key_size,
             tenant_id=str(key_record.tenant_id),
         )
 

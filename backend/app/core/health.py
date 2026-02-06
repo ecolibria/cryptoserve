@@ -84,6 +84,7 @@ class HealthChecker:
     """Comprehensive health check system."""
 
     from app import __version__
+
     VERSION = __version__
 
     async def check_database(self, db: AsyncSession) -> CheckResult:

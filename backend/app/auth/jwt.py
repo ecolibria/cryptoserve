@@ -52,9 +52,7 @@ async def load_revoked_tokens(db: AsyncSession) -> None:
     Call this at application startup to restore revocation state.
     """
     now = datetime.now(timezone.utc)
-    result = await db.execute(
-        select(RevokedToken.jti).where(RevokedToken.expires_at > now)
-    )
+    result = await db.execute(select(RevokedToken.jti).where(RevokedToken.expires_at > now))
     jtis = result.scalars().all()
     _revoked_tokens_cache.update(jtis)
     logger.info(f"Loaded {len(jtis)} revoked tokens from database")
@@ -66,9 +64,7 @@ async def cleanup_expired_tokens(db: AsyncSession) -> int:
     Returns the number of tokens cleaned up.
     """
     now = datetime.now(timezone.utc)
-    result = await db.execute(
-        delete(RevokedToken).where(RevokedToken.expires_at <= now)
-    )
+    result = await db.execute(delete(RevokedToken).where(RevokedToken.expires_at <= now))
     await db.commit()
     count = result.rowcount
     if count:

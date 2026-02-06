@@ -509,8 +509,8 @@ async def dev_login(
         extra={
             "event": "dev_login",
             "client_ip": request.client.host if request.client else "unknown",
-            "user_id": user.id if hasattr(user, 'id') else "dev-admin",
-        }
+            "user_id": user.id if hasattr(user, "id") else "dev-admin",
+        },
     )
 
     if cli_callback:
