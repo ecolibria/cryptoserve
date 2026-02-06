@@ -33,6 +33,7 @@ from app.core.policy_engine import (
 )
 from app.schemas.context import AlgorithmOverride, CipherMode, EncryptionUsageContext
 from app.core.algorithm_resolver import ALGORITHMS
+from app.core.secure_memory import secure_zero
 from app.core.hybrid_crypto import (
     HybridCryptoEngine,
     HybridMode,
@@ -220,22 +221,27 @@ class CipherFactory:
         Returns: ciphertext + hmac (IV stored in header)
         """
         # Derive separate keys for encryption and MAC
-        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+        enc_key_bytes, mac_key_bytes = CipherFactory.derive_enc_mac_keys(key)
+        enc_key = bytearray(enc_key_bytes)
+        mac_key = bytearray(mac_key_bytes)
+        try:
+            # Pad plaintext to block size (PKCS7)
+            block_size = 16
+            padding_len = block_size - (len(plaintext) % block_size)
+            padded = plaintext + bytes([padding_len] * padding_len)
 
-        # Pad plaintext to block size (PKCS7)
-        block_size = 16
-        padding_len = block_size - (len(plaintext) % block_size)
-        padded = plaintext + bytes([padding_len] * padding_len)
+            # Encrypt with derived encryption key
+            cipher = Cipher(algorithms.AES(bytes(enc_key)), modes.CBC(iv), backend=default_backend())
+            encryptor = cipher.encryptor()
+            ciphertext = encryptor.update(padded) + encryptor.finalize()
 
-        # Encrypt with derived encryption key
-        cipher = Cipher(algorithms.AES(enc_key), modes.CBC(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(padded) + encryptor.finalize()
+            # Authenticate with derived MAC key (Encrypt-then-MAC)
+            mac = hmac.new(bytes(mac_key), iv + ciphertext, hashlib.sha256).digest()
 
-        # Authenticate with derived MAC key (Encrypt-then-MAC)
-        mac = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()
-
-        return ciphertext + mac
+            return ciphertext + mac
+        finally:
+            secure_zero(enc_key)
+            secure_zero(mac_key)
 
     @staticmethod
     def decrypt_cbc(key: bytes, data: bytes, iv: bytes) -> bytes:
@@ -244,30 +250,35 @@ class CipherFactory:
         Uses separate derived keys for decryption and authentication.
         """
         # Derive separate keys for encryption and MAC
-        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+        enc_key_bytes, mac_key_bytes = CipherFactory.derive_enc_mac_keys(key)
+        enc_key = bytearray(enc_key_bytes)
+        mac_key = bytearray(mac_key_bytes)
+        try:
+            # Split ciphertext and MAC
+            ciphertext = data[:-32]
+            mac = data[-32:]
 
-        # Split ciphertext and MAC
-        ciphertext = data[:-32]
-        mac = data[-32:]
+            # Verify HMAC first (before any decryption)
+            expected_mac = hmac.new(bytes(mac_key), iv + ciphertext, hashlib.sha256).digest()
+            if not hmac.compare_digest(mac, expected_mac):
+                raise DecryptionError("HMAC verification failed")
 
-        # Verify HMAC first (before any decryption)
-        expected_mac = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()
-        if not hmac.compare_digest(mac, expected_mac):
-            raise DecryptionError("HMAC verification failed")
+            # Decrypt with derived encryption key
+            cipher = Cipher(algorithms.AES(bytes(enc_key)), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            padded = decryptor.update(ciphertext) + decryptor.finalize()
 
-        # Decrypt with derived encryption key
-        cipher = Cipher(algorithms.AES(enc_key), modes.CBC(iv), backend=default_backend())
-        decryptor = cipher.decryptor()
-        padded = decryptor.update(ciphertext) + decryptor.finalize()
-
-        # Remove PKCS7 padding with validation
-        padding_len = padded[-1]
-        if padding_len > 16 or padding_len == 0:
-            raise DecryptionError("Invalid padding")
-        # Verify all padding bytes are correct
-        if padded[-padding_len:] != bytes([padding_len] * padding_len):
-            raise DecryptionError("Invalid padding")
-        return padded[:-padding_len]
+            # Remove PKCS7 padding with validation
+            padding_len = padded[-1]
+            if padding_len > 16 or padding_len == 0:
+                raise DecryptionError("Invalid padding")
+            # Verify all padding bytes are correct
+            if padded[-padding_len:] != bytes([padding_len] * padding_len):
+                raise DecryptionError("Invalid padding")
+            return padded[:-padding_len]
+        finally:
+            secure_zero(enc_key)
+            secure_zero(mac_key)
 
     @staticmethod
     def encrypt_ctr(key: bytes, plaintext: bytes, nonce: bytes) -> bytes:
@@ -279,20 +290,25 @@ class CipherFactory:
         Returns: ciphertext + hmac
         """
         # Derive separate keys for encryption and MAC
-        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+        enc_key_bytes, mac_key_bytes = CipherFactory.derive_enc_mac_keys(key)
+        enc_key = bytearray(enc_key_bytes)
+        mac_key = bytearray(mac_key_bytes)
+        try:
+            cipher = Cipher(
+                algorithms.AES(bytes(enc_key)),
+                modes.CTR(nonce + b"\x00" * 4),  # 12-byte nonce + 4-byte counter
+                backend=default_backend(),
+            )
+            encryptor = cipher.encryptor()
+            ciphertext = encryptor.update(plaintext) + encryptor.finalize()
 
-        cipher = Cipher(
-            algorithms.AES(enc_key),
-            modes.CTR(nonce + b"\x00" * 4),  # 12-byte nonce + 4-byte counter
-            backend=default_backend(),
-        )
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+            # Authenticate with derived MAC key (Encrypt-then-MAC)
+            mac = hmac.new(bytes(mac_key), nonce + ciphertext, hashlib.sha256).digest()
 
-        # Authenticate with derived MAC key (Encrypt-then-MAC)
-        mac = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
-
-        return ciphertext + mac
+            return ciphertext + mac
+        finally:
+            secure_zero(enc_key)
+            secure_zero(mac_key)
 
     @staticmethod
     def decrypt_ctr(key: bytes, data: bytes, nonce: bytes) -> bytes:
@@ -301,19 +317,24 @@ class CipherFactory:
         Uses separate derived keys for decryption and authentication.
         """
         # Derive separate keys for encryption and MAC
-        enc_key, mac_key = CipherFactory.derive_enc_mac_keys(key)
+        enc_key_bytes, mac_key_bytes = CipherFactory.derive_enc_mac_keys(key)
+        enc_key = bytearray(enc_key_bytes)
+        mac_key = bytearray(mac_key_bytes)
+        try:
+            ciphertext = data[:-32]
+            mac = data[-32:]
 
-        ciphertext = data[:-32]
-        mac = data[-32:]
+            # Verify HMAC first (before any decryption)
+            expected_mac = hmac.new(bytes(mac_key), nonce + ciphertext, hashlib.sha256).digest()
+            if not hmac.compare_digest(mac, expected_mac):
+                raise DecryptionError("HMAC verification failed")
 
-        # Verify HMAC first (before any decryption)
-        expected_mac = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
-        if not hmac.compare_digest(mac, expected_mac):
-            raise DecryptionError("HMAC verification failed")
-
-        cipher = Cipher(algorithms.AES(enc_key), modes.CTR(nonce + b"\x00" * 4), backend=default_backend())
-        decryptor = cipher.decryptor()
-        return decryptor.update(ciphertext) + decryptor.finalize()
+            cipher = Cipher(algorithms.AES(bytes(enc_key)), modes.CTR(nonce + b"\x00" * 4), backend=default_backend())
+            decryptor = cipher.decryptor()
+            return decryptor.update(ciphertext) + decryptor.finalize()
+        finally:
+            secure_zero(enc_key)
+            secure_zero(mac_key)
 
     @staticmethod
     def encrypt_chacha20(
@@ -359,21 +380,26 @@ class CipherFactory:
         if len(plaintext) < 16:
             raise CryptoError("XTS requires plaintext >= 16 bytes")
 
-        # XTS encryption using cryptography library
-        # XTS mode uses the full 64-byte key internally (splits into two 256-bit keys)
-        cipher = Cipher(
-            algorithms.AES(key),
-            modes.XTS(tweak),
-            backend=default_backend(),
-        )
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+        # Derive MAC key and wrap in bytearray for secure zeroing
+        mac_key_bytes = CipherFactory.derive_enc_mac_keys(key[:32])[1]
+        mac_key = bytearray(mac_key_bytes)
+        try:
+            # XTS encryption using cryptography library
+            # XTS mode uses the full 64-byte key internally (splits into two 256-bit keys)
+            cipher = Cipher(
+                algorithms.AES(key),
+                modes.XTS(tweak),
+                backend=default_backend(),
+            )
+            encryptor = cipher.encryptor()
+            ciphertext = encryptor.update(plaintext) + encryptor.finalize()
 
-        # Add HMAC for integrity (XTS doesn't provide authentication)
-        mac_key = CipherFactory.derive_enc_mac_keys(key[:32])[1]
-        mac = hmac.new(mac_key, tweak + ciphertext, hashlib.sha256).digest()
+            # Add HMAC for integrity (XTS doesn't provide authentication)
+            mac = hmac.new(bytes(mac_key), tweak + ciphertext, hashlib.sha256).digest()
 
-        return ciphertext + mac
+            return ciphertext + mac
+        finally:
+            secure_zero(mac_key)
 
     @staticmethod
     def decrypt_xts(key: bytes, data: bytes, tweak: bytes) -> bytes:
@@ -394,23 +420,28 @@ class CipherFactory:
         if len(data) < 48:  # Minimum: 16-byte ciphertext + 32-byte HMAC
             raise CryptoError("XTS ciphertext too short")
 
-        ciphertext = data[:-32]
-        mac = data[-32:]
+        # Derive MAC key and wrap in bytearray for secure zeroing
+        mac_key_bytes = CipherFactory.derive_enc_mac_keys(key[:32])[1]
+        mac_key = bytearray(mac_key_bytes)
+        try:
+            ciphertext = data[:-32]
+            mac = data[-32:]
 
-        # Verify HMAC first
-        mac_key = CipherFactory.derive_enc_mac_keys(key[:32])[1]
-        expected_mac = hmac.new(mac_key, tweak + ciphertext, hashlib.sha256).digest()
-        if not hmac.compare_digest(mac, expected_mac):
-            raise DecryptionError("HMAC verification failed")
+            # Verify HMAC first
+            expected_mac = hmac.new(bytes(mac_key), tweak + ciphertext, hashlib.sha256).digest()
+            if not hmac.compare_digest(mac, expected_mac):
+                raise DecryptionError("HMAC verification failed")
 
-        # XTS decryption
-        cipher = Cipher(
-            algorithms.AES(key),
-            modes.XTS(tweak),
-            backend=default_backend(),
-        )
-        decryptor = cipher.decryptor()
-        return decryptor.update(ciphertext) + decryptor.finalize()
+            # XTS decryption
+            cipher = Cipher(
+                algorithms.AES(key),
+                modes.XTS(tweak),
+                backend=default_backend(),
+            )
+            decryptor = cipher.decryptor()
+            return decryptor.update(ciphertext) + decryptor.finalize()
+        finally:
+            secure_zero(mac_key)
 
 
 class CryptoEngine:
@@ -536,45 +567,50 @@ class CryptoEngine:
             # Classical encryption path
             # Get key for context
             key_size_bytes = key_bits // 8
-            key, key_id = await key_manager.get_or_create_key(
+            key_bytes, key_id = await key_manager.get_or_create_key(
                 db, context_name, identity.tenant_id, key_size=key_size_bytes
             )
 
-            # Generate nonce/IV (12 bytes for GCM/CCM/ChaCha20, 16 for CBC/CTR)
-            nonce_size = 16 if mode in [CipherMode.CBC, CipherMode.CTR] else 12
-            nonce = os.urandom(nonce_size)
+            # Convert to mutable bytearray for secure zeroing after use
+            key = bytearray(key_bytes)
+            try:
+                # Generate nonce/IV (12 bytes for GCM/CCM/ChaCha20, 16 for CBC/CTR)
+                nonce_size = 16 if mode in [CipherMode.CBC, CipherMode.CTR] else 12
+                nonce = os.urandom(nonce_size)
 
-            # Compute key commitment for multi-key attack prevention
-            key_commitment = CipherFactory.compute_key_commitment(key)
+                # Compute key commitment for multi-key attack prevention
+                key_commitment = CipherFactory.compute_key_commitment(bytes(key))
 
-            # Encrypt based on mode (with AAD support for AEAD modes)
-            ciphertext = self._encrypt_with_mode(key, plaintext, nonce, mode, algorithm, associated_data)
+                # Encrypt based on mode (with AAD support for AEAD modes)
+                ciphertext = self._encrypt_with_mode(bytes(key), plaintext, nonce, mode, algorithm, associated_data)
 
-            # Pack into self-describing format with key commitment
-            packed = self._pack_ciphertext(
-                ciphertext=ciphertext,
-                nonce=nonce,
-                key_id=key_id,
-                context=context_name,
-                algorithm=algorithm,
-                mode=mode,
-                key_commitment=key_commitment,
-                has_aad=associated_data is not None,
-            )
+                # Pack into self-describing format with key commitment
+                packed = self._pack_ciphertext(
+                    ciphertext=ciphertext,
+                    nonce=nonce,
+                    key_id=key_id,
+                    context=context_name,
+                    algorithm=algorithm,
+                    mode=mode,
+                    key_commitment=key_commitment,
+                    has_aad=associated_data is not None,
+                )
 
-            success = True
-            return EncryptResult(
-                ciphertext=packed,
-                algorithm=algorithm,
-                mode=mode,
-                key_bits=key_bits,
-                key_id=key_id,
-                nonce=nonce,
-                context=context_name,
-                usage=effective_usage,
-                description=description,
-                warnings=warnings,
-            )
+                success = True
+                return EncryptResult(
+                    ciphertext=packed,
+                    algorithm=algorithm,
+                    mode=mode,
+                    key_bits=key_bits,
+                    key_id=key_id,
+                    nonce=nonce,
+                    context=context_name,
+                    usage=effective_usage,
+                    description=description,
+                    warnings=warnings,
+                )
+            finally:
+                secure_zero(key)
 
         except PolicyViolation as e:
             error_message = str(e)
@@ -1198,30 +1234,35 @@ class CryptoEngine:
             key_size_bytes = self._get_key_size_from_algorithm(algorithm)
 
             # Get key with correct size
-            key = await key_manager.get_key_by_id(db, header["kid"], key_size=key_size_bytes)
-            if not key:
+            key_bytes = await key_manager.get_key_by_id(db, header["kid"], key_size=key_size_bytes)
+            if not key_bytes:
                 raise DecryptionError(f"Key not found: {header['kid']}")
 
-            # Verify key commitment if present (prevents multi-key attacks)
-            if "kc" in header:
-                expected_commitment = CipherFactory.compute_key_commitment(key)
-                stored_commitment = base64.b64decode(header["kc"])
-                if not hmac.compare_digest(expected_commitment, stored_commitment):
-                    raise DecryptionError("Key commitment verification failed - possible key mismatch")
-
-            # Get mode from header
-            mode_str = header.get("mode", "gcm")
+            # Convert to mutable bytearray for secure zeroing after use
+            key = bytearray(key_bytes)
             try:
-                mode = CipherMode(mode_str)
-            except ValueError:
-                mode = CipherMode.GCM
+                # Verify key commitment if present (prevents multi-key attacks)
+                if "kc" in header:
+                    expected_commitment = CipherFactory.compute_key_commitment(bytes(key))
+                    stored_commitment = base64.b64decode(header["kc"])
+                    if not hmac.compare_digest(expected_commitment, stored_commitment):
+                        raise DecryptionError("Key commitment verification failed - possible key mismatch")
 
-            # Decrypt with AAD if applicable
-            nonce = base64.b64decode(header["nonce"])
-            plaintext = self._decrypt_with_mode(key, ciphertext, nonce, mode, algorithm, associated_data)
+                # Get mode from header
+                mode_str = header.get("mode", "gcm")
+                try:
+                    mode = CipherMode(mode_str)
+                except ValueError:
+                    mode = CipherMode.GCM
 
-            success = True
-            return plaintext
+                # Decrypt with AAD if applicable
+                nonce = base64.b64decode(header["nonce"])
+                plaintext = self._decrypt_with_mode(bytes(key), ciphertext, nonce, mode, algorithm, associated_data)
+
+                success = True
+                return plaintext
+            finally:
+                secure_zero(key)
 
         except Exception as e:
             error_message = str(e)

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import StaticPool
 
 # Set up test environment variables BEFORE importing app modules
+os.environ.setdefault("DEV_MODE", "true")
 os.environ.setdefault("CRYPTOSERVE_MASTER_KEY", "test-master-key-for-testing-only-32chars")
 os.environ.setdefault("CRYPTOSERVE_HKDF_SALT", "test-hkdf-salt-for-tests")
 os.environ.setdefault("KMS_BACKEND", "local")

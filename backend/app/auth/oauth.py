@@ -21,6 +21,7 @@ from app.models import User, UserInvitation
 from app.auth.jwt import create_access_token
 from app.auth.providers import get_provider
 from app.auth.providers.registry import list_providers
+from app.core.slowapi_limiter import limiter
 
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -97,6 +98,7 @@ async def auth_status():
 
 
 @router.get("/login/{provider}")
+@limiter.limit("10/minute")
 async def oauth_login(
     provider: str,
     request: Request,
@@ -146,7 +148,7 @@ async def oauth_login(
         value=state,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite="strict",
         max_age=OAUTH_STATE_EXPIRATION,
     )
 
@@ -157,7 +159,7 @@ async def oauth_login(
             value=cli_callback,
             httponly=True,
             secure=settings.cookie_secure,
-            samesite="lax",
+            samesite="strict",
             max_age=OAUTH_STATE_EXPIRATION,
         )
 
@@ -165,6 +167,7 @@ async def oauth_login(
 
 
 @router.get("/callback/{provider}")
+@limiter.limit("10/minute")
 async def oauth_callback(
     provider: str,
     code: str,
@@ -404,7 +407,7 @@ async def oauth_callback(
         value=jwt_token,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite="strict",
         max_age=settings.jwt_expiration_days * 24 * 60 * 60,
         domain=settings.cookie_domain,
     )
@@ -414,6 +417,7 @@ async def oauth_callback(
 
 # Backwards compatibility aliases for GitHub
 @router.get("/github")
+@limiter.limit("10/minute")
 async def github_login(request: Request, cli_callback: str | None = None):
     """Redirect to GitHub OAuth (backwards compatibility).
 
@@ -423,6 +427,7 @@ async def github_login(request: Request, cli_callback: str | None = None):
 
 
 @router.get("/github/callback")
+@limiter.limit("10/minute")
 async def github_callback(
     code: str,
     state: str,
@@ -437,6 +442,7 @@ async def github_callback(
 
 
 @router.get("/dev-login")
+@limiter.limit("5/minute")
 async def dev_login(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -521,7 +527,7 @@ async def dev_login(
         value=jwt_token,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite="strict",
         max_age=settings.jwt_expiration_days * 24 * 60 * 60,
         domain=settings.cookie_domain,
     )

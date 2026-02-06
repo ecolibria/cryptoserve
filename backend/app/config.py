@@ -1,5 +1,9 @@
 """Application configuration."""
 
+import secrets
+from typing import Optional
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -13,8 +17,8 @@ class Settings(BaseSettings):
     # Development mode (bypasses OAuth) - MUST be False in production
     dev_mode: bool = False
 
-    # Database
-    database_url: str = "postgresql+asyncpg://cryptoserve:localdev@localhost:5432/cryptoserve"
+    # Database (SQLite default is safe for dev; production must set a real connection string)
+    database_url: str = "sqlite+aiosqlite:///./cryptoserve.db"
 
     # Database connection pool (for horizontal scaling)
     db_pool_size: int = 10  # Base connections per instance
@@ -33,17 +37,46 @@ class Settings(BaseSettings):
     # Whether to require email domain verification (set False for open access)
     require_domain_verification: bool = True
 
-    # Security
-    cryptoserve_master_key: str = "dev-master-key-change-in-production"
-    jwt_secret_key: str = "dev-jwt-secret-change-in-production"
+    # Security - NO hardcoded defaults. Production requires explicit values.
+    # In dev_mode, random values are generated at startup.
+    cryptoserve_master_key: Optional[str] = None
+    jwt_secret_key: Optional[str] = None
     jwt_algorithm: str = "HS256"
     jwt_expiration_days: int = 1
 
     # HKDF salt for key derivation (should be unique per deployment)
-    hkdf_salt: str = "cryptoserve-v1-change-in-production"
+    hkdf_salt: Optional[str] = None
 
     # OAuth CSRF secret for state parameter
-    oauth_state_secret: str = "oauth-state-secret-change-in-production"
+    oauth_state_secret: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _set_dev_defaults(self) -> "Settings":
+        """Generate random secrets in dev mode; require explicit secrets otherwise."""
+        if self.dev_mode:
+            if not self.cryptoserve_master_key:
+                self.cryptoserve_master_key = secrets.token_hex(32)
+            if not self.jwt_secret_key:
+                self.jwt_secret_key = secrets.token_hex(32)
+            if not self.hkdf_salt:
+                self.hkdf_salt = secrets.token_hex(16)
+            if not self.oauth_state_secret:
+                self.oauth_state_secret = secrets.token_hex(32)
+        else:
+            missing = []
+            if not self.cryptoserve_master_key:
+                missing.append("CRYPTOSERVE_MASTER_KEY")
+            if not self.jwt_secret_key:
+                missing.append("JWT_SECRET_KEY")
+            if not self.hkdf_salt:
+                missing.append("HKDF_SALT")
+            if not self.oauth_state_secret:
+                missing.append("OAUTH_STATE_SECRET")
+            if missing:
+                raise ValueError(
+                    f"Missing required secrets (set DEV_MODE=true for development): {', '.join(missing)}"
+                )
+        return self
 
     # Cookie security
     cookie_secure: bool = False  # Set True in production with HTTPS

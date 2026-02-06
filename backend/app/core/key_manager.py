@@ -30,6 +30,7 @@ from app.config import get_settings
 from app.models import Key, KeyStatus, KeyType, PQCKey
 from .kms import get_kms_provider
 from .kms.base import KMSError
+from .secure_memory import secure_zero
 
 if TYPE_CHECKING:
     from .kms.base import KMSProvider
@@ -359,14 +360,18 @@ class KeyManager:
             key_type: Type of PQC key (KEM or SIG)
         """
         # Derive encryption key for this context
-        encryption_key = await self.derive_key(context, version=1, key_size=KEY_SIZE_256)
+        encryption_key_bytes = await self.derive_key(context, version=1, key_size=KEY_SIZE_256)
+        encryption_key = bytearray(encryption_key_bytes)
 
-        # Generate nonce and encrypt private key
-        nonce = secrets.token_bytes(12)  # 96-bit nonce for AES-GCM
-        aesgcm = AESGCM(encryption_key)
-        encrypted_private_key = aesgcm.encrypt(
-            nonce, private_key, associated_data=f"{context}:{key_id}:{algorithm}".encode()
-        )
+        try:
+            # Generate nonce and encrypt private key
+            nonce = secrets.token_bytes(12)  # 96-bit nonce for AES-GCM
+            aesgcm = AESGCM(bytes(encryption_key))
+            encrypted_private_key = aesgcm.encrypt(
+                nonce, private_key, associated_data=f"{context}:{key_id}:{algorithm}".encode()
+            )
+        finally:
+            secure_zero(encryption_key)
 
         # Store in database
         pqc_key = PQCKey(
@@ -409,11 +414,12 @@ class KeyManager:
             return None
 
         # Derive decryption key
-        encryption_key = await self.derive_key(context, version=1, key_size=KEY_SIZE_256)
+        encryption_key_bytes = await self.derive_key(context, version=1, key_size=KEY_SIZE_256)
+        encryption_key = bytearray(encryption_key_bytes)
 
         # Decrypt private key
         try:
-            aesgcm = AESGCM(encryption_key)
+            aesgcm = AESGCM(bytes(encryption_key))
             private_key = aesgcm.decrypt(
                 pqc_key.private_key_nonce,
                 pqc_key.encrypted_private_key,
@@ -423,6 +429,8 @@ class KeyManager:
         except Exception as e:
             logger.error(f"Failed to decrypt PQC key {key_id}: {e}")
             return None
+        finally:
+            secure_zero(encryption_key)
 
     async def get_pqc_public_key(
         self,

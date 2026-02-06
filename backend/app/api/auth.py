@@ -1,19 +1,27 @@
 """Authentication API routes.
 
-Provides token refresh and verification endpoints for SDK clients:
+Provides token refresh, verification, and revocation endpoints:
 - Refresh access token using refresh token
 - Verify access token (for debugging)
+- Revoke access token (logout / token invalidation)
 """
 
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.core.application_manager import application_manager
+from app.auth.jwt import (
+    get_current_user,
+    verify_token as jwt_verify_token,
+    revoke_token,
+)
+from app.models import User
+from app.core.slowapi_limiter import limiter
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -56,13 +64,27 @@ class TokenVerifyResponse(BaseModel):
     error: str | None = None
 
 
+class TokenRevokeRequest(BaseModel):
+    """Token revocation request."""
+
+    token: str | None = None
+
+
+class TokenRevokeResponse(BaseModel):
+    """Token revocation response."""
+
+    revoked: bool
+
+
 # ============================================================================
 # API Endpoints
 # ============================================================================
 
 
 @router.post("/refresh", response_model=TokenRefreshResponse)
+@limiter.limit("10/minute")
 async def refresh_token(
+    request: Request,
     data: TokenRefreshRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -94,7 +116,9 @@ async def refresh_token(
 
 
 @router.post("/verify", response_model=TokenVerifyResponse)
+@limiter.limit("30/minute")
 async def verify_token(
+    request: Request,
     data: TokenVerifyRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -143,3 +167,51 @@ async def verify_token(
         contexts=payload.get("contexts"),
         expires_at=expires_at,
     )
+
+
+@router.post("/revoke", response_model=TokenRevokeResponse)
+@limiter.limit("10/minute")
+async def revoke_token_endpoint(
+    request: Request,
+    data: TokenRevokeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Revoke a JWT access token.
+
+    If a token is provided in the request body, that token is revoked.
+    Otherwise, the caller's current token (from header or cookie) is revoked.
+
+    Requires authentication.
+    """
+    token_to_revoke = data.token
+    if not token_to_revoke:
+        # Revoke the current token from header or cookie
+        auth_header = request.headers.get("authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token_to_revoke = auth_header[7:]
+        else:
+            token_to_revoke = request.cookies.get("access_token")
+
+    if not token_to_revoke:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No token provided and no current token found",
+        )
+
+    payload = jwt_verify_token(token_to_revoke)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired token",
+        )
+
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token does not contain a jti claim",
+        )
+
+    revoke_token(jti)
+    return TokenRevokeResponse(revoked=True)

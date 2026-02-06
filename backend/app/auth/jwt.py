@@ -1,5 +1,6 @@
 """JWT token handling for user sessions."""
 
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -16,6 +17,19 @@ from app.models import User
 settings = get_settings()
 security = HTTPBearer(auto_error=False)
 
+# TODO: Replace with Redis-backed store for distributed deployments
+_revoked_tokens: set[str] = set()
+
+
+def revoke_token(jti: str) -> None:
+    """Add a token's jti to the revocation set."""
+    _revoked_tokens.add(jti)
+
+
+def is_token_revoked(jti: str) -> bool:
+    """Check if a token has been revoked by its jti."""
+    return jti in _revoked_tokens
+
 
 def create_access_token(user_id: str, github_username: str) -> str:
     """Create JWT access token for user session."""
@@ -25,6 +39,7 @@ def create_access_token(user_id: str, github_username: str) -> str:
         "username": github_username,
         "exp": expires,
         "iat": datetime.now(timezone.utc),
+        "jti": secrets.token_hex(16),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
@@ -67,6 +82,14 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
+        )
+
+    # Check if the token has been revoked
+    jti = payload.get("jti")
+    if jti and is_token_revoked(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
         )
 
     user_id = payload.get("sub")
@@ -147,6 +170,14 @@ async def get_dashboard_or_sdk_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
+        )
+
+    # Check if the token has been revoked
+    jti = payload.get("jti")
+    if jti and is_token_revoked(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
         )
 
     user_id = payload.get("sub")

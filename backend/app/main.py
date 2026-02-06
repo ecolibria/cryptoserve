@@ -18,9 +18,9 @@ setup_logging(json_output=_is_production, level="INFO")
 logger = get_logger("cryptoserve")
 
 # Rate limiting (required)
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from app.core.slowapi_limiter import limiter
 
 from app import __version__
 from app.config import get_settings
@@ -87,8 +87,7 @@ from app.core.algorithm_resolver import resolve_algorithm
 
 settings = get_settings()
 
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
+# Rate limiter (imported from app.core.slowapi_limiter to avoid circular imports)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -100,12 +99,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-XSS-Protection"] = "0"
+        response.headers["Referrer-Policy"] = "no-referrer"
+
+        # Cache control - prevent caching of sensitive data
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+
+        # Permissions Policy - disable unnecessary browser features
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+        )
 
         # Only add HSTS in production with HTTPS
         if settings.is_production:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
 
         # Content Security Policy for API responses
         response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"

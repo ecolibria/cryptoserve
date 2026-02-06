@@ -635,11 +635,20 @@ async def batch_encrypt(
                 "Batch encrypt failed for item %s in context %s: %s",
                 item.id, data.context, e,
             )
+            # Sanitize error messages - never expose internal details to client
+            if isinstance(e, AuthorizationError):
+                safe_error = "Not authorized"
+            elif isinstance(e, ContextNotFoundError):
+                safe_error = "Context not found"
+            elif isinstance(e, CryptoError):
+                safe_error = "Encryption failed"
+            else:
+                safe_error = "Internal error"
             results.append(
                 BatchEncryptResultItem(
                     id=item.id,
                     success=False,
-                    error=str(e),
+                    error=safe_error,
                 )
             )
             failed += 1
@@ -717,11 +726,20 @@ async def batch_decrypt(
                 "Batch decrypt failed for item %s in context %s: %s",
                 item.id, data.context, e,
             )
+            # Sanitize error messages - never expose internal details to client
+            if isinstance(e, AuthorizationError):
+                safe_error = "Not authorized"
+            elif isinstance(e, ContextNotFoundError):
+                safe_error = "Context not found"
+            elif isinstance(e, CryptoError):
+                safe_error = "Decryption failed"
+            else:
+                safe_error = "Internal error"
             results.append(
                 BatchDecryptResultItem(
                     id=item.id,
                     success=False,
-                    error=str(e),
+                    error=safe_error,
                 )
             )
             failed += 1
