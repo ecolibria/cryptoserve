@@ -48,5 +48,9 @@ class AuditLog(Base):
     # Enables admins to see actual usage patterns vs policy assumptions
     usage: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)  # at_rest, in_transit, streaming
 
+    # HMAC-SHA256 integrity hash over key fields (timestamp + identity + operation + context + success)
+    # Chain linking (hash of previous record) planned for v1.1
+    integrity_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     def __repr__(self) -> str:
         return f"<AuditLog {self.operation} {self.identity_id}>"

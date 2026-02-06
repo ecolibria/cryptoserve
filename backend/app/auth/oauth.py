@@ -6,6 +6,7 @@ Supports GitHub, Google, Azure AD, Okta, and generic OIDC.
 
 import hashlib
 import hmac
+import logging
 import secrets
 import time
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from app.auth.providers import get_provider
 from app.auth.providers.registry import list_providers
 from app.core.slowapi_limiter import limiter
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -501,6 +503,15 @@ async def dev_login(
         await db.commit()
 
     jwt_token = create_access_token(user.id, user.github_username)
+
+    logger.warning(
+        "Dev login activated",
+        extra={
+            "event": "dev_login",
+            "client_ip": request.client.host if request.client else "unknown",
+            "user_id": user.id if hasattr(user, 'id') else "dev-admin",
+        }
+    )
 
     if cli_callback:
         from urllib.parse import urlencode

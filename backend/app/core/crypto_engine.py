@@ -23,6 +23,7 @@ from cryptography.hazmat.backends import default_backend
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models import Context, Identity, AuditLog, PolicyViolationLog
 from app.core.key_manager import key_manager
 from app.core.policy_engine import (
@@ -677,6 +678,15 @@ class CryptoEngine:
                 # Runtime usage tracking (how devs actually use contexts)
                 usage=effective_usage.value if effective_usage else None,
             )
+            # Compute HMAC-SHA256 integrity hash over key audit fields
+            # Chain linking (hash of previous record) planned for v1.1
+            _settings = get_settings()
+            integrity_msg = f"{audit.timestamp}|{identity.id}|encrypt|{context_name}|{success}"
+            audit.integrity_hash = hmac.new(
+                _settings.jwt_secret_key.encode(),
+                integrity_msg.encode(),
+                hashlib.sha256,
+            ).hexdigest()
             db.add(audit)
             await db.commit()
 
@@ -1336,6 +1346,15 @@ class CryptoEngine:
                 quantum_safe=audit_quantum_safe,
                 policy_violation=False,
             )
+            # Compute HMAC-SHA256 integrity hash over key audit fields
+            # Chain linking (hash of previous record) planned for v1.1
+            _settings = get_settings()
+            integrity_msg = f"{audit.timestamp}|{identity.id}|decrypt|{context_name}|{success}"
+            audit.integrity_hash = hmac.new(
+                _settings.jwt_secret_key.encode(),
+                integrity_msg.encode(),
+                hashlib.sha256,
+            ).hexdigest()
             db.add(audit)
             await db.commit()
 

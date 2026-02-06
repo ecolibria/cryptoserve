@@ -1,29 +1,29 @@
 # FastAPI and server
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-python-multipart>=0.0.6
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.6
 
 # Database
-sqlalchemy[asyncio]>=2.0.0
-asyncpg>=0.29.0
-alembic>=1.13.0
+sqlalchemy[asyncio]==2.0.25
+asyncpg==0.29.0
+alembic==1.16.4
 
 # Authentication
-pyjwt>=2.8.0
-cryptography>=42.0.0
-httpx>=0.26.0
+pyjwt==2.10.1
+cryptography==43.0.3
+httpx==0.28.1
 
 # Validation
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-email-validator>=2.1.0
+pydantic==2.12.5
+pydantic-settings==2.10.1
+email-validator==2.1.0
 
 # Utilities
-python-slugify>=8.0.0
+python-slugify==8.0.4
 
 # Security
-slowapi>=0.1.9
-pycryptodome>=3.20.0
+slowapi==0.1.9
+pycryptodome==3.23.0
 
 # Post-Quantum Cryptography (NIST FIPS 203/204)
 # liboqs-python requires the liboqs C library to be installed
@@ -31,4 +31,4 @@ pycryptodome>=3.20.0
 # See requirements-pqc.txt for optional PQC dependencies
 
 # Monitoring
-prometheus-client>=0.19.0
+prometheus-client==0.19.0

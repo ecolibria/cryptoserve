@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,8 +77,8 @@ class ContextListResponse(BaseModel):
 class ContextCreateLegacy(BaseModel):
     """Legacy context creation schema for backward compatibility."""
 
-    name: str
-    display_name: str
+    name: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+    display_name: str = Field(..., max_length=128)
     description: str
     data_examples: list[str] | None = None
     compliance_tags: list[str] | None = None
@@ -88,8 +88,8 @@ class ContextCreateLegacy(BaseModel):
 class ContextUpdateSchema(BaseModel):
     """Schema for updating an existing context."""
 
-    name: str
-    display_name: str
+    name: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+    display_name: str = Field(..., max_length=128)
     description: str
     config: ContextConfig
     algorithm_policy: AlgorithmPolicy | None = None

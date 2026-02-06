@@ -83,6 +83,7 @@ class KeyManager:
         context: str,
         version: int = 1,
         key_size: int = KEY_SIZE_256,
+        tenant_id: str | None = None,
     ) -> bytes:
         """Derive a key for a context using the KMS provider.
 
@@ -93,18 +94,23 @@ class KeyManager:
             context: Context name for key derivation
             version: Key version number
             key_size: Key size in bytes (16, 24, 32, or 64)
+            tenant_id: Optional tenant ID for per-tenant key isolation
 
         Returns:
             Derived key material of specified size
         """
         kms = await self._ensure_initialized()
-        return await kms.derive_key(context, version, key_size)
+        # Per-tenant key isolation: qualify the context with tenant_id
+        # so different tenants derive different keys for the same context name
+        qualified_context = f"{context}:{tenant_id}" if tenant_id else context
+        return await kms.derive_key(qualified_context, version, key_size)
 
     def derive_key_sync(
         self,
         context: str,
         version: int = 1,
         key_size: int = KEY_SIZE_256,
+        tenant_id: str | None = None,
     ) -> bytes:
         """Synchronous key derivation for backward compatibility.
 
@@ -115,7 +121,12 @@ class KeyManager:
         from cryptography.hazmat.primitives import hashes
 
         info = f"{context}:{version}:{key_size}".encode()
-        salt = settings.hkdf_salt.encode()
+        # Per-tenant key isolation: incorporate tenant_id into salt
+        # so different tenants derive different keys for the same context
+        if tenant_id:
+            salt = f"{settings.hkdf_salt}:{tenant_id}".encode()
+        else:
+            salt = settings.hkdf_salt.encode()
 
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -211,8 +222,8 @@ class KeyManager:
             await db.commit()
             await db.refresh(key_record)
 
-        # Derive actual key material with specified size
-        key = await self.derive_key(context, key_record.version, key_size)
+        # Derive actual key material with specified size (per-tenant isolation)
+        key = await self.derive_key(context, key_record.version, key_size, tenant_id=tenant_id)
 
         return key, key_record.id
 
@@ -238,7 +249,10 @@ class KeyManager:
         if not key_record:
             return None
 
-        return await self.derive_key(key_record.context, key_record.version, key_size)
+        return await self.derive_key(
+            key_record.context, key_record.version, key_size,
+            tenant_id=str(key_record.tenant_id),
+        )
 
     async def rotate_key(
         self,
@@ -284,7 +298,7 @@ class KeyManager:
         db.add(new_key)
         await db.commit()
 
-        key = await self.derive_key(context, new_version, key_size)
+        key = await self.derive_key(context, new_version, key_size, tenant_id=tenant_id)
 
         logger.info(
             f"Key rotated for context '{context}': " f"v{new_version - 1 if new_version > 1 else 0} -> v{new_version}"

@@ -793,13 +793,17 @@ async def health_readiness(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         # Graceful degradation - return error info instead of 500
         logger.error(f"Readiness check failed unexpectedly: {e}")
+        content = {
+            "status": "unhealthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "checks": {},
+        }
+        if settings.is_production:
+            content["error"] = "Service unavailable"
+        else:
+            content["error"] = str(e)
         return JSONResponse(
-            content={
-                "status": "unhealthy",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "error": str(e),
-                "checks": {},
-            },
+            content=content,
             status_code=503,
         )
 

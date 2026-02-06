@@ -35,8 +35,8 @@ security = HTTPBearer()
 class EncryptRequest(BaseModel):
     """Encryption request schema."""
 
-    plaintext: str  # Base64 encoded
-    context: str
+    plaintext: str = Field(..., max_length=10_000_000)  # Base64 encoded (10MB base64 ~ 7.5MB raw)
+    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
     usage: EncryptionUsageContext | None = Field(
         default=None,
         description="Runtime usage hint: How is this data being used? "
@@ -50,6 +50,7 @@ class EncryptRequest(BaseModel):
     )
     associated_data: str | None = Field(
         default=None,
+        max_length=1_000_000,
         description="Optional: Additional authenticated data (AAD) - base64 encoded. "
         "AAD is authenticated but not encrypted. Supported by AEAD modes "
         "(GCM, CCM, ChaCha20-Poly1305). Must provide same AAD for decryption.",
@@ -82,10 +83,11 @@ class EncryptResponse(BaseModel):
 class DecryptRequest(BaseModel):
     """Decryption request schema."""
 
-    ciphertext: str  # Base64 encoded
-    context: str
+    ciphertext: str = Field(..., max_length=10_000_000)  # Base64 encoded (10MB base64 ~ 7.5MB raw)
+    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
     associated_data: str | None = Field(
         default=None,
+        max_length=1_000_000,
         description="Optional: Additional authenticated data (AAD) - base64 encoded. "
         "Must match AAD used during encryption if AAD was used.",
     )
@@ -378,14 +380,14 @@ async def decrypt(
 class KeyBundleRequest(BaseModel):
     """Request for encryption key bundle."""
 
-    context: str = Field(..., description="Encryption context name")
+    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context name")
 
 
 class KeyBundleResponse(BaseModel):
     """Response containing encryption key for local caching."""
 
     key: str = Field(..., description="Base64-encoded encryption key")
-    key_id: str = Field(..., description="Key identifier")
+    key_id: str = Field(..., max_length=128, description="Key identifier")
     algorithm: str = Field(..., description="Algorithm name (e.g., AES-256-GCM)")
     version: int = Field(..., description="Key version")
     ttl: int = Field(default=300, description="Recommended cache TTL in seconds")
@@ -479,15 +481,15 @@ async def get_key_bundle(
 class BatchEncryptItem(BaseModel):
     """Single item in a batch encryption request."""
 
-    id: str = Field(..., description="Client-provided ID for tracking")
-    plaintext: str = Field(..., description="Base64-encoded plaintext")
-    associated_data: str | None = Field(default=None, description="Optional AAD (base64)")
+    id: str = Field(..., max_length=128, description="Client-provided ID for tracking")
+    plaintext: str = Field(..., max_length=10_000_000, description="Base64-encoded plaintext")
+    associated_data: str | None = Field(default=None, max_length=1_000_000, description="Optional AAD (base64)")
 
 
 class BatchEncryptRequest(BaseModel):
     """Batch encryption request."""
 
-    context: str = Field(..., description="Encryption context (all items use same context)")
+    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context (all items use same context)")
     usage: EncryptionUsageContext | None = Field(
         default=None,
         description="Runtime usage hint for all items in this batch. "
@@ -526,15 +528,15 @@ class BatchEncryptResponse(BaseModel):
 class BatchDecryptItem(BaseModel):
     """Single item in a batch decryption request."""
 
-    id: str = Field(..., description="Client-provided ID for tracking")
-    ciphertext: str = Field(..., description="Base64-encoded ciphertext")
-    associated_data: str | None = Field(default=None, description="Optional AAD (base64)")
+    id: str = Field(..., max_length=128, description="Client-provided ID for tracking")
+    ciphertext: str = Field(..., max_length=10_000_000, description="Base64-encoded ciphertext")
+    associated_data: str | None = Field(default=None, max_length=1_000_000, description="Optional AAD (base64)")
 
 
 class BatchDecryptRequest(BaseModel):
     """Batch decryption request."""
 
-    context: str = Field(..., description="Encryption context (all items use same context)")
+    context: str = Field(..., max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", description="Encryption context (all items use same context)")
     items: list[BatchDecryptItem] = Field(
         ...,
         description="Items to decrypt (max 100 per batch)",

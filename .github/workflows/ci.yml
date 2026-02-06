@@ -105,7 +105,7 @@ jobs:
       - name: Run SDK tests
         run: |
           cd sdk/python
-          pytest tests/ -v --tb=short || echo "No SDK tests found"
+          pytest tests/ -v --tb=short
 
   security:
     runs-on: ubuntu-latest

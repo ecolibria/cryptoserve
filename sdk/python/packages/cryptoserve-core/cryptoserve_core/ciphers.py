@@ -90,6 +90,17 @@ class AESGCMCipher:
         except Exception as e:
             raise CipherError(f"Decryption failed: {e}") from e
 
+    def close(self):
+        """Explicitly clear key material. Use for deterministic cleanup."""
+        self._cipher = None
+
+    def __del__(self):
+        """Best-effort key cleanup."""
+        try:
+            self._cipher = None
+        except Exception:
+            pass
+
 
 class ChaCha20Cipher:
     """
@@ -164,3 +175,14 @@ class ChaCha20Cipher:
             return self._cipher.decrypt(nonce, ciphertext, associated_data)
         except Exception as e:
             raise CipherError(f"Decryption failed: {e}") from e
+
+    def close(self):
+        """Explicitly clear key material. Use for deterministic cleanup."""
+        self._cipher = None
+
+    def __del__(self):
+        """Best-effort key cleanup."""
+        try:
+            self._cipher = None
+        except Exception:
+            pass
