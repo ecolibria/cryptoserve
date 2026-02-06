@@ -28,6 +28,7 @@ dependencies = [
     "cryptoserve-core>=0.1.0",
     "cryptoserve-client>=0.1.0",
     "cryptography>=41.0.0",  # For local key caching
+    "pyyaml>=6.0",  # For policy gate YAML parsing
 ]
 
 [project.urls]
