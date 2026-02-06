@@ -1,0 +1,204 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write  # Required for OIDC Trusted Publishers
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install backend dependencies and run tests
+        env:
+          STARTUP_VALIDATION_LEVEL: skip
+        run: |
+          cd backend
+          pip install -r requirements-dev.txt
+          pytest -v --tb=short -x
+
+      - name: Install SDK and run tests
+        run: |
+          cd sdk/python
+          pip install -e .
+          pip install pytest
+          pytest tests/ -v --tb=short -x
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build cryptoserve-core
+        run: cd sdk/python/packages/cryptoserve-core && python -m build
+
+      - name: Build cryptoserve-client
+        run: cd sdk/python/packages/cryptoserve-client && python -m build
+
+      - name: Build cryptoserve-auto
+        run: cd sdk/python/packages/cryptoserve-auto && python -m build
+
+      - name: Build cryptoserve
+        run: cd sdk/python && python -m build
+
+      - name: Verify packages
+        run: |
+          pip install twine
+          twine check sdk/python/packages/cryptoserve-core/dist/*
+          twine check sdk/python/packages/cryptoserve-client/dist/*
+          twine check sdk/python/packages/cryptoserve-auto/dist/*
+          twine check sdk/python/dist/*
+
+      - name: Upload cryptoserve-core artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-cryptoserve-core
+          path: sdk/python/packages/cryptoserve-core/dist/
+
+      - name: Upload cryptoserve-client artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-cryptoserve-client
+          path: sdk/python/packages/cryptoserve-client/dist/
+
+      - name: Upload cryptoserve-auto artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-cryptoserve-auto
+          path: sdk/python/packages/cryptoserve-auto/dist/
+
+      - name: Upload cryptoserve artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-cryptoserve
+          path: sdk/python/dist/
+
+  publish-core:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-cryptoserve-core
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-client:
+    needs: publish-core
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-cryptoserve-client
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-auto:
+    needs: publish-core
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-cryptoserve-auto
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-main:
+    needs: [publish-core, publish-client]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-cryptoserve
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  provenance:
+    needs: [publish-core, publish-client, publish-auto, publish-main]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-dist/
+
+      - name: Generate checksums
+        run: |
+          cd all-dist
+          find . -name "*.whl" -o -name "*.tar.gz" | sort | while read f; do
+            sha256sum "$f"
+          done > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          gh release create "$TAG" \
+            --title "CryptoServe SDK $TAG" \
+            --generate-notes \
+            SHA256SUMS.txt \
+            all-dist/dist-cryptoserve-core/*.whl \
+            all-dist/dist-cryptoserve-client/*.whl \
+            all-dist/dist-cryptoserve-auto/*.whl \
+            all-dist/dist-cryptoserve/*.whl
