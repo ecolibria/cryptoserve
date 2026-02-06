@@ -277,42 +277,79 @@ def cmd_logout():
 
 def cmd_verify():
     """Verify SDK health."""
-    from cryptoserve import crypto
+    import time
+    import requests as req
 
     print(compact_header("VERIFY"))
     print(dim("  Checking SDK health..."))
     print()
 
-    result = crypto.verify()
+    server_url = _get_cli_server_url()
 
     print(divider())
     print()
 
-    if result:
-        print(f"  {success('SDK Connected')}")
+    try:
+        start = time.time()
+        resp = req.get(f"{server_url}/health", timeout=10)
+        latency_ms = (time.time() - start) * 1000
+        if resp.status_code == 200:
+            data = resp.json()
+            print(f"  {success('SDK Connected')}")
+            print()
+            print(f"  {bold('Server:')}   {server_url}")
+            print(f"  {bold('Status:')}   {data.get('status', 'ok')}")
+            print(f"  {bold('Latency:')}  {latency_ms:.0f}ms")
+            print()
+            return 0
+        else:
+            print(f"  {error('Server returned ' + str(resp.status_code))}")
+            print()
+            return 1
+    except req.exceptions.ConnectionError:
+        print(f"  {error('Cannot connect to server')}")
+        print(f"  {dim(f'  Server URL: {server_url}')}")
         print()
-        print(f"  {bold('Status:')}      {result.status}")
-        print(f"  {bold('Identity:')}    {result.identity_name}")
-        print(f"  {bold('Latency:')}     {result.latency_ms:.0f}ms")
-        print(f"  {bold('Contexts:')}    {', '.join(result.allowed_contexts)}")
-    else:
-        print(f"  {error('SDK Connection Failed')}")
+        print(dim("  Make sure the server is running:"))
+        print(dim("    docker compose up -d"))
         print()
-        print(f"  {bold('Status:')}  {result.status}")
-        print(f"  {bold('Error:')}   {result.error}")
-
-    print()
-    return 0 if result else 1
+        return 1
+    except Exception as e:
+        print(f"  {error(f'Health check failed: {e}')}")
+        print()
+        return 1
 
 
 def cmd_info():
     """Show identity info."""
-    from cryptoserve import crypto
+    import requests as req
 
     print(compact_header("INFO"))
 
+    server_url = _get_cli_server_url()
+    session_cookie = _get_session_cookie()
+
+    if not session_cookie:
+        print(f"  {error('Not logged in. Run: cryptoserve login')}")
+        print()
+        return 1
+
     try:
-        identity = crypto.get_identity()
+        resp = req.get(
+            f"{server_url}/api/v1/identity",
+            cookies={"session": session_cookie},
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            print(f"  {error('Session expired. Run: cryptoserve login')}")
+            print()
+            return 1
+        resp.raise_for_status()
+        identity = resp.json()
+    except req.exceptions.ConnectionError:
+        print(f"  {error(f'Cannot connect to server at {server_url}')}")
+        print()
+        return 1
     except Exception as e:
         print(f"  {error('Failed to get identity info')}")
         print(f"  {dim(str(e))}")
@@ -437,12 +474,22 @@ def cmd_configure():
         print(divider())
         print()
         print(dim("  Verifying token..."))
-        from cryptoserve import crypto
-        result = crypto.verify()
-        if result:
-            print(f"  {success(f'Token valid')} {dim(f'Identity: {result.identity_name}')}")
-        else:
-            print(f"  {warning(f'Verification failed: {result.error}')}")
+        import requests as req
+        try:
+            from cryptoserve._identity import get_server_url
+            resp = req.get(
+                f"{get_server_url()}/health",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                print(f"  {success('Token valid')} {dim('Server reachable')}")
+            else:
+                print(f"  {warning(f'Server returned {resp.status_code}')}")
+        except req.exceptions.ConnectionError:
+            print(f"  {warning('Cannot reach server to verify token')}")
+        except Exception as e:
+            print(f"  {warning(f'Verification failed: {e}')}")
         print()
 
     return 0
@@ -551,13 +598,21 @@ def cmd_status():
     print()
 
     if is_configured():
-        # Try to verify
-        from cryptoserve import crypto
-        result = crypto.verify()
-        if result:
-            print(f"  {success('SDK Connected')} {dim(f'(latency: {result.latency_ms:.0f}ms)')}")
-        else:
-            print(f"  {error('Connection Failed')} {dim(f'({result.error})')}")
+        # Try to verify via health endpoint
+        import time
+        import requests as req
+        try:
+            start = time.time()
+            resp = req.get(f"{get_server_url()}/health", timeout=10)
+            latency_ms = (time.time() - start) * 1000
+            if resp.status_code == 200:
+                print(f"  {success('SDK Connected')} {dim(f'(latency: {latency_ms:.0f}ms)')}")
+            else:
+                print(f"  {error(f'Server returned {resp.status_code}')}")
+        except req.exceptions.ConnectionError:
+            print(f"  {error('Cannot connect to server')}")
+        except Exception as e:
+            print(f"  {error(f'Connection Failed')} {dim(str(e))}")
     else:
         print(f"  {warning('SDK Not Configured')}")
         print()

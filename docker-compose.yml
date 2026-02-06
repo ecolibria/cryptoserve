@@ -24,8 +24,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://cryptoserve:localdev@postgres:5432/cryptoserve
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-      CRYPTOSERVE_MASTER_KEY: ${CRYPTOSERVE_MASTER_KEY:-dev-master-key-change-in-production}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      CRYPTOSERVE_MASTER_KEY: ${CRYPTOSERVE_MASTER_KEY:-650c3daddd7c6efee7f5cdb3a4645a497b6132643d93f3c007d7e99a87155993}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2}
       FRONTEND_URL: http://localhost:3003
       BACKEND_URL: http://localhost:8003
       DEV_MODE: "true"
