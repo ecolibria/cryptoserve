@@ -122,10 +122,10 @@ class TestCryptoClientEncryptDecrypt:
 
             client.encrypt(b"plaintext", "default", associated_data=b"aad")
 
-            # Verify AAD was included in request
+            # Verify associated_data was included in request
             call_args = mock_post.call_args
             json_data = call_args.kwargs.get("json", call_args[1].get("json"))
-            assert "aad" in json_data
+            assert "associated_data" in json_data
 
 
 class TestCryptoClientErrors:

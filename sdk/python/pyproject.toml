@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryptoserve"
-version = "0.8.0"
+version = "1.0.0"
 description = "CryptoServe SDK - Zero-config cryptographic operations with auto-registration and local key caching"
 readme = "README.md"
-license = {text = "AGPL-3.0"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "CryptoServe", email = "hello@cryptoserve.dev"}
@@ -31,9 +31,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cryptoserve/cryptoserve"
+Homepage = "https://github.com/ecolibria/crypto-serve"
 Documentation = "https://docs.cryptoserve.dev"
-Repository = "https://github.com/cryptoserve/cryptoserve"
+Repository = "https://github.com/ecolibria/crypto-serve"
 
 [project.optional-dependencies]
 fastapi = [

@@ -116,7 +116,7 @@ class CryptoClient:
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
-            "User-Agent": "cryptoserve-sdk/0.1.0",
+            "User-Agent": "cryptoserve-sdk/1.0.0",
         })
         self._update_auth_header()
 
@@ -272,7 +272,7 @@ class CryptoClient:
             "context": context,
         }
         if associated_data:
-            payload["aad"] = base64.b64encode(associated_data).decode("ascii")
+            payload["associated_data"] = base64.b64encode(associated_data).decode("ascii")
         if usage:
             payload["usage"] = usage.value if isinstance(usage, Usage) else usage
 
@@ -326,7 +326,7 @@ class CryptoClient:
             "context": context,
         }
         if associated_data:
-            payload["aad"] = base64.b64encode(associated_data).decode("ascii")
+            payload["associated_data"] = base64.b64encode(associated_data).decode("ascii")
 
         response = self.session.post(
             f"{self.server_url}/v1/crypto/decrypt",
@@ -452,7 +452,7 @@ class CryptoClient:
         response = self.session.post(
             f"{self.server_url}/v1/crypto/sign",
             json={
-                "data": base64.b64encode(data).decode("ascii"),
+                "message": base64.b64encode(data).decode("ascii"),
                 "key_id": key_id,
             },
             timeout=self.timeout,
@@ -463,7 +463,7 @@ class CryptoClient:
             response = self.session.post(
                 f"{self.server_url}/v1/crypto/sign",
                 json={
-                    "data": base64.b64encode(data).decode("ascii"),
+                    "message": base64.b64encode(data).decode("ascii"),
                     "key_id": key_id,
                 },
                 timeout=self.timeout,
@@ -497,7 +497,7 @@ class CryptoClient:
         self._ensure_valid_token()
 
         payload = {
-            "data": base64.b64encode(data).decode("ascii"),
+            "message": base64.b64encode(data).decode("ascii"),
             "signature": base64.b64encode(signature).decode("ascii"),
             "key_id": key_id,
         }

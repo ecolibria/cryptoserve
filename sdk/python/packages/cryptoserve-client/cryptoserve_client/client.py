@@ -284,7 +284,7 @@ class CryptoClient:
         """
         return self._request("POST", "/v1/signatures/keys/generate", json={
             "algorithm": algorithm,
-            "key_id": key_id,
+            "context": key_id or "default",
         })
 
     def sign(self, data: bytes, key_id: str) -> bytes:
@@ -299,7 +299,7 @@ class CryptoClient:
             Signature bytes
         """
         response = self._request("POST", "/v1/signatures/sign", json={
-            "data": base64.b64encode(data).decode("ascii"),
+            "message": base64.b64encode(data).decode("ascii"),
             "key_id": key_id,
         })
         return base64.b64decode(response["signature"])
@@ -318,11 +318,10 @@ class CryptoClient:
             True if valid
         """
         payload = {
-            "data": base64.b64encode(data).decode("ascii"),
+            "message": base64.b64encode(data).decode("ascii"),
             "signature": base64.b64encode(signature).decode("ascii"),
+            "key_id": key_id or "",
         }
-        if key_id:
-            payload["key_id"] = key_id
         if public_key:
             payload["public_key"] = public_key
 
