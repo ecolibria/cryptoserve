@@ -14,7 +14,8 @@
   <a href="https://github.com/ecolibria/crypto-serve/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ecolibria/crypto-serve/ci.yml?branch=main&style=flat-square&label=build" alt="Build Status"></a>
   <a href="https://github.com/ecolibria/crypto-serve/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-1,380%20passed-brightgreen.svg?style=flat-square" alt="Tests"></a>
   <a href="https://github.com/ecolibria/crypto-serve/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License"></a>
-  <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square" alt="Python 3.10+"></a>
+  <a href="https://pypi.org/project/cryptoserve/"><img src="https://img.shields.io/pypi/v/cryptoserve.svg?style=flat-square" alt="PyPI"></a>
+  <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.9+-blue.svg?style=flat-square" alt="Python 3.9+"></a>
   <a href="https://cryptoserve.dev/docs/"><img src="https://img.shields.io/badge/docs-cryptoserve.dev-brightgreen.svg?style=flat-square" alt="Documentation"></a>
 </p>
 
@@ -67,7 +68,7 @@ Server: `http://localhost:8003` | Dashboard: `http://localhost:3003`
 ### 2. Install SDK and Login
 
 ```bash
-pip install -e sdk/python/
+pip install cryptoserve
 cryptoserve login  # Opens browser for GitHub auth
 ```
 
@@ -123,27 +124,28 @@ That's it. Your app auto-registers and is ready for production.
 
 ### Installation
 
-**Option 1: CLI Install (Recommended)**
+**Option 1: PyPI Install (Recommended)**
 
 ```bash
-pip install -e sdk/python/
+pip install cryptoserve
 cryptoserve login  # Opens browser for GitHub auth
 ```
 
 Your app auto-registers on first use - no manual setup needed.
 
-**Option 2: Dashboard Download**
+**Option 2: Install individual packages**
+
+```bash
+pip install cryptoserve-core    # Pure crypto primitives (standalone, no server needed)
+pip install cryptoserve-client  # API client only
+pip install cryptoserve-auto    # Auto-protect third-party libraries
+```
+
+**Option 3: Dashboard Download**
 
 1. Go to **Applications** in the dashboard (`http://localhost:3003/applications`)
 2. Create or select an application
-3. Click **Download SDK**
-4. Install the downloaded wheel:
-
-```bash
-pip install cryptoserve-*.whl
-```
-
-This embeds your credentials directly in the SDK package.
+3. Click **Download SDK** — embeds your credentials directly in the package
 
 ### Initialization
 
