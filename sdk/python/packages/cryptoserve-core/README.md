@@ -18,8 +18,8 @@ key = KeyDerivation.generate_key(256)
 
 # AES-256-GCM encryption
 cipher = AESGCMCipher(key)
-ciphertext, nonce, tag = cipher.encrypt(b"sensitive data")
-plaintext = cipher.decrypt(ciphertext, nonce, tag)
+ciphertext, nonce = cipher.encrypt(b"sensitive data")
+plaintext = cipher.decrypt(ciphertext, nonce)
 
 # ChaCha20-Poly1305 encryption
 cipher = ChaCha20Cipher(key)

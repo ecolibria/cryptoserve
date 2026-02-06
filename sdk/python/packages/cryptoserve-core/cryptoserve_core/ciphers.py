@@ -24,8 +24,8 @@ class AESGCMCipher:
 
     Example:
         cipher = AESGCMCipher(key)
-        ciphertext, nonce, tag = cipher.encrypt(b"secret")
-        plaintext = cipher.decrypt(ciphertext, nonce, tag)
+        ciphertext, nonce = cipher.encrypt(b"secret")
+        plaintext = cipher.decrypt(ciphertext, nonce)
     """
 
     NONCE_SIZE = 12  # 96 bits recommended for GCM
