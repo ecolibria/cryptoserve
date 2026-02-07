@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryptoserve-auto"
-version = "0.1.0"
+version = "0.2.0"
 description = "CryptoServe Auto-Protect - Automatic encryption for third-party libraries"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -25,7 +25,7 @@ classifiers = [
 ]
 keywords = ["cryptography", "encryption", "security", "auto-protect", "dependency-protection"]
 dependencies = [
-    "cryptoserve-core>=0.1.0",
+    "cryptoserve-core>=0.2.0",
 ]
 
 [project.urls]
