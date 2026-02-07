@@ -1,0 +1,243 @@
+name: Security Audit
+
+on:
+  push:
+    paths:
+      - 'sdk/python/**'
+  pull_request:
+    paths:
+      - 'sdk/python/**'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  crypto-audit:
+    name: Cryptographic Best Practices
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd sdk/python
+          pip install -e packages/cryptoserve-core
+
+      - name: Run crypto audit
+        run: |
+          cd sdk/python
+          python scripts/crypto_audit.py --path . --json > audit-results.json
+          python scripts/crypto_audit.py --path .
+
+      - name: Generate SARIF report
+        if: always()
+        run: |
+          cd sdk/python
+          python scripts/crypto_audit.py --path . --sarif > crypto-audit.sarif || true
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sdk/python/crypto-audit.sarif
+          category: crypto-audit
+        continue-on-error: true
+
+  dependency-audit:
+    name: Dependency Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd sdk/python
+          pip install -e packages/cryptoserve-core
+          pip install -e packages/cryptoserve-client
+          pip install -e packages/cryptoserve-auto
+          pip install -e .
+          pip install pip-audit
+
+      - name: Run pip-audit
+        run: |
+          cd sdk/python
+          pip-audit --strict --desc
+
+      - name: License compliance check
+        run: |
+          cd sdk/python
+          pip install pip-licenses
+          pip-licenses --allow-only="Apache Software License;MIT License;BSD License;ISC License (ISCL);Python Software Foundation License;Mozilla Public License 2.0 (MPL 2.0)" --fail-on-missing || echo "License check completed with warnings"
+
+  test-matrix:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          cd sdk/python
+          pip install -e packages/cryptoserve-core
+          pip install -e packages/cryptoserve-client
+          pip install -e packages/cryptoserve-auto
+          pip install -e ".[dev]"
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          cd sdk/python
+          pytest tests/ -v --tb=short --cov=cryptoserve --cov=cryptoserve_core --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: sdk/python/coverage.xml
+
+  bandit-scan:
+    name: Static Security Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install bandit
+        run: pip install bandit[sarif]
+
+      - name: Run bandit
+        run: |
+          bandit -r sdk/python/cryptoserve sdk/python/packages -f sarif -o bandit-results.sarif --severity-level high || true
+          bandit -r sdk/python/cryptoserve sdk/python/packages --severity-level high
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+        continue-on-error: true
+
+  format-validation:
+    name: Ciphertext Format Regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd sdk/python
+          pip install -e packages/cryptoserve-core
+          pip install -e packages/cryptoserve-client
+          pip install -e packages/cryptoserve-auto
+          pip install -e ".[dev]"
+          pip install pytest
+
+      - name: Validate easy blob format
+        run: |
+          cd sdk/python
+          python -c "
+          import cryptoserve_core as core
+
+          # Version 1 (single blob)
+          ct = core.encrypt(b'test data', 'password')
+          assert ct[0] == 1, f'Expected version 1, got {ct[0]}'
+          pt = core.decrypt(ct, 'password')
+          assert pt == b'test data', 'Decryption mismatch'
+
+          # String roundtrip
+          enc = core.encrypt_string('hello', 'pw')
+          assert core.decrypt_string(enc, 'pw') == 'hello'
+
+          print('Easy blob format: OK')
+          "
+
+      - name: Validate password hash format
+        run: |
+          cd sdk/python
+          python -c "
+          from cryptoserve_core import hash_password, verify_password
+
+          # scrypt format
+          h = hash_password('test', algorithm='scrypt')
+          assert h.startswith('\$scrypt\$'), f'Bad scrypt prefix: {h[:20]}'
+          assert verify_password('test', h)
+
+          # PBKDF2 format
+          h = hash_password('test', algorithm='pbkdf2')
+          assert h.startswith('\$pbkdf2-sha256\$'), f'Bad PBKDF2 prefix: {h[:20]}'
+          assert verify_password('test', h)
+
+          print('Password hash format: OK')
+          "
+
+      - name: Validate token format
+        run: |
+          cd sdk/python
+          python -c "
+          from cryptoserve_core import create_token, verify_token, decode_token
+
+          key = b'test-key-minimum-16b'
+          token = create_token({'sub': 'user-1'}, key=key)
+          parts = token.split('.')
+          assert len(parts) == 3, f'Expected 3 JWT parts, got {len(parts)}'
+
+          claims = verify_token(token, key=key)
+          assert claims['sub'] == 'user-1'
+
+          decoded = decode_token(token)
+          assert decoded['sub'] == 'user-1'
+
+          print('Token format: OK')
+          "
+
+      - name: Validate local mode format
+        run: |
+          cd sdk/python
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from cryptoserve._auto_register import CryptoServe
+
+          crypto = CryptoServe.local(password='test')
+          ct = crypto.encrypt(b'local test', context='ctx-a')
+
+          # Verify format: [ctx_len:2][context][nonce:12][ciphertext+tag]
+          ctx_len = int.from_bytes(ct[:2], 'big')
+          ctx = ct[2:2+ctx_len].decode('utf-8')
+          assert ctx == 'ctx-a', f'Expected ctx-a, got {ctx}'
+
+          pt = crypto.decrypt(ct, context='ctx-a')
+          assert pt == b'local test'
+
+          print('Local mode format: OK')
+          "

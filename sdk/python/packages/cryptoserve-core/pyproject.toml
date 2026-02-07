@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security :: Cryptography",
 ]
-keywords = ["cryptography", "encryption", "security", "aes", "chacha20"]
+keywords = ["cryptography", "encryption", "security", "aes", "chacha20", "password-hashing", "jwt", "file-encryption"]
 dependencies = [
     "cryptography>=41.0.0",
 ]

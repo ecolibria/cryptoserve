@@ -16,6 +16,12 @@ Commands:
     certs     - Certificate operations (generate-csr, self-signed, parse, verify)
     wizard    - Interactive context selection wizard
 
+Offline Tools (no server required):
+    encrypt       - Encrypt a string or file with a password
+    decrypt       - Decrypt a string or file with a password
+    hash-password - Hash a password (scrypt or PBKDF2)
+    token         - Create a JWT token
+
 Examples:
     cryptoserve login                              # Login via browser
     cryptoserve contexts                           # List available contexts
@@ -24,6 +30,9 @@ Examples:
     cryptoserve promote my-backend-app             # Check promotion readiness
     cryptoserve promote my-backend-app --confirm   # Promote to production
     cryptoserve promote my-backend-app --expedite  # Request expedited approval
+    cryptoserve encrypt "hello" --password secret  # Encrypt a string
+    cryptoserve hash-password                      # Hash a password (interactive)
+    cryptoserve token --key my-key --payload '{}'  # Create JWT token
 """
 
 import os
@@ -2388,6 +2397,227 @@ def cmd_gate():
         return 2
 
 
+# =============================================================================
+# OFFLINE TOOLS (no server required)
+# =============================================================================
+
+def cmd_encrypt():
+    """Encrypt a string or file with a password."""
+    import base64
+    from cryptoserve_core import encrypt_string, encrypt_file
+
+    # Parse arguments
+    text = None
+    password = None
+    file_path = None
+    output_path = None
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ["--password", "-p"] and i + 1 < len(sys.argv):
+            password = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--file", "-f"] and i + 1 < len(sys.argv):
+            file_path = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--output", "-o"] and i + 1 < len(sys.argv):
+            output_path = sys.argv[i + 1]
+            i += 2
+        elif not arg.startswith("-") and text is None:
+            text = arg
+            i += 1
+        else:
+            i += 1
+
+    if not password:
+        print(error("Missing required option: --password"))
+        print(dim("  Usage: cryptoserve encrypt \"text\" --password <password>"))
+        print(dim("         cryptoserve encrypt --file <path> --output <path> --password <password>"))
+        return 1
+
+    if file_path:
+        # File mode
+        if not output_path:
+            output_path = file_path + ".enc"
+        try:
+            encrypt_file(file_path, output_path, password)
+            print(success(f"Encrypted: {file_path} -> {output_path}"))
+            return 0
+        except Exception as e:
+            print(error(str(e)))
+            return 1
+    elif text is not None:
+        # String mode
+        try:
+            result = encrypt_string(text, password)
+            print(result)
+            return 0
+        except Exception as e:
+            print(error(str(e)))
+            return 1
+    else:
+        print(error("Provide text to encrypt or use --file"))
+        print(dim("  Usage: cryptoserve encrypt \"text\" --password <password>"))
+        return 1
+
+
+def cmd_decrypt():
+    """Decrypt a string or file with a password."""
+    from cryptoserve_core import decrypt_string, decrypt_file
+
+    # Parse arguments
+    text = None
+    password = None
+    file_path = None
+    output_path = None
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ["--password", "-p"] and i + 1 < len(sys.argv):
+            password = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--file", "-f"] and i + 1 < len(sys.argv):
+            file_path = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--output", "-o"] and i + 1 < len(sys.argv):
+            output_path = sys.argv[i + 1]
+            i += 2
+        elif not arg.startswith("-") and text is None:
+            text = arg
+            i += 1
+        else:
+            i += 1
+
+    if not password:
+        print(error("Missing required option: --password"))
+        print(dim("  Usage: cryptoserve decrypt \"<base64>\" --password <password>"))
+        print(dim("         cryptoserve decrypt --file <path> --output <path> --password <password>"))
+        return 1
+
+    if file_path:
+        # File mode
+        if not output_path:
+            print(error("Missing required option: --output for file decryption"))
+            return 1
+        try:
+            decrypt_file(file_path, output_path, password)
+            print(success(f"Decrypted: {file_path} -> {output_path}"))
+            return 0
+        except Exception as e:
+            print(error(str(e)))
+            return 1
+    elif text is not None:
+        # String mode
+        try:
+            result = decrypt_string(text, password)
+            print(result)
+            return 0
+        except Exception as e:
+            print(error(str(e)))
+            return 1
+    else:
+        print(error("Provide base64 ciphertext to decrypt or use --file"))
+        print(dim("  Usage: cryptoserve decrypt \"<base64>\" --password <password>"))
+        return 1
+
+
+def cmd_hash_password():
+    """Hash a password."""
+    import getpass
+    from cryptoserve_core import hash_password
+
+    # Parse arguments
+    password = None
+    algorithm = "scrypt"
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ["--algo", "--algorithm", "-a"] and i + 1 < len(sys.argv):
+            algorithm = sys.argv[i + 1]
+            i += 2
+        elif not arg.startswith("-") and password is None:
+            password = arg
+            i += 1
+        else:
+            i += 1
+
+    if password is None:
+        try:
+            password = getpass.getpass("Password: ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+
+    if not password:
+        print(error("Password cannot be empty"))
+        return 1
+
+    try:
+        result = hash_password(password, algorithm=algorithm)
+        print(result)
+        return 0
+    except ValueError as e:
+        print(error(str(e)))
+        return 1
+    except Exception as e:
+        print(error(str(e)))
+        return 1
+
+
+def cmd_token():
+    """Create a JWT token."""
+    from cryptoserve_core import create_token
+
+    # Parse arguments
+    key = None
+    payload_str = None
+    expires = 3600
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ["--key", "-k"] and i + 1 < len(sys.argv):
+            key = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--payload"] and i + 1 < len(sys.argv):
+            payload_str = sys.argv[i + 1]
+            i += 2
+        elif arg in ["--expires", "--exp", "-e"] and i + 1 < len(sys.argv):
+            expires = int(sys.argv[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    if not key:
+        print(error("Missing required option: --key"))
+        print(dim("  Usage: cryptoserve token --key <secret> [--payload '{...}'] [--expires N]"))
+        return 1
+
+    key_bytes = key.encode("utf-8")
+    if len(key_bytes) < 16:
+        print(error("Key must be at least 16 bytes"))
+        return 1
+
+    payload = {}
+    if payload_str:
+        try:
+            payload = json.loads(payload_str)
+        except json.JSONDecodeError as e:
+            print(error(f"Invalid JSON payload: {e}"))
+            return 1
+
+    try:
+        token = create_token(payload, key=key_bytes, expires_in=expires)
+        print(token)
+        return 0
+    except Exception as e:
+        print(error(str(e)))
+        return 1
+
+
 def cmd_help():
     """Show help."""
     print(compact_header("HELP"))
@@ -2469,6 +2699,22 @@ def cmd_help():
     print(dim("               --dry-run        Preview what would be restored"))
     print()
     print(f"    {bold('backups')}    List available backups")
+    print()
+    print(f"  {bold('OFFLINE TOOLS')} {dim('(no server required)')}")
+    print()
+    print(f"    {bold('encrypt')}    Encrypt a string or file with a password")
+    print(dim("               cryptoserve encrypt \"text\" --password <pw>"))
+    print(dim("               cryptoserve encrypt --file <in> --output <out> --password <pw>"))
+    print()
+    print(f"    {bold('decrypt')}    Decrypt a string or file with a password")
+    print(dim("               cryptoserve decrypt \"<base64>\" --password <pw>"))
+    print(dim("               cryptoserve decrypt --file <in> --output <out> --password <pw>"))
+    print()
+    print(f"    {bold('hash-password')} Hash a password (scrypt or PBKDF2)")
+    print(dim("               cryptoserve hash-password [password] [--algo scrypt|pbkdf2]"))
+    print()
+    print(f"    {bold('token')}      Create a JWT token (HS256)")
+    print(dim("               cryptoserve token --key <secret> [--payload '{{...}}'] [--expires N]"))
     print()
     print(f"  {bold('OTHER')}")
     print()
@@ -3400,6 +3646,11 @@ def main():
         "restore": cmd_restore,
         "backups": cmd_backups,
         "ceremony": cmd_ceremony,
+        # Offline tools
+        "encrypt": cmd_encrypt,
+        "decrypt": cmd_decrypt,
+        "hash-password": cmd_hash_password,
+        "token": cmd_token,
         "help": cmd_help,
         "--help": cmd_help,
         "-h": cmd_help,

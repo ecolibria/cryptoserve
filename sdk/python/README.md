@@ -1,5 +1,7 @@
 # CryptoServe SDK
 
+![Security Audit](https://github.com/ecolibria/crypto-serve/actions/workflows/security.yml/badge.svg)
+
 Zero-config cryptographic operations with managed keys and auto-registration.
 
 ## Installation
@@ -38,6 +40,33 @@ hash_hex = crypto.hash(b"data", algorithm="sha256")
 mac_hex = crypto.mac(b"message", key=secret_key, algorithm="hmac-sha256")
 ```
 
+## Local Mode (No Server)
+
+Run the full SDK API without a server. All operations happen locally using a password or master key.
+
+```python
+from cryptoserve import CryptoServe
+
+# Initialize with a password (deterministic key derivation)
+crypto = CryptoServe.local(password="my-secret-password")
+
+# Same API as server mode
+encrypted = crypto.encrypt(b"sensitive data", context="user-pii")
+decrypted = crypto.decrypt(encrypted, context="user-pii")
+
+# String helpers
+encoded = crypto.encrypt_string("PII data", context="user-pii")
+text = crypto.decrypt_string(encoded, context="user-pii")
+
+# JSON
+crypto.encrypt_json({"email": "user@example.com"}, context="user-pii")
+
+# Hash and MAC work locally too
+hash_hex = crypto.hash(b"data")
+```
+
+Two instances with the same password can decrypt each other's data. Different contexts derive different keys, providing isolation.
+
 ## CryptoServe Class
 
 The `CryptoServe` class provides:
@@ -57,6 +86,8 @@ The `CryptoServe` class provides:
 | `health_check()` | Verify connection |
 | `cache_stats()` | Get cache performance stats |
 | `invalidate_cache(context)` | Clear cached keys |
+| `local(password=..., master_key=...)` | Create local-mode instance (class method) |
+| `migrate_from_easy(ciphertext, password, target, context)` | Migrate easy-blob data (static method) |
 
 ## Performance Features
 
@@ -177,13 +208,35 @@ requests.post(url, json={"email": "user@example.com"})  # Auto-encrypted
 
 ```bash
 # Interactive context wizard
-python -m cryptoserve wizard
+cryptoserve wizard
 
 # Verify SDK health
-python -m cryptoserve verify
+cryptoserve verify
 
 # Show identity info
-python -m cryptoserve info
+cryptoserve info
+
+# List encryption contexts
+cryptoserve contexts
+```
+
+### Offline Tools (No Server Required)
+
+```bash
+# Encrypt/decrypt strings
+cryptoserve encrypt "sensitive data" --password my-secret
+cryptoserve decrypt "<base64>" --password my-secret
+
+# Encrypt/decrypt files
+cryptoserve encrypt --file report.pdf --output report.enc --password my-secret
+cryptoserve decrypt --file report.enc --output report.pdf --password my-secret
+
+# Hash a password (prompts for input if no argument)
+cryptoserve hash-password
+cryptoserve hash-password "my-password" --algo pbkdf2
+
+# Create a JWT token
+cryptoserve token --key my-secret-key-1234 --payload '{"sub":"user-1"}' --expires 3600
 ```
 
 ## Package Architecture

@@ -849,6 +849,41 @@ class CryptoServe:
             default_ttl=ttl or 300.0,
         )
 
+    @staticmethod
+    def migrate_from_easy(
+        ciphertext: bytes,
+        password: str,
+        target: "CryptoServe",
+        context: str,
+    ) -> bytes:
+        """
+        Decrypt an easy-blob ciphertext and re-encrypt under a target instance.
+
+        Use this to migrate data from password-based easy encryption
+        (cryptoserve_core.encrypt) to context-aware encryption (local or server mode).
+
+        Args:
+            ciphertext: Easy-blob ciphertext from cryptoserve_core.encrypt().
+            password: Password used to create the easy blob.
+            target: CryptoServe instance (local or server) to re-encrypt with.
+            context: Encryption context for the target instance.
+
+        Returns:
+            New ciphertext encrypted under the target instance and context.
+
+        Example:
+            ```python
+            local = CryptoServe.local(password="new-master")
+            new_ct = CryptoServe.migrate_from_easy(
+                old_blob, password="old-pw", target=local, context="user-pii"
+            )
+            ```
+        """
+        from cryptoserve_core import decrypt as easy_decrypt
+
+        plaintext = easy_decrypt(ciphertext, password)
+        return target.encrypt(plaintext, context=context)
+
     def __repr__(self) -> str:
         if self._local_mode:
             return "CryptoServe(mode='local')"

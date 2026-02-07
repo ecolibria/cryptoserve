@@ -185,6 +185,58 @@ class TestLocalModeSigningRejection:
             crypto.verify_signature(b"data", b"sig", key_id="some-key")
 
 
+class TestMigrateFromEasy:
+    """Tests for CryptoServe.migrate_from_easy() static method."""
+
+    def test_easy_to_local_roundtrip(self):
+        """Migrate easy blob to local mode and decrypt."""
+        import cryptoserve_core
+
+        password = "easy-password"
+        plaintext = b"data to migrate"
+
+        # Encrypt with easy API
+        easy_blob = cryptoserve_core.encrypt(plaintext, password)
+
+        # Migrate to local mode
+        local = CryptoServe.local(password="new-master")
+        migrated = CryptoServe.migrate_from_easy(
+            easy_blob, password=password, target=local, context="migrated"
+        )
+
+        # Decrypt under local mode
+        assert local.decrypt(migrated, context="migrated") == plaintext
+
+    def test_easy_to_local_wrong_password_fails(self):
+        """Migration with wrong easy password fails."""
+        import cryptoserve_core
+
+        easy_blob = cryptoserve_core.encrypt(b"secret", "correct-pw")
+        local = CryptoServe.local(password="master")
+
+        with pytest.raises(Exception):
+            CryptoServe.migrate_from_easy(
+                easy_blob, password="wrong-pw", target=local, context="ctx"
+            )
+
+    def test_easy_decrypt_matches_original(self):
+        """Easy blob content matches after migration."""
+        import cryptoserve_core
+
+        original = b"the quick brown fox jumps over the lazy dog"
+        easy_blob = cryptoserve_core.encrypt(original, "pw123")
+
+        # Verify easy decrypt returns original
+        assert cryptoserve_core.decrypt(easy_blob, "pw123") == original
+
+        # Migrate and verify
+        local = CryptoServe.local(password="master-key")
+        migrated = CryptoServe.migrate_from_easy(
+            easy_blob, password="pw123", target=local, context="test"
+        )
+        assert local.decrypt(migrated, context="test") == original
+
+
 class TestLocalModeNoNetwork:
     """Verify that local mode makes no network calls."""
 
