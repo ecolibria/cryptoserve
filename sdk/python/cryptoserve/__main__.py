@@ -150,10 +150,11 @@ def _validate_server_url(url: str) -> str:
 
     try:
         ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        pass  # Not an IP literal — hostname is fine
+    else:
         if ip.is_link_local:
             raise ValueError(f"Blocked URL — link-local address: {hostname}")
-    except ValueError:
-        pass  # Not an IP, hostname is fine
 
     return url.rstrip("/")
 
