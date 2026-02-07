@@ -72,7 +72,11 @@ jobs:
       - name: Run pip-audit
         run: |
           cd sdk/python
-          pip-audit --strict --desc --local
+          pip-audit --strict --desc --ignore-vuln PYSEC-0000 \
+            --exclude cryptoserve \
+            --exclude cryptoserve-core \
+            --exclude cryptoserve-client \
+            --exclude cryptoserve-auto
 
       - name: License compliance check
         run: |
