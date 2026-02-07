@@ -30,6 +30,14 @@ CryptoServe provides client SDKs with embedded identity for zero-configuration e
 
     [:octicons-arrow-right-24: Examples](examples.md)
 
+-   :material-console:{ .lg .middle } **CLI Reference**
+
+    ---
+
+    All CLI commands — scanning, offline crypto, certificates, server management
+
+    [:octicons-arrow-right-24: CLI Reference](../cli.md)
+
 </div>
 
 ## SDK Architecture
