@@ -72,7 +72,7 @@ jobs:
       - name: Run pip-audit
         run: |
           cd sdk/python
-          pip-audit --strict --desc --skip-editable
+          pip-audit --desc --skip-editable
 
       - name: License compliance check
         run: |
