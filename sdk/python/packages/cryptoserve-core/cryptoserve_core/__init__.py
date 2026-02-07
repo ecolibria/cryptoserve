@@ -22,8 +22,33 @@ from cryptoserve_core.encoding import (
     to_base64,
     from_base64,
 )
+from cryptoserve_core.easy import (
+    encrypt,
+    decrypt,
+    encrypt_string,
+    decrypt_string,
+    encrypt_file,
+    decrypt_file,
+    EasyEncryptionError,
+)
+from cryptoserve_core.passwords import (
+    hash_password,
+    verify_password,
+    check_strength,
+    PasswordStrength,
+    PasswordHashError,
+)
+from cryptoserve_core.tokens import (
+    create_token,
+    verify_token,
+    decode_token,
+    TokenError,
+    TokenExpiredError,
+    TokenVerificationError,
+    TokenDecodeError,
+)
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # Ciphers
@@ -38,4 +63,26 @@ __all__ = [
     "decode_ciphertext",
     "to_base64",
     "from_base64",
+    # Easy encryption
+    "encrypt",
+    "decrypt",
+    "encrypt_string",
+    "decrypt_string",
+    "encrypt_file",
+    "decrypt_file",
+    "EasyEncryptionError",
+    # Password hashing
+    "hash_password",
+    "verify_password",
+    "check_strength",
+    "PasswordStrength",
+    "PasswordHashError",
+    # JWT tokens
+    "create_token",
+    "verify_token",
+    "decode_token",
+    "TokenError",
+    "TokenExpiredError",
+    "TokenVerificationError",
+    "TokenDecodeError",
 ]

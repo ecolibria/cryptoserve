@@ -9,10 +9,17 @@ Performance Features:
 - Local key caching (reduces latency from ~5-50ms to ~0.1-0.5ms)
 - Client-side encryption when keys are cached
 - Automatic cache invalidation on key rotation
+- Local mode: full SDK API without server (no network required)
 """
 
+import hashlib
+import hmac as hmac_mod
+import os
 import requests
 from typing import Optional, Dict, Any, Union
+
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
 
 from cryptoserve._credentials import (
     load_app_credentials,
@@ -35,6 +42,8 @@ from cryptoserve._local_crypto import (
     get_local_crypto,
     is_local_crypto_available,
 )
+from cryptoserve_core.ciphers import AESGCMCipher
+from cryptoserve_core.keys import KeyDerivation
 
 
 class CryptoServeNotLoggedInError(CryptoServeError):
@@ -122,8 +131,97 @@ class CryptoServe:
             )
             self._local_crypto = get_local_crypto()
 
+        # Local mode attributes
+        self._local_mode = False
+        self._master_key: Optional[bytes] = None
+        self._context_keys: Dict[str, bytes] = {}
+
         if auto_register:
             self._ensure_registered()
+
+    @classmethod
+    def local(
+        cls,
+        master_key: Optional[bytes] = None,
+        password: Optional[str] = None,
+        algorithm: str = "AES-256-GCM",
+    ) -> "CryptoServe":
+        """
+        Create a CryptoServe instance in local mode (no server required).
+
+        Provides the same encrypt/decrypt/hash/mac API but operates
+        entirely offline using a master key or password.
+
+        Args:
+            master_key: 32-byte master key (provide this OR password).
+            password: Password to derive master key from.
+                      Same password always produces the same key, so
+                      data encrypted with one instance can be decrypted
+                      by another with the same password.
+            algorithm: Encryption algorithm (default: "AES-256-GCM").
+
+        Returns:
+            CryptoServe instance in local mode.
+
+        Raises:
+            ValueError: If neither master_key nor password is provided.
+            ValueError: If master_key is wrong size.
+
+        Example:
+            crypto = CryptoServe.local(password="my-secret")
+            encrypted = crypto.encrypt(b"hello", context="default")
+            decrypted = crypto.decrypt(encrypted, context="default")
+        """
+        if master_key is None and password is None:
+            raise ValueError("Provide either master_key or password")
+
+        if master_key is not None and len(master_key) != 32:
+            raise ValueError(f"master_key must be 32 bytes, got {len(master_key)}")
+
+        if master_key is None:
+            # Derive deterministic master key from password
+            # Use SHA-256 of password as salt for deterministic derivation
+            salt = hashlib.sha256(password.encode("utf-8")).digest()[:16]
+            master_key, _ = KeyDerivation.from_password(
+                password, salt=salt, bits=256, iterations=600_000
+            )
+
+        instance = cls.__new__(cls)
+        instance.app_name = "local"
+        instance.team = "local"
+        instance.environment = "local"
+        instance.contexts = []
+        instance.description = None
+        instance.server_url = None
+        instance._api_url = None
+        instance._client = None
+        instance._app_id = None
+        instance._enable_cache = False
+        instance._cache = None
+        instance._local_crypto = None
+
+        # Local mode state
+        instance._local_mode = True
+        instance._master_key = master_key
+        instance._context_keys = {}
+        instance._algorithm = algorithm
+
+        return instance
+
+    def _derive_context_key(self, context: str) -> bytes:
+        """Derive a context-specific key from the master key using HKDF."""
+        if context in self._context_keys:
+            return self._context_keys[context]
+
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=f"cryptoserve-local-{context}".encode(),
+        )
+        key = hkdf.derive(self._master_key)
+        self._context_keys[context] = key
+        return key
 
     def _ensure_registered(self) -> None:
         """Ensure the application is registered and we have valid credentials."""
@@ -296,6 +394,21 @@ class CryptoServe:
             ```
         """
         usage = self._coerce_usage(usage)
+
+        # Local mode: encrypt directly with derived context key
+        if self._local_mode:
+            key = self._derive_context_key(context)
+            cipher = AESGCMCipher(key)
+            ct, nonce = cipher.encrypt(plaintext, associated_data)
+            # Pack as: [context_len:2][context][nonce:12][ciphertext+tag]
+            ctx_bytes = context.encode("utf-8")
+            return (
+                len(ctx_bytes).to_bytes(2, "big")
+                + ctx_bytes
+                + nonce
+                + ct
+            )
+
         # Try local encryption with cached key (only for default usage)
         # Server-side encryption required for usage-aware algorithm selection
         if usage is None and self._enable_cache and self._cache is not None and self._local_crypto:
@@ -345,6 +458,28 @@ class CryptoServe:
             decrypted = crypto.decrypt(encrypted, context="user-pii")
             ```
         """
+        # Local mode: decrypt with derived context key
+        if self._local_mode:
+            if len(ciphertext) < 2:
+                raise CryptoServeError("Ciphertext too short")
+            ctx_len = int.from_bytes(ciphertext[:2], "big")
+            if len(ciphertext) < 2 + ctx_len + 12:
+                raise CryptoServeError("Ciphertext truncated")
+            embedded_ctx = ciphertext[2 : 2 + ctx_len].decode("utf-8")
+            if embedded_ctx != context:
+                raise CryptoServeError(
+                    f"Context mismatch: ciphertext was encrypted with '{embedded_ctx}', "
+                    f"but decryption requested with '{context}'"
+                )
+            nonce = ciphertext[2 + ctx_len : 2 + ctx_len + 12]
+            ct = ciphertext[2 + ctx_len + 12 :]
+            key = self._derive_context_key(embedded_ctx)
+            cipher = AESGCMCipher(key)
+            try:
+                return cipher.decrypt(ct, nonce, associated_data)
+            except Exception as e:
+                raise CryptoServeError(f"Decryption failed: {e}") from e
+
         # Try local decryption with cached key
         if self._enable_cache and self._cache is not None and self._local_crypto:
             cached = self._cache.get(context, "decrypt")
@@ -414,11 +549,16 @@ class CryptoServe:
         Returns:
             Signature bytes
 
+        Raises:
+            CryptoServeError: If in local mode (signing requires server).
+
         Example:
             ```python
             signature = crypto.sign(b"document", key_id="my-key-id")
             ```
         """
+        if self._local_mode:
+            raise CryptoServeError("Signing requires server mode")
         return self.client.sign(data, key_id)
 
     def verify_signature(
@@ -440,11 +580,16 @@ class CryptoServe:
         Returns:
             True if signature is valid, False otherwise
 
+        Raises:
+            CryptoServeError: If in local mode (verification requires server).
+
         Example:
             ```python
             is_valid = crypto.verify_signature(b"document", signature, key_id="my-key-id")
             ```
         """
+        if self._local_mode:
+            raise CryptoServeError("Signing requires server mode")
         return self.client.verify(data, signature, key_id, public_key)
 
     def hash(self, data: bytes, algorithm: str = "sha256") -> str:
@@ -463,6 +608,8 @@ class CryptoServe:
             hash_hex = crypto.hash(b"hello world")
             ```
         """
+        if self._local_mode:
+            return self._local_hash(data, algorithm)
         return self.client.hash(data, algorithm)
 
     def mac(self, data: bytes, key: bytes, algorithm: str = "hmac-sha256") -> str:
@@ -482,15 +629,52 @@ class CryptoServe:
             mac_hex = crypto.mac(b"message", key)
             ```
         """
+        if self._local_mode:
+            return self._local_mac(data, key, algorithm)
         return self.client.mac(data, key, algorithm)
+
+    @staticmethod
+    def _local_hash(data: bytes, algorithm: str = "sha256") -> str:
+        """Compute hash locally using hashlib."""
+        algo_map = {
+            "sha256": "sha256",
+            "sha384": "sha384",
+            "sha512": "sha512",
+            "sha3-256": "sha3_256",
+            "blake2b": "blake2b",
+        }
+        if algorithm not in algo_map:
+            raise CryptoServeError(
+                f"Unsupported hash algorithm: {algorithm}. "
+                f"Supported: {', '.join(algo_map.keys())}"
+            )
+        h = hashlib.new(algo_map[algorithm])
+        h.update(data)
+        return h.hexdigest()
+
+    @staticmethod
+    def _local_mac(data: bytes, key: bytes, algorithm: str = "hmac-sha256") -> str:
+        """Compute MAC locally using hmac."""
+        algo_map = {
+            "hmac-sha256": "sha256",
+            "hmac-sha512": "sha512",
+        }
+        if algorithm not in algo_map:
+            raise CryptoServeError(
+                f"Unsupported MAC algorithm: {algorithm}. "
+                f"Supported: {', '.join(algo_map.keys())}"
+            )
+        return hmac_mod.new(key, data, algo_map[algorithm]).hexdigest()
 
     def health_check(self) -> bool:
         """
         Verify the SDK connection is working.
 
         Returns:
-            True if connection is successful
+            True if in local mode or connection is successful.
         """
+        if self._local_mode:
+            return True
         try:
             response = requests.get(
                 f"{self.server_url}/health",
@@ -666,5 +850,7 @@ class CryptoServe:
         )
 
     def __repr__(self) -> str:
+        if self._local_mode:
+            return "CryptoServe(mode='local')"
         cache_status = "enabled" if self._enable_cache else "disabled"
         return f"CryptoServe(app_name='{self.app_name}', environment='{self.environment}', cache={cache_status})"
