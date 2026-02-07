@@ -57,8 +57,8 @@ Cryptography is hard. Key management is harder. CryptoServe eliminates the compl
 ### 1. Start the Server
 
 ```bash
-git clone https://github.com/ecolibria/crypto-serve.git
-cd crypto-serve
+git clone https://github.com/ecolibria/cryptoserve.git
+cd cryptoserve
 cp .env.example .env
 docker compose up -d
 ```
