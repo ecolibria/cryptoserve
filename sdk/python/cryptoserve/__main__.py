@@ -1,6 +1,11 @@
 """
 CryptoServe CLI - Run with: python -m cryptoserve
 
+Scanning Tools (no server required):
+    scan      - Deep cryptographic scan (downloads CryptoScan binary)
+    deps      - Cryptographic dependency analysis (downloads CryptoDeps binary)
+    push      - Upload scan results to CryptoServe dashboard
+
 Commands:
     login     - Login to CryptoServe (opens browser)
     promote   - Check promotion readiness or request promotion
@@ -9,7 +14,6 @@ Commands:
     verify    - Verify SDK is working correctly
     info      - Show current identity information
     contexts  - List and search encryption contexts
-    scan      - Scan for crypto libraries and show inventory
     cbom      - Generate Cryptographic Bill of Materials
     pqc       - Get PQC migration recommendations
     gate      - CI/CD policy gate check
@@ -23,6 +27,10 @@ Offline Tools (no server required):
     token         - Create a JWT token
 
 Examples:
+    cryptoserve scan .                             # Deep crypto scan
+    cryptoserve scan . --push                      # Scan + upload to dashboard
+    cryptoserve deps .                             # Analyze crypto dependencies
+    cryptoserve push scan-results.json             # Upload results
     cryptoserve login                              # Login via browser
     cryptoserve contexts                           # List available contexts
     cryptoserve contexts "email"                   # Search for contexts
@@ -1870,12 +1878,12 @@ def cmd_contexts():
         return 1
 
 
-def cmd_scan():
-    """Scan for crypto libraries."""
+def cmd_scan_python():
+    """Scan for crypto libraries using the built-in Python import scanner."""
     from cryptoserve import init
 
-    print(compact_header("SCAN"))
-    print(dim("  Scanning for cryptographic libraries..."))
+    print(compact_header("SCAN (Python)"))
+    print(dim("  Scanning for cryptographic libraries (Python imports)..."))
     print()
 
     result = init(report_to_platform=False, async_reporting=False)
@@ -1953,6 +1961,302 @@ def cmd_scan():
 
     print()
     return 0
+
+
+def cmd_scan():
+    """Scan for cryptographic usage using CryptoScan binary.
+
+    Delegates to the CryptoScan Go binary for deep file-level pattern matching
+    (90+ patterns, CBOM, SARIF, reachability analysis). Falls back to the
+    built-in Python import scanner with --python-only.
+    """
+    from cryptoserve._binary_manager import run_binary
+
+    args = sys.argv[2:]
+
+    # Intercept our flags before passing to binary
+    if "--python-only" in args:
+        return cmd_scan_python()
+
+    push = "--push" in args
+    update = "--update" in args
+    filtered_args = [a for a in args if a not in ("--push", "--update")]
+
+    if update:
+        from cryptoserve._binary_manager import download_binary
+        try:
+            download_binary("cryptoscan", force=True)
+        except RuntimeError as e:
+            print(f"  {error(str(e))}")
+            return 1
+
+    if push:
+        # Run scan with JSON output to a temp file, then push
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, prefix="cryptoscan_")
+        tmp_path = tmp.name
+        tmp.close()
+
+        # Add --format json --output to args if not already specified
+        scan_args = list(filtered_args)
+        has_format = any(a in ("--format", "-f") for a in scan_args)
+        has_output = any(a in ("--output", "-o") for a in scan_args)
+
+        if not has_format:
+            scan_args.extend(["--format", "json"])
+        if not has_output:
+            scan_args.extend(["--output", tmp_path])
+
+        print(compact_header("CRYPTOSCAN"))
+        exit_code = run_binary("cryptoscan", scan_args)
+        if exit_code != 0:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            return exit_code
+
+        # Push the results
+        print()
+        print(divider())
+        result_path = tmp_path
+        # If user specified --output, use that path instead
+        if has_output:
+            for i, a in enumerate(filtered_args):
+                if a in ("--output", "-o") and i + 1 < len(filtered_args):
+                    result_path = filtered_args[i + 1]
+                    break
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return _push_results_file(result_path, cleanup=not has_output)
+
+    # Normal scan — pass through to binary
+    print(compact_header("CRYPTOSCAN"))
+    exit_code = run_binary("cryptoscan", filtered_args)
+
+    if exit_code == 0 and not any(a in ("--help", "-h") for a in filtered_args):
+        print()
+        print(dim("  Tip: Upload results to CryptoServe dashboard:"))
+        print(dim("    cryptoserve scan . --push"))
+        print(dim("    cryptoserve push scan-results.json"))
+        print()
+
+    return exit_code
+
+
+def cmd_deps():
+    """Analyze cryptographic dependencies using CryptoDeps binary.
+
+    Delegates to the CryptoDeps Go binary for dependency-level crypto analysis
+    including CBOM generation and reachability.
+    """
+    from cryptoserve._binary_manager import run_binary
+
+    args = sys.argv[2:]
+
+    push = "--push" in args
+    update = "--update" in args
+    filtered_args = [a for a in args if a not in ("--push", "--update")]
+
+    if update:
+        from cryptoserve._binary_manager import download_binary
+        try:
+            download_binary("cryptodeps", force=True)
+        except RuntimeError as e:
+            print(f"  {error(str(e))}")
+            return 1
+
+    if push:
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, prefix="cryptodeps_")
+        tmp_path = tmp.name
+        tmp.close()
+
+        scan_args = list(filtered_args)
+        has_format = any(a in ("--format", "-f") for a in scan_args)
+        has_output = any(a in ("--output", "-o") for a in scan_args)
+
+        if not has_format:
+            scan_args.extend(["--format", "json"])
+        if not has_output:
+            scan_args.extend(["--output", tmp_path])
+
+        print(compact_header("CRYPTODEPS"))
+        exit_code = run_binary("cryptodeps", scan_args)
+        if exit_code != 0:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            return exit_code
+
+        print()
+        print(divider())
+        result_path = tmp_path
+        if has_output:
+            for i, a in enumerate(filtered_args):
+                if a in ("--output", "-o") and i + 1 < len(filtered_args):
+                    result_path = filtered_args[i + 1]
+                    break
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return _push_results_file(result_path, cleanup=not has_output)
+
+    # Normal deps analysis — pass through to binary
+    print(compact_header("CRYPTODEPS"))
+    exit_code = run_binary("cryptodeps", filtered_args)
+
+    if exit_code == 0 and not any(a in ("--help", "-h") for a in filtered_args):
+        print()
+        print(dim("  Tip: Upload results to CryptoServe dashboard:"))
+        print(dim("    cryptoserve deps . --push"))
+        print(dim("    cryptoserve push deps-results.json"))
+        print()
+
+    return exit_code
+
+
+def _push_results_file(file_path: str, cleanup: bool = False) -> int:
+    """Upload a scan results file to the CryptoServe platform.
+
+    Args:
+        file_path: Path to the JSON results file.
+        cleanup: If True, delete the file after upload.
+
+    Returns:
+        Exit code (0 for success, 1 for failure).
+    """
+    import requests
+
+    if not os.path.exists(file_path):
+        print(f"  {error(f'Results file not found: {file_path}')}")
+        return 1
+
+    try:
+        with open(file_path, "r") as f:
+            content = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  {error(f'Failed to read results file: {e}')}")
+        return 1
+
+    # Detect format
+    scan_format = _detect_scan_format(content)
+
+    # Get auth
+    from cryptoserve._identity import get_token, get_server_url, is_configured
+
+    token = get_token()
+    server_url = get_server_url()
+    git_info = _get_git_info()
+
+    payload = {
+        "format": scan_format,
+        "content": content,
+        "scan_path": os.getcwd(),
+        "scan_name": os.path.basename(os.getcwd()),
+        **git_info,
+    }
+
+    try:
+        if token and is_configured():
+            response = requests.post(
+                f"{server_url}/api/v1/cbom",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30,
+            )
+        else:
+            session_cookie = _get_session_cookie()
+            cli_server_url = _get_cli_server_url()
+            if not session_cookie:
+                print(f"  {error('Not logged in. Run: cryptoserve login')}")
+                return 1
+            server_url = cli_server_url
+            response = requests.post(
+                f"{server_url}/api/v1/cbom",
+                json=payload,
+                cookies={"access_token": session_cookie},
+                timeout=30,
+            )
+
+        if response.status_code in [200, 201]:
+            data = response.json() if response.text else {}
+            scan_id = data.get("id", "")
+            print(f"  {success('Results uploaded to CryptoServe')}")
+            if scan_id:
+                print(f"  View in dashboard: {server_url}/dashboard/scans/{scan_id}")
+        else:
+            print(f"  {error(f'Upload failed: HTTP {response.status_code}')}")
+            return 1
+
+    except requests.exceptions.ConnectionError:
+        print(f"  {error(f'Cannot connect to server at {server_url}')}")
+        return 1
+    except requests.exceptions.RequestException as e:
+        print(f"  {error(f'Upload failed: {e}')}")
+        return 1
+    finally:
+        if cleanup:
+            try:
+                os.unlink(file_path)
+            except OSError:
+                pass
+
+    print()
+    return 0
+
+
+def _detect_scan_format(content: dict) -> str:
+    """Detect the format of scan results content.
+
+    Returns:
+        One of: 'cryptoscan', 'cryptodeps', 'cyclonedx', 'json'
+    """
+    # CycloneDX CBOM
+    if "bomFormat" in content and content.get("bomFormat") == "CycloneDX":
+        return "cyclonedx"
+    # CryptoScan output typically has a 'findings' key
+    if "findings" in content and "tool" in content:
+        tool_name = content.get("tool", {}).get("name", "")
+        if "cryptoscan" in tool_name.lower():
+            return "cryptoscan"
+        if "cryptodeps" in tool_name.lower():
+            return "cryptodeps"
+    # CryptoDeps output has 'dependencies' key
+    if "dependencies" in content:
+        return "cryptodeps"
+    return "json"
+
+
+def cmd_push():
+    """Upload scan results or CBOM files to the CryptoServe platform."""
+    if len(sys.argv) < 3:
+        print(compact_header("PUSH"))
+        print(f"  {error('No file specified')}")
+        print()
+        print(dim("  Usage: cryptoserve push <file>"))
+        print(dim("         cryptoserve push scan-results.json"))
+        print(dim("         cryptoserve push cbom.json"))
+        print()
+        return 1
+
+    file_path = sys.argv[2]
+
+    if not os.path.exists(file_path):
+        print(compact_header("PUSH"))
+        print(f"  {error(f'File not found: {file_path}')}")
+        return 1
+
+    print(compact_header("PUSH"))
+    print(dim(f"  Uploading {os.path.basename(file_path)} to CryptoServe..."))
+    print()
+    return _push_results_file(file_path)
 
 
 def cmd_cbom():
@@ -2664,9 +2968,26 @@ def cmd_help():
     print(dim("               cryptoserve contexts \"email\"     # Search"))
     print(dim("               cryptoserve contexts -e user-pii # Example"))
     print()
+    print(f"  {bold('SCANNING TOOLS')} {dim('(no server required)')}")
+    print()
+    print(f"    {bold('scan')}       Deep cryptographic scan (CryptoScan binary)")
+    print(dim("               cryptoserve scan .                # Scan directory"))
+    print(dim("               cryptoserve scan . --push         # Scan + upload"))
+    print(dim("               cryptoserve scan . --format sarif # SARIF output"))
+    print(dim("               --python-only  Use built-in Python scanner"))
+    print(dim("               --update       Force re-download of binary"))
+    print()
+    print(f"    {bold('deps')}       Cryptographic dependency analysis (CryptoDeps binary)")
+    print(dim("               cryptoserve deps .                # Analyze deps"))
+    print(dim("               cryptoserve deps . --push         # Analyze + upload"))
+    print(dim("               --update       Force re-download of binary"))
+    print()
+    print(f"    {bold('push')}       Upload scan results to CryptoServe dashboard")
+    print(dim("               cryptoserve push scan-results.json"))
+    print(dim("               Accepts: CryptoScan JSON, CryptoDeps JSON, CycloneDX CBOM"))
+    print()
     print(f"  {bold('SECURITY TOOLS')}")
     print()
-    print(f"    {bold('scan')}       Scan for crypto libraries")
     print(f"    {bold('cbom')}       Generate Cryptographic Bill of Materials")
     print(dim("               --format json|cyclonedx|spdx"))
     print(dim("               --output <file>"))
@@ -3638,6 +3959,8 @@ def main():
         "info": cmd_info,
         "promote": cmd_promote,
         "scan": cmd_scan,
+        "deps": cmd_deps,
+        "push": cmd_push,
         "cbom": cmd_cbom,
         "pqc": cmd_pqc,
         "gate": cmd_gate,
