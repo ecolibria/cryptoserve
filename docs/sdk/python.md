@@ -89,6 +89,90 @@ crypto = CryptoServe(
 
 ---
 
+## Local Mode (No Server Required)
+
+Local mode runs entirely offline — no server, no API keys, no network calls. Keys are derived from a master password using PBKDF2 (600K iterations) and per-context keys via HKDF-SHA256.
+
+```python
+from cryptoserve import CryptoServe
+
+# Initialize with a password
+crypto = CryptoServe.local(password="my-secret")
+
+# Or with an explicit 256-bit master key
+import os
+crypto = CryptoServe.local(master_key=os.urandom(32))
+
+# Encrypt/Decrypt with context-derived keys
+ct = crypto.encrypt(b"sensitive data", context="user-pii")
+pt = crypto.decrypt(ct, context="user-pii")
+
+# String and JSON helpers
+enc = crypto.encrypt_string("hello", context="default")
+crypto.decrypt_string(enc, context="default")  # "hello"
+
+obj = crypto.encrypt_json({"ssn": "123-45-6789"}, context="pii")
+crypto.decrypt_json(obj, context="pii")
+
+# Hash and MAC
+crypto.hash(b"data")  # SHA-256 hex
+crypto.hash(b"data", algorithm="sha512")  # SHA-512 hex
+crypto.mac(b"message", key=b"secret-key", algorithm="hmac-sha256")
+```
+
+### Local Mode Limitations
+
+- **No signing**: `sign()` and `verify_signature()` require server-managed keys
+- **No key rotation**: Keys are deterministic from the password
+- **No audit logging**: Operations are not logged
+
+### Migrating from Easy API to Local Mode
+
+```python
+import cryptoserve_core as core
+from cryptoserve import CryptoServe
+
+# Decrypt existing easy blob
+easy_blob = core.encrypt(b"data", "old-password")
+
+# Migrate to local mode
+local = CryptoServe.local(password="new-master")
+migrated = CryptoServe.migrate_from_easy(
+    easy_blob, password="old-password",
+    target=local, context="migrated"
+)
+local.decrypt(migrated, context="migrated")  # b"data"
+```
+
+---
+
+## CLI Tools
+
+The SDK provides offline CLI commands. No server required.
+
+```bash
+# Encrypt a string (outputs base64)
+cryptoserve encrypt "secret message" --password my-pw
+
+# Decrypt
+cryptoserve decrypt "base64-ciphertext" --password my-pw
+
+# Encrypt/decrypt files
+cryptoserve encrypt --file input.txt --output encrypted.bin --password my-pw
+cryptoserve decrypt --file encrypted.bin --output output.txt --password my-pw
+
+# Hash a password (prompts for input)
+cryptoserve hash-password
+cryptoserve hash-password "my-password" --algo pbkdf2
+
+# Create a JWT token
+cryptoserve token --key my-secret-key --payload '{"sub": "user-1"}' --expires 3600
+```
+
+Run `cryptoserve help` to see all available commands.
+
+---
+
 ## Cryptographic Operations
 
 ### `encrypt(plaintext, context, usage=None)`
@@ -611,6 +695,20 @@ def decrypt_file(input_path: str, output_path: str, context: str):
 ---
 
 ## Testing
+
+### Local Mode (Recommended for Tests)
+
+The simplest way to test without a server is local mode:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe.local(password="test-password")
+
+# Real encryption — no mocks needed
+ct = crypto.encrypt(b"test data", context="test")
+assert crypto.decrypt(ct, context="test") == b"test data"
+```
 
 ### Mock Mode
 

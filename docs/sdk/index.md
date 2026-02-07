@@ -158,7 +158,7 @@ pip install http://localhost:8003/sdk/download/YOUR_TOKEN/python
 | Configuration | Zero | Manual JWT setup |
 | Token management | Automatic | Manual refresh |
 | Type safety | Full | None |
-| Offline mode | Planned | No |
+| Offline mode | Yes (`CryptoServe.local()`) | No |
 | Bundle size | ~50KB | N/A |
 
 ## Security
