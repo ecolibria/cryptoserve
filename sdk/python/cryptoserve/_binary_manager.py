@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import shutil
+import ssl
 import stat
 import subprocess
 import sys
@@ -20,6 +21,31 @@ from pathlib import Path
 from typing import Optional
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+
+
+def _get_ssl_context() -> ssl.SSLContext:
+    """Build an SSL context that works on macOS Python installations.
+
+    macOS framework Python often lacks the system CA bundle. Try certifi
+    first, then fall back to a default context.
+    """
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
+        # On macOS, the framework Python may not find system certs.
+        # Try common CA bundle locations as a fallback.
+        if not ctx.get_ca_certs():
+            for ca_path in (
+                "/etc/ssl/certs/ca-certificates.crt",  # Debian/Ubuntu
+                "/etc/pki/tls/certs/ca-bundle.crt",    # RHEL/Fedora
+                "/etc/ssl/cert.pem",                    # macOS / Alpine
+            ):
+                if os.path.exists(ca_path):
+                    ctx.load_verify_locations(ca_path)
+                    break
+    return ctx
 
 
 TOOLS = {
@@ -90,12 +116,12 @@ def _detect_platform() -> tuple[str, str]:
 def _build_asset_name(tool_name: str, version: str, os_name: str, arch: str) -> str:
     """Build the GitHub release asset filename.
 
-    cryptodeps uses x86_64 instead of amd64 in asset names.
+    cryptodeps uses x86_64 instead of amd64 in asset names on all platforms.
     """
     # Strip leading 'v' for asset name (e.g., v1.3.0 -> 1.3.0)
     ver = version.lstrip("v")
 
-    # cryptodeps uses x86_64 in asset names
+    # cryptodeps uses x86_64 instead of amd64 on all platforms
     asset_arch = arch
     if tool_name == "cryptodeps" and arch == "amd64":
         asset_arch = "x86_64"
@@ -114,8 +140,9 @@ def _build_download_url(tool_name: str, version: str, asset_name: str) -> str:
 def _download_file(url: str, dest: Path, label: str = "") -> None:
     """Download a file from URL to dest path with progress indication."""
     request = Request(url, headers={"User-Agent": "cryptoserve-cli"})
+    ssl_ctx = _get_ssl_context()
     try:
-        with urlopen(request, timeout=60) as response:
+        with urlopen(request, timeout=60, context=ssl_ctx) as response:
             total = response.headers.get("Content-Length")
             if total:
                 total = int(total)
@@ -344,7 +371,12 @@ def run_binary(tool_name: str, args: list[str]) -> int:
     Returns:
         Exit code from the binary.
     """
-    binary = ensure_binary(tool_name)
+    try:
+        binary = ensure_binary(tool_name)
+    except RuntimeError as e:
+        print(f"  Error: {e}", file=sys.stderr)
+        return 1
+
     result = subprocess.run(
         [str(binary)] + args,
         stdin=sys.stdin,

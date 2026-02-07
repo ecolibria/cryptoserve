@@ -167,21 +167,35 @@ def cmd_login():
     print(compact_header("LOGIN"))
     print(divider())
 
-    # Check if server is in dev mode
+    # Check server auth configuration
+    providers = []
     try:
         print(dim(f"  Connecting to {server_url}..."))
         status_resp = requests.get(f"{server_url}/auth/status", timeout=5)
         if status_resp.ok:
             auth_status = status_resp.json()
-            if auth_status.get("devMode"):
+            if auth_status.get("dev_mode"):
                 use_dev = True
                 print(info("Server is in development mode"))
+            providers = auth_status.get("providers", [])
     except requests.exceptions.ConnectionError:
         print(error(f"Cannot connect to server at {server_url}"))
         print(dim("  Make sure the server is running."))
         return 1
     except Exception:
         pass
+
+    # If no OAuth providers configured and not dev mode, can't login
+    if not use_dev and not providers:
+        print()
+        print(error("No authentication providers configured on this server"))
+        print()
+        print(dim("  Options:"))
+        print(dim("    1. Start server with DEV_MODE=true for development login"))
+        print(dim("    2. Configure OAuth (OAUTH_GITHUB_CLIENT_ID, etc.)"))
+        print(dim("    3. Set session manually: cryptoserve login --cookie <token>"))
+        print()
+        return 1
 
     print()
 
@@ -234,8 +248,10 @@ def cmd_login():
         login_url = f"{server_url}/auth/dev-login?cli_callback={callback_url}"
         print(info("Using development mode authentication"))
     else:
-        login_url = f"{server_url}/auth/github?cli_callback={callback_url}"
-        print(info("Opening browser for GitHub authentication"))
+        # Use the first available provider
+        provider = providers[0]
+        login_url = f"{server_url}/auth/login/{provider}?cli_callback={callback_url}"
+        print(info(f"Opening browser for {provider.title()} authentication"))
 
     print()
     print(dim(f"  URL: {login_url}"))
@@ -1963,6 +1979,27 @@ def cmd_scan_python():
     return 0
 
 
+def _prepend_subcommand(args: list[str], default_subcmd: str, known_subcmds: set[str]) -> list[str]:
+    """Prepend default subcommand if the user didn't specify one.
+
+    E.g., `cryptoserve scan .` becomes `cryptoscan scan .` and
+    `cryptoserve scan version` stays `cryptoscan version`.
+    """
+    # Find the first non-flag argument
+    for arg in args:
+        if not arg.startswith("-"):
+            if arg in known_subcmds:
+                return args  # User already specified a subcommand
+            break
+    # No known subcommand found — prepend the default
+    return [default_subcmd] + args
+
+
+# Known subcommands for each binary
+_CRYPTOSCAN_SUBCMDS = {"scan", "version", "help", "completion"}
+_CRYPTODEPS_SUBCMDS = {"analyze", "status", "update", "version", "help", "completion"}
+
+
 def cmd_scan():
     """Scan for cryptographic usage using CryptoScan binary.
 
@@ -1989,6 +2026,9 @@ def cmd_scan():
         except RuntimeError as e:
             print(f"  {error(str(e))}")
             return 1
+
+    # Prepend 'scan' subcommand if user didn't specify one
+    filtered_args = _prepend_subcommand(filtered_args, "scan", _CRYPTOSCAN_SUBCMDS)
 
     if push:
         # Run scan with JSON output to a temp file, then push
@@ -2068,6 +2108,9 @@ def cmd_deps():
         except RuntimeError as e:
             print(f"  {error(str(e))}")
             return 1
+
+    # Prepend 'analyze' subcommand if user didn't specify one
+    filtered_args = _prepend_subcommand(filtered_args, "analyze", _CRYPTODEPS_SUBCMDS)
 
     if push:
         import tempfile
