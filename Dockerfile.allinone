@@ -1,0 +1,112 @@
+# ============================================================================
+# All-in-One CryptoServe Image
+# Bundles backend + frontend into a single container with SQLite.
+# Usage: docker run -p 8003:8003 -p 3000:3000 -v cryptoserve-data:/data ghcr.io/ecolibria/crypto-serve
+# ============================================================================
+
+# ============================================================================
+# Stage 1: Backend builder - compile liboqs and install Python dependencies
+# ============================================================================
+FROM python:3.12-slim AS backend-builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs && \
+    cd /tmp/liboqs && \
+    mkdir build && cd build && \
+    cmake -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_SHARED_LIBS=ON .. && \
+    ninja && ninja install && \
+    rm -rf /tmp/liboqs
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ============================================================================
+# Stage 2: Frontend builder - build Next.js standalone output
+# ============================================================================
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --ignore-scripts
+
+COPY frontend/ .
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npm run build
+
+# ============================================================================
+# Stage 3: Runtime - single container with backend + frontend
+# ============================================================================
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install runtime dependencies: Node.js 20, supervisord, curl
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    curl \
+    supervisor \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy liboqs shared libraries
+COPY --from=backend-builder /usr/local/lib/liboqs* /usr/local/lib/
+COPY --from=backend-builder /usr/local/include/oqs /usr/local/include/oqs
+RUN ldconfig
+
+# Copy Python virtual environment
+COPY --from=backend-builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Copy backend application code
+COPY backend/ /app/backend/
+
+# Copy frontend standalone output
+COPY --from=frontend-builder /app/public /app/frontend/public
+COPY --from=frontend-builder /app/.next/standalone /app/frontend/
+COPY --from=frontend-builder /app/.next/static /app/frontend/.next/static
+
+# Copy supervisord config and entrypoint
+COPY supervisord.conf /etc/supervisor/conf.d/cryptoserve.conf
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+# Create data directory for SQLite persistence
+RUN mkdir -p /data
+
+# Environment defaults for zero-config startup
+ENV DEV_MODE=true
+ENV STARTUP_VALIDATION_LEVEL=warn
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV API_URL=http://localhost:8003
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+EXPOSE 8003 3000
+
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8003/health || exit 1
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
