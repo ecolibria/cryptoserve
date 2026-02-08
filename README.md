@@ -16,6 +16,8 @@
   <a href="https://pypi.org/project/cryptoserve/"><img src="https://img.shields.io/pypi/v/cryptoserve.svg?style=flat-square" alt="PyPI"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.9+-blue.svg?style=flat-square" alt="Python 3.9+"></a>
   <a href="https://cryptoserve.dev/docs/"><img src="https://img.shields.io/badge/docs-cryptoserve.dev-brightgreen.svg?style=flat-square" alt="Documentation"></a>
+  <a href="https://ghcr.io/ecolibria/crypto-serve-backend"><img src="https://img.shields.io/badge/ghcr.io-backend-blue.svg?style=flat-square" alt="Backend Image"></a>
+  <a href="https://ghcr.io/ecolibria/crypto-serve-frontend"><img src="https://img.shields.io/badge/ghcr.io-frontend-blue.svg?style=flat-square" alt="Frontend Image"></a>
 </p>
 
 ---
@@ -147,14 +149,29 @@ See the [Python SDK docs](https://cryptoserve.dev/docs/sdk/) for the full API.
 
 ## Self-Hosting
 
+### Docker (recommended)
+
+Pre-built images are published to GitHub Container Registry. No clone required.
+
 ```bash
-git clone https://github.com/ecolibria/cryptoserve.git
-cd cryptoserve
+# Download the production compose file and example env
+curl -O https://raw.githubusercontent.com/ecolibria/crypto-serve/main/docker-compose.production.yml
+curl -O https://raw.githubusercontent.com/ecolibria/crypto-serve/main/.env.example
 cp .env.example .env
-docker compose up -d
+# Edit .env with your secrets (see comments in .env.example)
+docker compose -f docker-compose.production.yml up -d
 ```
 
 Server: `http://localhost:8003` | Dashboard: `http://localhost:3003`
+
+### Build from source
+
+```bash
+git clone https://github.com/ecolibria/crypto-serve.git
+cd crypto-serve
+cp .env.example .env
+docker compose up -d
+```
 
 The default `.env` runs in dev mode (`DEV_MODE=true`), which bypasses GitHub OAuth for local development. See the [production deployment guide](docs/guides/production-deployment.md) for hardened configuration.
 

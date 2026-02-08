@@ -1,0 +1,8 @@
+node_modules
+.next
+e2e/
+.env
+.env.*
+.git
+.gitignore
+*.md
