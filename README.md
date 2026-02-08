@@ -16,6 +16,7 @@
   <a href="https://pypi.org/project/cryptoserve/"><img src="https://img.shields.io/pypi/v/cryptoserve.svg?style=flat-square" alt="PyPI"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.9+-blue.svg?style=flat-square" alt="Python 3.9+"></a>
   <a href="https://cryptoserve.dev/docs/"><img src="https://img.shields.io/badge/docs-cryptoserve.dev-brightgreen.svg?style=flat-square" alt="Documentation"></a>
+  <a href="https://ghcr.io/ecolibria/crypto-serve"><img src="https://img.shields.io/badge/ghcr.io-all--in--one-blue.svg?style=flat-square" alt="All-in-One Image"></a>
   <a href="https://ghcr.io/ecolibria/crypto-serve-backend"><img src="https://img.shields.io/badge/ghcr.io-backend-blue.svg?style=flat-square" alt="Backend Image"></a>
   <a href="https://ghcr.io/ecolibria/crypto-serve-frontend"><img src="https://img.shields.io/badge/ghcr.io-frontend-blue.svg?style=flat-square" alt="Frontend Image"></a>
 </p>
@@ -149,20 +150,27 @@ See the [Python SDK docs](https://cryptoserve.dev/docs/sdk/) for the full API.
 
 ## Self-Hosting
 
-### Docker (recommended)
-
-Pre-built images are published to GitHub Container Registry. No clone required.
+### Docker (single container)
 
 ```bash
-# Download the production compose file and example env
-curl -O https://raw.githubusercontent.com/ecolibria/crypto-serve/main/docker-compose.production.yml
-curl -O https://raw.githubusercontent.com/ecolibria/crypto-serve/main/.env.example
-cp .env.example .env
-# Edit .env with your secrets (see comments in .env.example)
-docker compose -f docker-compose.production.yml up -d
+docker run -d -p 8003:8003 -p 3000:3000 -v cryptoserve-data:/data ghcr.io/ecolibria/crypto-serve
 ```
 
-Server: `http://localhost:8003` | Dashboard: `http://localhost:3003`
+API: `http://localhost:8003` | Dashboard: `http://localhost:3000`
+
+Uses SQLite and dev mode for zero-config startup. Mount `/data` to persist the database across restarts. For production deployments with PostgreSQL, use the multi-container setup below.
+
+### Quickstart script (multi-container)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ecolibria/crypto-serve/main/scripts/quickstart.sh | sh
+```
+
+This downloads the compose file, generates random secrets, pulls pre-built images from GHCR, and starts the stack (PostgreSQL + backend + frontend). No clone required.
+
+API: `http://localhost:8003` | Dashboard: `http://localhost:3003`
+
+Configuration is in `cryptoserve/.env`. Edit it to add GitHub OAuth, switch to production mode, or change ports.
 
 ### Build from source
 
