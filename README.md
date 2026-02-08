@@ -25,7 +25,9 @@
 
 ## What is CryptoServe?
 
-CryptoServe is an open-source cryptography platform that provides encryption, signing, hashing, and key management through an SDK, CLI, and REST API. It scans codebases for cryptographic usage, generates Cryptographic Bills of Materials (CBOM), and supports post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA). A 5-layer context model selects algorithms automatically based on data sensitivity, compliance requirements, and threat profile.
+**CLI and SDK** — `pip install cryptoserve` gives you a standalone toolchain for cryptographic scanning (90+ patterns), CBOM generation (CycloneDX, SPDX), dependency analysis, offline encryption/decryption, password hashing, certificate management, and CI/CD policy gates. No server required. Supports post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA).
+
+**Platform** — the self-hosted server adds centralized key management with automatic rotation and HSM/KMS backends, a 5-layer context model for automatic algorithm selection, a declarative policy engine, multi-tenant isolation, audit logging with SIEM integration, FIPS 140-2/3 compliance modes, and a dashboard for security posture and quantum readiness.
 
 ## Quick Start
 
@@ -38,87 +40,43 @@ pip install cryptoserve
 ### Scan Your Codebase
 
 ```bash
-cryptoserve scan .                                    # 90+ cryptographic patterns
+cryptoserve scan .                                     # 90+ cryptographic patterns
 cryptoserve cbom --format cyclonedx --output cbom.json # Generate CBOM
 cryptoserve pqc                                        # PQC readiness assessment
 ```
 
-### Encrypt Data
-
-```python
-from cryptoserve import CryptoServe
-
-crypto = CryptoServe(app_name="my-app", team="engineering")
-ciphertext = crypto.encrypt(b"sensitive data", context="user-pii")
-plaintext = crypto.decrypt(ciphertext, context="user-pii")
-```
-
-### Offline Encrypt (no server)
+### Offline Crypto (no server)
 
 ```bash
 cryptoserve encrypt "secret message" --password mypassword
 cryptoserve decrypt "<output>" --password mypassword
-```
-
----
-
-## Features
-
-| Category | Capabilities |
-|----------|-------------|
-| **Scanning** | 90+ cryptographic patterns, CBOM generation (CycloneDX, SPDX), dependency analysis, SARIF output |
-| **Encryption** | AES-256-GCM, ChaCha20-Poly1305, AES-XTS, ECIES, RSA-OAEP |
-| **Signing** | Ed25519, ECDSA, RSA-PSS, ML-DSA |
-| **Hashing** | SHA-2, SHA-3, BLAKE2b/3, Argon2id, bcrypt, scrypt |
-| **Post-Quantum** | ML-KEM-768/1024, ML-DSA-44/65/87, SLH-DSA (FIPS 203/204/205) |
-| **Key Management** | Automatic rotation, versioning, HKDF derivation, Shamir secret sharing |
-| **Context Model** | 5-layer automatic algorithm selection (sensitivity, compliance, threats, access, technical) |
-| **Policy Engine** | Declarative rules, CI/CD gate checks, compliance enforcement |
-| **Compliance** | FIPS 140-2/140-3 modes, audit logging, SIEM integration |
-| **Multi-Tenant** | Tenant isolation with per-tenant keys and policies |
-
----
-
-## CLI Tools
-
-The CLI includes offline scanning and crypto tools that work without a server. See the [full CLI reference](docs/cli.md) for all commands and flags.
-
-### Scan and CBOM
-
-```bash
-cryptoserve scan .                                    # Scan for crypto patterns
-cryptoserve deps .                                     # Dependency crypto analysis
-cryptoserve cbom --format cyclonedx -o cbom.json       # Generate CBOM
-cryptoserve push cbom.json                             # Upload to dashboard
-```
-
-### CI/CD Gate
-
-```bash
-cryptoserve gate . --policy strict --format sarif      # Policy enforcement
-cryptoserve gate . --staged                            # Pre-commit check
-```
-
-### Offline Crypto
-
-```bash
-cryptoserve encrypt "data" -p secret                   # Encrypt string
-cryptoserve encrypt --file doc.pdf -p secret -o doc.enc # Encrypt file
 cryptoserve hash-password "mypassword"                 # scrypt hash
-cryptoserve token --key mysecret --payload '{"sub":"u1"}' # JWT
 ```
 
-### Certificates
+---
 
-```bash
-cryptoserve certs generate-csr --cn "example.com"
-cryptoserve certs self-signed --cn "localhost" --days 365
-cryptoserve certs parse server.pem
-```
+## CLI Reference
+
+All CLI commands work offline. No server required. See the [full CLI reference](docs/cli.md) for all flags and examples.
+
+| Command | Description |
+|---------|-------------|
+| `scan` | Scan for 90+ cryptographic patterns, SARIF output |
+| `deps` | Dependency crypto analysis |
+| `cbom` | Generate CBOM (CycloneDX, SPDX) |
+| `pqc` | Post-quantum readiness assessment |
+| `gate` | CI/CD policy enforcement (`--policy strict`, `--staged`) |
+| `push` | Upload CBOM to dashboard |
+| `encrypt` / `decrypt` | Password-based encryption (strings and files) |
+| `hash-password` | scrypt / PBKDF2 password hashing |
+| `token` | Generate JWT tokens |
+| `certs` | CSR generation, self-signed certs, certificate parsing |
 
 ---
 
 ## SDK Usage
+
+The SDK connects to a running CryptoServe server for managed keys and context-aware algorithm selection.
 
 ```python
 from cryptoserve import CryptoServe
@@ -145,6 +103,23 @@ crypto.encrypt(data, context="customer-pii", usage="streaming")  # ChaCha20-Poly
 ```
 
 See the [Python SDK docs](https://cryptoserve.dev/docs/sdk/) for the full API.
+
+---
+
+## Platform
+
+The self-hosted server extends the CLI with centralized management, policy enforcement, and compliance features.
+
+| Feature | Description |
+|---------|-------------|
+| **Key Management** | Automatic rotation, versioning, HKDF derivation, Shamir secret sharing, HSM/KMS backends |
+| **Context Model** | 5-layer algorithm selection based on sensitivity, compliance, threats, access patterns, and technical constraints |
+| **Policy Engine** | Declarative rules, CI/CD gate checks, compliance enforcement |
+| **Multi-Tenancy** | Per-tenant isolation with separate keys and policies |
+| **Audit & Compliance** | Operation logging, SIEM integration, FIPS 140-2/3 modes |
+| **Dashboard** | Security posture overview, quantum readiness, migration advisor |
+| **Identity & RBAC** | OAuth (GitHub/Google/Azure/Okta), role-based access, SDK token management |
+| **Algorithms** | AES-256-GCM, ChaCha20-Poly1305, AES-XTS, ECIES, RSA-OAEP, Ed25519, ECDSA, RSA-PSS, ML-DSA, SHA-2/3, BLAKE2b/3, Argon2id, bcrypt, ML-KEM-768/1024, ML-DSA-44/65/87, SLH-DSA |
 
 ---
 
