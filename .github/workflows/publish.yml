@@ -120,6 +120,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
 
   publish-client:
     needs: publish-core
@@ -139,6 +140,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
 
   publish-auto:
     needs: publish-core
@@ -158,6 +160,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
 
   publish-main:
     needs: [publish-core, publish-client]
@@ -177,6 +180,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
 
   provenance:
     needs: [publish-core, publish-client, publish-auto, publish-main]
