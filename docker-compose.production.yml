@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
 
   backend:
-    build: ./backend
+    image: ghcr.io/ecolibria/crypto-serve-backend:latest
     ports:
       - "8003:8003"
     environment:
@@ -64,12 +64,12 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    image: ghcr.io/ecolibria/crypto-serve-frontend:latest
     ports:
       - "3003:3000"
     environment:
       NEXT_PUBLIC_API_URL: ${BACKEND_URL:-https://localhost:8003}
-      API_URL: http://backend:8000
+      API_URL: http://backend:8003
     depends_on:
       - backend
     deploy:
