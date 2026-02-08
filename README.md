@@ -149,20 +149,17 @@ See the [Python SDK docs](https://cryptoserve.dev/docs/sdk/) for the full API.
 
 ## Self-Hosting
 
-### Docker (recommended)
-
-Pre-built images are published to GitHub Container Registry. No clone required.
+### One command
 
 ```bash
-# Download the production compose file and example env
-curl -O https://raw.githubusercontent.com/ecolibria/crypto-serve/main/docker-compose.production.yml
-curl -O https://raw.githubusercontent.com/ecolibria/crypto-serve/main/.env.example
-cp .env.example .env
-# Edit .env with your secrets (see comments in .env.example)
-docker compose -f docker-compose.production.yml up -d
+curl -fsSL https://raw.githubusercontent.com/ecolibria/crypto-serve/main/scripts/quickstart.sh | sh
 ```
 
-Server: `http://localhost:8003` | Dashboard: `http://localhost:3003`
+This downloads the compose file, generates random secrets, pulls pre-built images from GHCR, and starts the stack. No clone required.
+
+API: `http://localhost:8003` | Dashboard: `http://localhost:3003`
+
+Configuration is in `cryptoserve/.env`. Edit it to add GitHub OAuth, switch to production mode, or change ports.
 
 ### Build from source
 
