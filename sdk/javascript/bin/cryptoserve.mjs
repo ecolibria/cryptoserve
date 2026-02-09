@@ -41,8 +41,17 @@ function getOption(args, name, defaultValue = null) {
   return args[idx + 1];
 }
 
-function getPositional(args, flagPrefixes = ['--']) {
-  return args.filter(a => !flagPrefixes.some(p => a.startsWith(p)));
+function getPositional(args, optionsWithValues = ['--password', '--algorithm', '--profile', '--format', '--file', '--output', '--server']) {
+  const result = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      // Skip the flag; if it takes a value, skip the next arg too
+      if (optionsWithValues.includes(args[i])) i++;
+      continue;
+    }
+    result.push(args[i]);
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +150,14 @@ async function cmdPqc(args) {
   const profile = getOption(args, '--profile', 'general');
   const format = getOption(args, '--format', 'text');
   const verbose = getFlag(args, '--verbose');
+
+  // Validate profile name
+  if (!DATA_PROFILES[profile]) {
+    const valid = Object.keys(DATA_PROFILES).join(', ');
+    if (format !== 'json') {
+      console.error(warning(`Unknown profile "${profile}", using default. Valid: ${valid}`));
+    }
+  }
 
   // Use scanner results if available, otherwise use example libraries
   let libraries = [];
