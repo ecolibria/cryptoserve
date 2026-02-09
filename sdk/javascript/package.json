@@ -1,0 +1,36 @@
+{
+  "name": "cryptoserve",
+  "version": "0.1.0",
+  "description": "CryptoServe CLI - Cryptographic scanning, PQC analysis, encryption, and local key management",
+  "type": "module",
+  "bin": {
+    "cryptoserve": "./bin/cryptoserve.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "Apache-2.0",
+  "keywords": [
+    "cryptography",
+    "pqc",
+    "post-quantum",
+    "encryption",
+    "security",
+    "scanner",
+    "keychain",
+    "vault"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ecolibria/cryptoserve"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
