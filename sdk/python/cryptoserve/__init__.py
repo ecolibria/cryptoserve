@@ -861,7 +861,7 @@ def get_pqc_recommendations(
             ],
         })
 
-    # Request recommendations from server
+    # Try server first, fall back to offline analysis
     import requests
 
     try:
@@ -873,13 +873,64 @@ def get_pqc_recommendations(
                 "libraries": libraries,
                 "data_profile": data_profile,
             },
-            timeout=30,
+            timeout=10,
         )
-
         if response.status_code == 200:
             return PQCRecommendationResult(response.json())
-        else:
-            raise CryptoServeError(f"Failed to get recommendations: {response.text}")
+    except (requests.RequestException, KeyError):
+        pass  # Fall through to offline analysis
 
-    except requests.RequestException as e:
-        raise CryptoServeError(f"Recommendations request failed: {str(e)}")
+    # Offline fallback — use local library data + data profile
+    protection_years = {
+        "healthcare": 100,
+        "national_security": 75,
+        "financial": 25,
+        "general": 10,
+        "short_lived": 1,
+    }.get(data_profile, 10)
+    estimated_quantum_years = 15
+    has_vulnerable = any(lib["quantum_risk"] in ["high", "critical"] for lib in libraries)
+    risk_window = estimated_quantum_years - protection_years
+
+    return PQCRecommendationResult({
+        "sndl_assessment": {
+            "vulnerable": has_vulnerable or risk_window < 0,
+            "protection_years_required": protection_years,
+            "estimated_quantum_years": estimated_quantum_years,
+            "risk_window_years": risk_window,
+            "risk_level": "critical" if risk_window < -20 else "high" if risk_window < 0 else "medium" if has_vulnerable else "low",
+            "explanation": f"Offline analysis: {data_profile} profile requires {protection_years}-year protection window",
+        },
+        "kem_recommendations": [
+            {
+                "current_algorithm": "RSA",
+                "recommended_algorithm": "ML-KEM-768",
+                "fips_standard": "FIPS 203",
+                "security_level": "NIST Level 3",
+                "rationale": "RSA is vulnerable to Shor's algorithm",
+                "migration_complexity": "medium",
+            }
+        ] if has_vulnerable else [],
+        "signature_recommendations": [],
+        "migration_plan": [
+            {
+                "priority": 1,
+                "phase": "immediate",
+                "action": "Inventory all asymmetric key usage",
+                "algorithms_affected": ["RSA", "ECDSA"],
+                "estimated_effort": "low",
+            }
+        ] if has_vulnerable else [],
+        "overall_urgency": "critical" if risk_window < -20 else "high" if risk_window < 0 else "medium" if has_vulnerable else "low",
+        "quantum_readiness_score": 10.0 if risk_window < -20 else 30.0 if has_vulnerable else 80.0,
+        "key_findings": [
+            f"Detected {len(libraries)} cryptographic libraries",
+            f"Data profile '{data_profile}' requires {protection_years}-year protection",
+            "Quantum-vulnerable algorithms in use" if has_vulnerable else "No critical quantum vulnerabilities",
+        ],
+        "next_steps": [
+            "Review algorithm recommendations",
+            "Plan hybrid deployment strategy",
+            "Train team on PQC concepts",
+        ],
+    })
