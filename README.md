@@ -102,7 +102,7 @@ crypto.encrypt(data, context="customer-pii", usage="at_rest")    # AES-256-GCM
 crypto.encrypt(data, context="customer-pii", usage="streaming")  # ChaCha20-Poly1305
 ```
 
-See the [Python SDK docs](https://cryptoserve.dev/docs/sdk/) for the full API.
+See the [Python SDK docs](docs/sdk/python.md) for the full API.
 
 ---
 
@@ -164,14 +164,14 @@ The default `.env` runs in dev mode (`DEV_MODE=true`), which bypasses GitHub OAu
 
 | Resource | Description |
 |----------|-------------|
-| [Getting Started](https://cryptoserve.dev/docs/getting-started/) | Installation and quickstart |
+| [Getting Started](docs/getting-started/index.md) | Installation and quickstart |
 | [CLI Reference](docs/cli.md) | All CLI commands, flags, and examples |
-| [Python SDK](https://cryptoserve.dev/docs/sdk/) | SDK reference and examples |
-| [API Reference](https://cryptoserve.dev/docs/api-reference/) | REST API documentation |
-| [Architecture](https://cryptoserve.dev/docs/concepts/architecture/) | Context model, policy engine, key management |
-| [Post-Quantum](https://cryptoserve.dev/docs/concepts/post-quantum/) | ML-KEM, ML-DSA, SLH-DSA, hybrid key exchange |
-| [Security](https://cryptoserve.dev/docs/security/) | FIPS compliance, threat model, technical reference |
-| [Guides](https://cryptoserve.dev/docs/guides/) | Encryption, key rotation, compliance, PQC migration |
+| [Python SDK](docs/sdk/index.md) | SDK reference and examples |
+| [API Reference](docs/api-reference/index.md) | REST API documentation |
+| [Architecture](docs/concepts/architecture.md) | Context model, policy engine, key management |
+| [Post-Quantum](docs/concepts/post-quantum.md) | ML-KEM, ML-DSA, SLH-DSA, hybrid key exchange |
+| [Security](docs/security/index.md) | FIPS compliance, threat model, technical reference |
+| [Guides](docs/guides/index.md) | Encryption, key rotation, compliance, PQC migration |
 
 ---
 
