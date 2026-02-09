@@ -6,9 +6,9 @@ Welcome to CryptoServe! This section will help you get up and running quickly.
 
 CryptoServe is a cryptography-as-a-service platform that provides:
 
-- **Server** - FastAPI backend that handles all cryptographic operations
-- **Dashboard** - Next.js web interface for identity and context management
-- **SDKs** - Personalized client libraries with embedded identity
+- **Server** — FastAPI backend that handles all cryptographic operations
+- **Dashboard** — Next.js web interface for identity and context management
+- **SDKs** — Personalized client libraries with embedded identity
 
 ## Prerequisites
 
@@ -20,40 +20,18 @@ Before you begin, ensure you have:
 
 ## Quick Navigation
 
-<div class="grid cards" markdown>
-
--   :material-download:{ .lg .middle } **Installation**
-
-    ---
-
-    Multiple installation methods: Docker, local development, or cloud deployment
-
-    [:octicons-arrow-right-24: Installation](installation.md)
-
--   :material-play:{ .lg .middle } **Quick Start**
-
-    ---
-
-    Create your first identity and encrypt data in 5 minutes
-
-    [:octicons-arrow-right-24: Quick Start](quickstart.md)
-
--   :material-cog:{ .lg .middle } **Configuration**
-
-    ---
-
-    Environment variables, OAuth setup, and production settings
-
-    [:octicons-arrow-right-24: Configuration](configuration.md)
-
-</div>
+| Resource | Description |
+|----------|-------------|
+| **[Installation](installation.md)** | Multiple installation methods: Docker, local development, or cloud deployment |
+| **[Quick Start](quickstart.md)** | Create your first identity and encrypt data in 5 minutes |
+| **[Configuration](configuration.md)** | Environment variables, OAuth setup, and production settings |
 
 ## Recommended Path
 
-1. **Start with [Installation](installation.md)** - Get the server running
-2. **Follow the [Quick Start](quickstart.md)** - Create an identity and test encryption
-3. **Review [Configuration](configuration.md)** - Customize for your environment
-4. **Read the [Concepts](../concepts/index.md)** - Understand the architecture
+1. **Start with [Installation](installation.md)** — Get the server running
+2. **Follow the [Quick Start](quickstart.md)** — Create an identity and test encryption
+3. **Review [Configuration](configuration.md)** — Customize for your environment
+4. **Read the [Concepts](../concepts/index.md)** — Understand the architecture
 
 ## Need Help?
 

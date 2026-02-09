@@ -82,7 +82,8 @@ sequenceDiagram
 
 ### Implementation
 
-```python title="app/core/hybrid_crypto.py"
+```python
+# app/core/hybrid_crypto.py
 import oqs
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM

@@ -1,77 +1,33 @@
----
-title: CryptoServe Documentation
-description: Cryptography-as-a-Service with Zero Configuration SDKs
-hide:
-  - navigation
-  - toc
----
+# CryptoServe Documentation
 
-<style>
-.md-typeset h1 {
-  display: none;
-}
-</style>
-
-<div class="hero" markdown>
-
-# **CryptoServe**
-
-### Cryptography-as-a-Service with Zero Configuration SDKs
+Cryptography-as-a-Service with Zero Configuration SDKs
 
 Eliminate the complexity of implementing encryption correctly. Download a personalized SDK with your identity embedded, then encrypt and decrypt with a single line of code.
 
-[Get Started](getting-started/quickstart.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/ecolibria/cryptoserve){ .md-button }
-[API Docs :material-api:](http://localhost:8003/docs){ .md-button }
-
-</div>
+- [Get Started](getting-started/quickstart.md)
+- [View on GitHub](https://github.com/ecolibria/cryptoserve)
+- [API Docs](api-reference/index.md)
 
 ---
 
-!!! example "Interactive API Documentation"
-    **Try the API instantly** with our OpenAPI-powered documentation:
-
-    - **[Swagger UI](/docs)** - Interactive API explorer with live request testing
-    - **[ReDoc](/redoc)** - Three-panel documentation with search
-    - **[OpenAPI Spec](/openapi.json)** - Import into Postman, Insomnia, or generate client SDKs
+> **Interactive API Documentation**
+>
+> **Try the API instantly** with the OpenAPI-powered documentation available when the server is running:
+>
+> - **Swagger UI** (`/docs`) — Interactive API explorer with live request testing
+> - **ReDoc** (`/redoc`) — Three-panel documentation with search
+> - **OpenAPI Spec** (`/openapi.json`) — Import into Postman, Insomnia, or generate client SDKs
 
 ---
 
-<div class="grid cards" markdown>
+## Features
 
--   :material-rocket-launch:{ .lg .middle } **Zero Configuration**
-
-    ---
-
-    Download a personalized SDK with your identity embedded. No API keys to configure, no secrets to manage.
-
-    [:octicons-arrow-right-24: Quick Start](getting-started/quickstart.md)
-
--   :material-shield-lock:{ .lg .middle } **Enterprise Security**
-
-    ---
-
-    AES-256-GCM with key commitment, HKDF key derivation, Ed25519 authentication, and FIPS compliance modes.
-
-    [:octicons-arrow-right-24: Technical Reference](security/technical-reference.md)
-
--   :material-atom:{ .lg .middle } **Post-Quantum Ready**
-
-    ---
-
-    NIST-standardized ML-KEM and ML-DSA algorithms via liboqs. Hybrid modes for defense in depth.
-
-    [:octicons-arrow-right-24: PQC Guide](concepts/post-quantum.md)
-
--   :material-scale-balance:{ .lg .middle } **Policy Engine**
-
-    ---
-
-    Enforce cryptographic standards at runtime. Block deprecated algorithms, require minimum key sizes, ensure compliance.
-
-    [:octicons-arrow-right-24: Policy Engine](concepts/policy-engine.md)
-
-</div>
+| Feature | Description | Link |
+|---------|-------------|------|
+| **Zero Configuration** | Download a personalized SDK with your identity embedded. No API keys to configure, no secrets to manage. | [Quick Start](getting-started/quickstart.md) |
+| **Enterprise Security** | AES-256-GCM with key commitment, HKDF key derivation, Ed25519 authentication, and FIPS compliance modes. | [Technical Reference](security/technical-reference.md) |
+| **Post-Quantum Ready** | NIST-standardized ML-KEM and ML-DSA algorithms via liboqs. Hybrid modes for defense in depth. | [PQC Guide](concepts/post-quantum.md) |
+| **Policy Engine** | Enforce cryptographic standards at runtime. Block deprecated algorithms, require minimum key sizes, ensure compliance. | [Policy Engine](concepts/policy-engine.md) |
 
 ---
 
@@ -101,53 +57,53 @@ sequenceDiagram
 
 ## Quick Example
 
-=== "Python"
+### Python
 
-    ```python
-    from cryptoserve import CryptoServe
+```python
+from cryptoserve import CryptoServe
 
-    crypto = CryptoServe(app_name="my-app", team="platform")
+crypto = CryptoServe(app_name="my-app", team="platform")
 
-    # Encrypt sensitive data
-    ciphertext = crypto.encrypt_string(
-        "John Doe, SSN: 123-45-6789",
-        context="user-pii"
-    )
+# Encrypt sensitive data
+ciphertext = crypto.encrypt_string(
+    "John Doe, SSN: 123-45-6789",
+    context="user-pii"
+)
 
-    # Decrypt when needed
-    plaintext = crypto.decrypt_string(ciphertext, context="user-pii")
-    ```
+# Decrypt when needed
+plaintext = crypto.decrypt_string(ciphertext, context="user-pii")
+```
 
-=== "TypeScript"
+### TypeScript
 
-    ```typescript
-    import { crypto } from '@cryptoserve/sdk';
+```typescript
+import { crypto } from '@cryptoserve/sdk';
 
-    // Encrypt sensitive data
-    const ciphertext = await crypto.encrypt(
-      "John Doe, SSN: 123-45-6789",
-      { context: "user-pii" }
-    );
+// Encrypt sensitive data
+const ciphertext = await crypto.encrypt(
+  "John Doe, SSN: 123-45-6789",
+  { context: "user-pii" }
+);
 
-    // Decrypt when needed
-    const plaintext = await crypto.decrypt(ciphertext);
-    ```
+// Decrypt when needed
+const plaintext = await crypto.decrypt(ciphertext);
+```
 
-=== "cURL"
+### cURL
 
-    ```bash
-    # Encrypt
-    curl -X POST https://api.cryptoserve.io/v1/crypto/encrypt \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{"plaintext": "SGVsbG8gV29ybGQ=", "context": "user-pii"}'
+```bash
+# Encrypt
+curl -X POST https://your-server/v1/crypto/encrypt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"plaintext": "SGVsbG8gV29ybGQ=", "context": "user-pii"}'
 
-    # Decrypt
-    curl -X POST https://api.cryptoserve.io/v1/crypto/decrypt \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{"ciphertext": "..."}'
-    ```
+# Decrypt
+curl -X POST https://your-server/v1/crypto/decrypt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ciphertext": "..."}'
+```
 
 ---
 
@@ -163,7 +119,7 @@ CryptoServe automatically selects the optimal cryptographic algorithm based on f
 | **Access Patterns** | How data is used | High frequency, low latency |
 | **Technical** | Infrastructure constraints | Hardware acceleration, FIPS mode |
 
-[:octicons-arrow-right-24: Learn more about the context model](concepts/context-model.md)
+See [Context Model](concepts/context-model.md) for details.
 
 ---
 
@@ -173,10 +129,10 @@ CryptoServe automatically selects the optimal cryptographic algorithm based on f
 
 | Algorithm | Key Size | FIPS | Use Case |
 |-----------|----------|------|----------|
-| AES-256-GCM | 256-bit | :white_check_mark: | Default, authenticated encryption |
-| AES-128-GCM | 128-bit | :white_check_mark: | Performance-sensitive |
-| ChaCha20-Poly1305 | 256-bit | :x: | Software-only environments |
-| AES-256-CBC + HMAC | 256-bit | :white_check_mark: | Legacy compatibility |
+| AES-256-GCM | 256-bit | Yes | Default, authenticated encryption |
+| AES-128-GCM | 128-bit | Yes | Performance-sensitive |
+| ChaCha20-Poly1305 | 256-bit | No | Software-only environments |
+| AES-256-CBC + HMAC | 256-bit | Yes | Legacy compatibility |
 
 ### Post-Quantum (NIST Standards)
 
@@ -187,73 +143,40 @@ CryptoServe automatically selects the optimal cryptographic algorithm based on f
 | ML-DSA-65 | FIPS 204 | Level 3 | Digital signatures |
 | ML-DSA-87 | FIPS 204 | Level 5 | Maximum security |
 
-[:octicons-arrow-right-24: Full algorithm reference](security/technical-reference.md#appendix-a-algorithm-reference)
+See [Algorithm Reference](security/technical-reference.md#appendix-a-algorithm-reference) for the full list.
 
 ---
 
 ## Why CryptoServe?
 
-<div class="grid" markdown>
+**Developers**
 
-!!! success "Developers Love It"
+- Zero configuration — works immediately after import
+- No key management — keys handled server-side
+- Type-safe SDKs — full IDE support
+- Self-documenting — ciphertext includes metadata
 
-    - **Zero configuration** - Works immediately after import
-    - **No key management** - Keys handled server-side
-    - **Type-safe SDKs** - Full IDE support
-    - **Self-documenting** - Ciphertext includes metadata
+**Security Teams**
 
-!!! success "Security Teams Love It"
+- Policy enforcement — runtime algorithm validation
+- Complete audit trail — every operation logged
+- Key rotation — no re-encryption needed
+- Compliance ready — HIPAA, PCI-DSS, GDPR
 
-    - **Policy enforcement** - Runtime algorithm validation
-    - **Complete audit trail** - Every operation logged
-    - **Key rotation** - No re-encryption needed
-    - **Compliance ready** - HIPAA, PCI-DSS, GDPR
+**Operations Teams**
 
-!!! success "Operations Teams Love It"
-
-    - **Self-service** - Dashboard for identity management
-    - **Observable** - Metrics and analytics built-in
-    - **Scalable** - Stateless API design
-    - **Cloud-native** - KMS integration support
-
-</div>
+- Self-service — dashboard for identity management
+- Observable — metrics and analytics built-in
+- Scalable — stateless API design
+- Cloud-native — KMS integration support
 
 ---
 
 ## Getting Started
 
-<div class="grid cards" markdown>
-
--   :material-download:{ .lg .middle } **Installation**
-
-    ---
-
-    Install CryptoServe server and SDKs
-
-    [:octicons-arrow-right-24: Install Guide](getting-started/installation.md)
-
--   :material-play:{ .lg .middle } **Quick Start**
-
-    ---
-
-    Your first encryption in 5 minutes
-
-    [:octicons-arrow-right-24: Quick Start](getting-started/quickstart.md)
-
--   :material-cog:{ .lg .middle } **Configuration**
-
-    ---
-
-    Environment variables and options
-
-    [:octicons-arrow-right-24: Configuration](getting-started/configuration.md)
-
--   :material-book-open-variant:{ .lg .middle } **Concepts**
-
-    ---
-
-    Understand the architecture
-
-    [:octicons-arrow-right-24: Concepts](concepts/index.md)
-
-</div>
+| Resource | Description | Link |
+|----------|-------------|------|
+| **Installation** | Install CryptoServe server and SDKs | [Install Guide](getting-started/installation.md) |
+| **Quick Start** | Your first encryption in 5 minutes | [Quick Start](getting-started/quickstart.md) |
+| **Configuration** | Environment variables and options | [Configuration](getting-started/configuration.md) |
+| **Concepts** | Understand the architecture | [Concepts](concepts/index.md) |

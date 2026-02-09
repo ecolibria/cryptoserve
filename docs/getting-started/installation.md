@@ -217,30 +217,34 @@ curl http://localhost:8003/api/contexts
 
 ## Troubleshooting
 
-??? question "Port already in use"
+**Port already in use**
 
-    Change the port in `docker-compose.yml` or use a different port:
-    ```bash
-    uvicorn app.main:app --port 8002
-    ```
+Change the port in `docker-compose.yml` or use a different port:
 
-??? question "Database connection errors"
+```bash
+uvicorn app.main:app --port 8002
+```
 
-    Ensure PostgreSQL is running and credentials are correct:
-    ```bash
-    docker compose logs db
-    ```
+**Database connection errors**
 
-??? question "OAuth callback errors"
+Ensure PostgreSQL is running and credentials are correct:
 
-    Verify your GitHub OAuth app callback URL matches exactly:
-    ```
-    http://localhost:8003/auth/github/callback
-    ```
+```bash
+docker compose logs db
+```
 
-??? question "liboqs import errors"
+**OAuth callback errors**
 
-    Ensure liboqs is installed and `LD_LIBRARY_PATH` includes `/usr/local/lib`:
-    ```bash
-    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-    ```
+Verify your GitHub OAuth app callback URL matches exactly:
+
+```
+http://localhost:8003/auth/github/callback
+```
+
+**liboqs import errors**
+
+Ensure liboqs is installed and `LD_LIBRARY_PATH` includes `/usr/local/lib`:
+
+```bash
+export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+```

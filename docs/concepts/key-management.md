@@ -90,7 +90,8 @@ DEK = HKDF-SHA256(
 
 ### Implementation
 
-```python title="app/core/key_manager.py"
+```python
+# app/core/key_manager.py
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
@@ -192,7 +193,8 @@ For production deployments, use a cloud KMS instead of environment variables.
 
 ### AWS KMS
 
-```python title="Configuration"
+```python
+# Configuration
 KMS_PROVIDER=aws
 AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789:key/abc123
 AWS_REGION=us-east-1

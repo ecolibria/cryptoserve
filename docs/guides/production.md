@@ -19,8 +19,9 @@ This guide covers deploying CryptoServe in production environments.
 
 ## Critical Secrets Configuration
 
-!!! danger "MUST CHANGE BEFORE PRODUCTION"
-    The following secrets have insecure default values that **MUST** be changed before deploying to production. The health check endpoint (`/health/deep`) will report DEGRADED status if these defaults are detected.
+> **Warning: MUST CHANGE BEFORE PRODUCTION**
+>
+> The following secrets have insecure default values that **MUST** be changed before deploying to production. The health check endpoint (`/health/deep`) will report DEGRADED status if these defaults are detected.
 
 ### Required Secrets
 

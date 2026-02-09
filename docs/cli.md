@@ -245,7 +245,7 @@ cryptoserve certs verify server.pem --issuer ca.pem
 
 ```bash
 cryptoserve login                                     # Opens browser for OAuth
-cryptoserve login --server https://api.cryptoserve.io  # Custom server
+cryptoserve login --server https://your-server  # Custom server
 cryptoserve login --dev                                # Dev mode (no OAuth)
 cryptoserve login --cookie <jwt>                       # Manual session token
 ```
@@ -266,7 +266,7 @@ cryptoserve logout
 
 ```bash
 cryptoserve configure --token <token>
-cryptoserve configure --server https://api.cryptoserve.io
+cryptoserve configure --server https://your-server
 cryptoserve configure --refresh-token <token>
 ```
 

@@ -29,49 +29,13 @@ graph TB
 
 ## Core Concepts
 
-<div class="grid cards" markdown>
-
--   :material-layers:{ .lg .middle } **Architecture**
-
-    ---
-
-    System components, data flow, and design decisions
-
-    [:octicons-arrow-right-24: Architecture](architecture.md)
-
--   :material-sitemap:{ .lg .middle } **5-Layer Context Model**
-
-    ---
-
-    How contexts determine the optimal encryption algorithm
-
-    [:octicons-arrow-right-24: Context Model](context-model.md)
-
--   :material-key:{ .lg .middle } **Key Management**
-
-    ---
-
-    Key derivation, rotation, and storage
-
-    [:octicons-arrow-right-24: Key Management](key-management.md)
-
--   :material-shield-check:{ .lg .middle } **Policy Engine**
-
-    ---
-
-    Runtime enforcement of cryptographic standards
-
-    [:octicons-arrow-right-24: Policy Engine](policy-engine.md)
-
--   :material-atom:{ .lg .middle } **Post-Quantum Cryptography**
-
-    ---
-
-    NIST-standardized algorithms and hybrid modes
-
-    [:octicons-arrow-right-24: Post-Quantum](post-quantum.md)
-
-</div>
+| Concept | Description | Link |
+|---------|-------------|------|
+| **Architecture** | System components, data flow, and design decisions | [Architecture](architecture.md) |
+| **5-Layer Context Model** | How contexts determine the optimal encryption algorithm | [Context Model](context-model.md) |
+| **Key Management** | Key derivation, rotation, and storage | [Key Management](key-management.md) |
+| **Policy Engine** | Runtime enforcement of cryptographic standards | [Policy Engine](policy-engine.md) |
+| **Post-Quantum Cryptography** | NIST-standardized algorithms and hybrid modes | [Post-Quantum](post-quantum.md) |
 
 ## Design Principles
 
@@ -118,8 +82,8 @@ Every cryptographic operation is logged with:
 | **Identity** | A credential representing an application or service |
 | **Context** | A named encryption policy (e.g., "user-pii", "payment-data") |
 | **SDK** | The client library with embedded identity |
-| **DEK** | Data Encryption Key - encrypts actual data |
-| **KEK** | Key Encryption Key - protects DEKs |
+| **DEK** | Data Encryption Key — encrypts actual data |
+| **KEK** | Key Encryption Key — protects DEKs |
 | **Master Key** | Root key from which all others are derived |
 
 ## Data Flow

@@ -48,34 +48,34 @@ POST /v1/crypto/encrypt
 
 ### Example
 
-=== "cURL"
+**cURL**
 
-    ```bash
-    curl -X POST http://localhost:8003/v1/crypto/encrypt \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "plaintext": "SGVsbG8gV29ybGQh",
+```bash
+curl -X POST http://localhost:8003/v1/crypto/encrypt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "plaintext": "SGVsbG8gV29ybGQh",
+    "context": "user-pii"
+  }'
+```
+
+**Python**
+
+```python
+import requests
+import base64
+
+response = requests.post(
+    "http://localhost:8003/v1/crypto/encrypt",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "plaintext": base64.b64encode(b"Hello World!").decode(),
         "context": "user-pii"
-      }'
-    ```
-
-=== "Python"
-
-    ```python
-    import requests
-    import base64
-
-    response = requests.post(
-        "http://localhost:8003/v1/crypto/encrypt",
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "plaintext": base64.b64encode(b"Hello World!").decode(),
-            "context": "user-pii"
-        }
-    )
-    ciphertext = response.json()["ciphertext"]
-    ```
+    }
+)
+ciphertext = response.json()["ciphertext"]
+```
 
 ### Errors
 
@@ -125,27 +125,27 @@ POST /v1/crypto/decrypt
 
 ### Example
 
-=== "cURL"
+**cURL**
 
-    ```bash
-    curl -X POST http://localhost:8003/v1/crypto/decrypt \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "ciphertext": "AQAAAFd7InYiOjMsImN0eCI6..."
-      }'
-    ```
+```bash
+curl -X POST http://localhost:8003/v1/crypto/decrypt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ciphertext": "AQAAAFd7InYiOjMsImN0eCI6..."
+  }'
+```
 
-=== "Python"
+**Python**
 
-    ```python
-    response = requests.post(
-        "http://localhost:8003/v1/crypto/decrypt",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"ciphertext": ciphertext}
-    )
-    plaintext = base64.b64decode(response.json()["plaintext"])
-    ```
+```python
+response = requests.post(
+    "http://localhost:8003/v1/crypto/decrypt",
+    headers={"Authorization": f"Bearer {token}"},
+    json={"ciphertext": ciphertext}
+)
+plaintext = base64.b64decode(response.json()["plaintext"])
+```
 
 ### Errors
 

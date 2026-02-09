@@ -155,7 +155,8 @@ curl -X POST http://localhost:8003/api/policies \
 
 ### Evaluation Logic
 
-```python title="app/core/policy_engine.py"
+```python
+# app/core/policy_engine.py
 async def evaluate_policies(
     context: Context,
     algorithm: str,

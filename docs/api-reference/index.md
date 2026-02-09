@@ -4,38 +4,19 @@ Complete reference documentation for the CryptoServe REST API.
 
 ## Interactive API Documentation
 
-!!! tip "Try it live with Swagger UI"
-    CryptoServe provides **interactive API documentation** powered by OpenAPI 3.1:
-
-    <div class="grid cards" markdown>
-
-    -   :material-api:{ .lg .middle } **Swagger UI**
-
-        ---
-
-        Interactive API explorer with live request testing
-
-        [:octicons-arrow-right-24: Open Swagger UI](http://localhost:8003/docs){ .md-button }
-
-    -   :material-file-document-outline:{ .lg .middle } **ReDoc**
-
-        ---
-
-        Beautiful, three-panel API documentation
-
-        [:octicons-arrow-right-24: Open ReDoc](http://localhost:8003/redoc){ .md-button }
-
-    </div>
-
-    **OpenAPI Specification**: [`/openapi.json`](http://localhost:8003/openapi.json) - Import into Postman, Insomnia, or any OpenAPI-compatible tool.
+> **Tip:** CryptoServe provides **interactive API documentation** powered by OpenAPI 3.1, available when the server is running:
+>
+> - **Swagger UI** (`/docs`) — Interactive API explorer with live request testing
+> - **ReDoc** (`/redoc`) — Three-panel API documentation
+> - **OpenAPI Spec** (`/openapi.json`) — Import into Postman, Insomnia, or any OpenAPI-compatible tool
 
 ---
 
 ## Base URL
 
 ```
-https://api.cryptoserve.io/v1    # Production
-http://localhost:8003            # Development
+https://your-server/v1    # Production
+http://localhost:8003      # Development
 ```
 
 ## Authentication
@@ -44,80 +25,23 @@ All API requests require a valid JWT token in the Authorization header:
 
 ```bash
 curl -H "Authorization: Bearer <access_token>" \
-  https://api.cryptoserve.io/v1/crypto/encrypt
+  https://your-server/v1/crypto/encrypt
 ```
 
 See [Authentication](../concepts/architecture.md#authentication-layer) for token details.
 
 ## API Sections
 
-<div class="grid cards" markdown>
-
--   :material-lock:{ .lg .middle } **Crypto Operations**
-
-    ---
-
-    Encrypt, decrypt, sign, verify, hash, and MAC
-
-    [:octicons-arrow-right-24: Crypto API](crypto.md)
-
--   :material-account-key:{ .lg .middle } **Identities**
-
-    ---
-
-    Create and manage API identities
-
-    [:octicons-arrow-right-24: Identities API](identities.md)
-
--   :material-folder-cog:{ .lg .middle } **Contexts**
-
-    ---
-
-    Configure encryption contexts
-
-    [:octicons-arrow-right-24: Contexts API](contexts.md)
-
--   :material-shield-check:{ .lg .middle } **Policies**
-
-    ---
-
-    Define and evaluate cryptographic policies
-
-    [:octicons-arrow-right-24: Policies API](policies.md)
-
--   :material-shield-account:{ .lg .middle } **Admin**
-
-    ---
-
-    Administrative operations and analytics
-
-    [:octicons-arrow-right-24: Admin API](admin.md)
-
--   :material-key:{ .lg .middle } **Keys**
-
-    ---
-
-    Key management, rotation, and status
-
-    [:octicons-arrow-right-24: Keys API](keys.md)
-
--   :material-chart-line:{ .lg .middle } **Usage**
-
-    ---
-
-    Usage statistics and analytics
-
-    [:octicons-arrow-right-24: Usage API](usage.md)
-
--   :material-shield-lock:{ .lg .middle } **Algorithm Policy**
-
-    ---
-
-    Configure allowed algorithms and FIPS mode
-
-    [:octicons-arrow-right-24: Algorithm Policy API](algorithm-policy.md)
-
-</div>
+| Section | Description | Link |
+|---------|-------------|------|
+| **Crypto Operations** | Encrypt, decrypt, sign, verify, hash, and MAC | [Crypto API](crypto.md) |
+| **Identities** | Create and manage API identities | [Identities API](identities.md) |
+| **Contexts** | Configure encryption contexts | [Contexts API](contexts.md) |
+| **Policies** | Define and evaluate cryptographic policies | [Policies API](policies.md) |
+| **Admin** | Administrative operations and analytics | [Admin API](admin.md) |
+| **Keys** | Key management, rotation, and status | [Keys API](keys.md) |
+| **Usage** | Usage statistics and analytics | [Usage API](usage.md) |
+| **Algorithm Policy** | Configure allowed algorithms and FIPS mode | [Algorithm Policy API](algorithm-policy.md) |
 
 ## Response Format
 
@@ -148,12 +72,12 @@ All responses use JSON with consistent structure:
 |------|-------------|
 | `200` | Success |
 | `201` | Created |
-| `400` | Bad Request - Invalid input |
-| `401` | Unauthorized - Invalid/missing token |
-| `403` | Forbidden - Insufficient permissions |
+| `400` | Bad Request — Invalid input |
+| `401` | Unauthorized — Invalid/missing token |
+| `403` | Forbidden — Insufficient permissions |
 | `404` | Not Found |
-| `409` | Conflict - Resource already exists |
-| `429` | Too Many Requests - Rate limited |
+| `409` | Conflict — Resource already exists |
+| `429` | Too Many Requests — Rate limited |
 | `500` | Internal Server Error |
 
 ## Rate Limiting
@@ -198,7 +122,7 @@ Response includes pagination info:
 
 ## Client SDKs
 
-For type-safe API access, use our official SDKs:
+For type-safe API access, use the official SDKs:
 
-- [Python SDK](../sdk/python.md) - Full async support, Django/FastAPI integrations
-- [TypeScript SDK](../sdk/typescript.md) - Browser and Node.js compatible
+- [Python SDK](../sdk/python.md) — Full async support, Django/FastAPI integrations
+- [TypeScript SDK](../sdk/typescript.md) — Browser and Node.js compatible

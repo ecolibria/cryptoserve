@@ -178,8 +178,7 @@ DELETE /api/identities/{id}
 }
 ```
 
-!!! warning "Irreversible"
-    Deleting an identity immediately invalidates all its tokens. The SDK will stop working.
+> **Warning:** Deleting an identity immediately invalidates all its tokens. The SDK will stop working.
 
 ---
 
@@ -205,8 +204,7 @@ POST /api/identities/{id}/regenerate
 }
 ```
 
-!!! warning "Breaking Change"
-    This invalidates all existing tokens. Applications using the old SDK will need to reinstall.
+> **Warning:** This invalidates all existing tokens. Applications using the old SDK will need to reinstall.
 
 ---
 
@@ -249,8 +247,7 @@ Exchange identity credentials for an access token.
 POST /api/identities/{id}/token
 ```
 
-!!! note "SDK Use"
-    This is typically called by the SDK automatically. You don't need to call it directly.
+> **Note:** This is typically called by the SDK automatically. You don't need to call it directly.
 
 ### Request
 

@@ -4,41 +4,12 @@ CryptoServe provides client SDKs with embedded identity for zero-configuration e
 
 ## Available SDKs
 
-<div class="grid cards" markdown>
-
--   :material-language-python:{ .lg .middle } **Python SDK**
-
-    ---
-
-    Full-featured SDK for Python 3.9+ — available on [PyPI](https://pypi.org/project/cryptoserve/)
-
-    [:octicons-arrow-right-24: Python SDK](python.md)
-
--   :material-language-typescript:{ .lg .middle } **TypeScript SDK** *(Coming Soon)*
-
-    ---
-
-    Type-safe SDK for Node.js and browsers - in development
-
-    [:octicons-arrow-right-24: TypeScript SDK](typescript.md)
-
--   :material-code-braces:{ .lg .middle } **Examples**
-
-    ---
-
-    Code examples for common use cases
-
-    [:octicons-arrow-right-24: Examples](examples.md)
-
--   :material-console:{ .lg .middle } **CLI Reference**
-
-    ---
-
-    All CLI commands — scanning, offline crypto, certificates, server management
-
-    [:octicons-arrow-right-24: CLI Reference](../cli.md)
-
-</div>
+| SDK | Description | Link |
+|-----|-------------|------|
+| **Python SDK** | Full-featured SDK for Python 3.9+ — available on [PyPI](https://pypi.org/project/cryptoserve/) | [Python SDK](python.md) |
+| **TypeScript SDK** *(Coming Soon)* | Type-safe SDK for Node.js and browsers — in development | [TypeScript SDK](typescript.md) |
+| **Examples** | Code examples for common use cases | [Examples](examples.md) |
+| **CLI Reference** | All CLI commands — scanning, offline crypto, certificates, server management | [CLI Reference](../cli.md) |
 
 ## SDK Architecture
 
@@ -112,7 +83,7 @@ When you download an SDK, your identity configuration is embedded:
 # Inside the SDK package
 _CONFIG = {
     "identity_id": "id_abc123",
-    "server_url": "https://api.cryptoserve.io",
+    "server_url": "https://your-server",
     "public_key": "...",
     "private_key_encrypted": "...",
 }
@@ -156,7 +127,7 @@ Or download a pre-configured SDK from the dashboard:
 
 ```bash
 # From the dashboard, copy your install command
-pip install http://localhost:8003/sdk/download/YOUR_TOKEN/python
+pip install <your-dashboard-url>/sdk/download/YOUR_TOKEN/python
 ```
 
 ## SDK vs Direct API
@@ -197,34 +168,30 @@ private_key = decrypt_key(
 
 ## Troubleshooting
 
-??? question "SDK installation fails"
+**SDK installation fails**
 
-    Ensure the download URL hasn't expired:
-    ```bash
-    # Get a new download URL from the dashboard
-    ```
+Ensure the download URL hasn't expired. Get a new download URL from the dashboard.
 
-??? question "Authentication errors"
+**Authentication errors**
 
-    The identity may have been revoked:
-    ```bash
-    # Check identity status in dashboard
-    ```
+The identity may have been revoked. Check identity status in dashboard.
 
-??? question "Context not authorized"
+**Context not authorized**
 
-    Your identity may not have access to this context:
-    ```python
-    # Check allowed contexts
-    print(crypto.get_identity_info()["contexts"])
-    ```
+Your identity may not have access to this context:
 
-??? question "Connection timeouts"
+```python
+# Check allowed contexts
+print(crypto.get_identity_info()["contexts"])
+```
 
-    Configure timeout and retry:
-    ```python
-    crypto.configure(
-        timeout=30,
-        max_retries=3
-    )
-    ```
+**Connection timeouts**
+
+Configure timeout and retry:
+
+```python
+crypto.configure(
+    timeout=30,
+    max_retries=3
+)
+```

@@ -847,7 +847,7 @@ We invite security researchers to examine:
 ### 12.2 Reporting Vulnerabilities
 
 Please report security vulnerabilities via:
-- Email: security@cryptoserve.io (if applicable)
+- Email: security@cryptoserve.dev (if applicable)
 - GitHub Security Advisories
 
 Please include:

@@ -88,7 +88,8 @@ The entry point for all requests. In production, typically nginx or a cloud load
 
 Validates every request before processing.
 
-```python title="app/auth/jwt.py"
+```python
+# app/auth/jwt.py
 async def get_current_user(token: str) -> User:
     """Verify JWT and resolve user."""
     # 1. Decode JWT header to get key ID
