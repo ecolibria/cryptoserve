@@ -146,7 +146,8 @@ technical = Technical(
 
 The resolver evaluates all five layers to produce a recommendation:
 
-```python title="app/core/algorithm_resolver.py"
+```python
+# app/core/algorithm_resolver.py
 def resolve_algorithm(config: ContextConfig) -> DerivedRequirements:
     """Resolve optimal algorithm from 5-layer config."""
 
@@ -200,14 +201,13 @@ def resolve_algorithm(config: ContextConfig) -> DerivedRequirements:
 1. Navigate to **Contexts** → **Create New**
 2. Fill in each layer:
 
-!!! example "Context Creation Form"
-    The form guides you through each of the 5 layers:
+The form guides you through each of the 5 layers:
 
-    - **Data Identity**: Category, sensitivity, PII/PHI/PCI flags
-    - **Regulatory**: Compliance frameworks, retention policies
-    - **Threat Model**: Adversaries, protection lifetime
-    - **Access Patterns**: Frequency, latency requirements
-    - **Algorithm**: Auto-resolved or manually selected
+- **Data Identity**: Category, sensitivity, PII/PHI/PCI flags
+- **Regulatory**: Compliance frameworks, retention policies
+- **Threat Model**: Adversaries, protection lifetime
+- **Access Patterns**: Frequency, latency requirements
+- **Algorithm**: Auto-resolved or manually selected
 
 ### Via API
 

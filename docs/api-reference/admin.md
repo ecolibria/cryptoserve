@@ -2,8 +2,7 @@
 
 Administrative operations for platform management.
 
-!!! note "Admin Access Required"
-    All endpoints in this section require admin privileges.
+> **Note:** All endpoints in this section require admin privileges.
 
 ---
 

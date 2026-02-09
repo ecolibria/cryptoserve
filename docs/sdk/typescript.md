@@ -1,7 +1,6 @@
 # TypeScript SDK
 
-!!! warning "Coming Soon"
-    The TypeScript SDK is currently in development. This documentation describes the **planned API** and is subject to change. For production use, please use the [Python SDK](python.md).
+> **Note:** The TypeScript SDK is currently in development. This documentation describes the **planned API** and is subject to change. For production use, please use the [Python SDK](python.md).
 
 The official TypeScript SDK for CryptoServe will provide type-safe cryptographic operations for Node.js and browser environments.
 
@@ -133,7 +132,7 @@ Configure SDK behavior.
 import { configure } from '@cryptoserve/sdk';
 
 configure({
-  serverUrl: 'https://api.cryptoserve.io',
+  serverUrl: 'https://your-server',
   timeout: 30000,
   retries: 3
 });
@@ -296,7 +295,7 @@ The SDK works in browsers with some limitations:
 
 ```html
 <script type="module">
-  import { crypto } from 'https://cdn.cryptoserve.io/sdk/latest.js';
+  import { crypto } from 'https://your-cdn/cryptoserve-sdk/latest.js';
 
   const encrypted = await crypto.encrypt('secret', {
     context: 'user-pii'
@@ -304,8 +303,7 @@ The SDK works in browsers with some limitations:
 </script>
 ```
 
-!!! warning "CORS"
-    Ensure your CryptoServe server has appropriate CORS headers configured.
+> **Note:** Ensure your CryptoServe server has appropriate CORS headers configured.
 
 ---
 

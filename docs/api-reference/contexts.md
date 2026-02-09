@@ -249,8 +249,7 @@ Delete a context.
 DELETE /api/contexts/{name}
 ```
 
-!!! warning "Data Access"
-    Deleting a context does not delete encrypted data. Existing ciphertext can still be decrypted as long as the key exists.
+> **Warning:** Deleting a context does not delete encrypted data. Existing ciphertext can still be decrypted as long as the key exists.
 
 ### Response
 

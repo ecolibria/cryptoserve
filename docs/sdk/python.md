@@ -481,7 +481,7 @@ Configure SDK behavior.
 
 ```python
 crypto.configure(
-    server_url="https://api.cryptoserve.io",  # Override server
+    server_url="https://your-server",  # Override server
     timeout=30,           # Request timeout in seconds
     max_retries=3,        # Retry count
     verify_ssl=True,      # SSL verification

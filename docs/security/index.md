@@ -4,41 +4,12 @@ CryptoServe is designed with security as a first-class concern. This section doc
 
 ## Documentation
 
-<div class="grid cards" markdown>
-
--   :material-file-document:{ .lg .middle } **Technical Reference**
-
-    ---
-
-    Comprehensive documentation of cryptographic implementation for security researchers
-
-    [:octicons-arrow-right-24: Technical Reference](technical-reference.md)
-
--   :material-shield-alert:{ .lg .middle } **Threat Model**
-
-    ---
-
-    What we protect against and what's out of scope
-
-    [:octicons-arrow-right-24: Threat Model](threat-model.md)
-
--   :material-certificate:{ .lg .middle } **Compliance**
-
-    ---
-
-    Standards and regulatory compliance information
-
-    [:octicons-arrow-right-24: Compliance](compliance.md)
-
--   :material-shield-check:{ .lg .middle } **CI/CD Security Pipeline**
-
-    ---
-
-    16+ automated checks across 4 workflows: testing, security scanning, AI code review, and release verification
-
-    [:octicons-arrow-right-24: CI/CD Security Pipeline](ci-security-pipeline.md)
-
-</div>
+| Resource | Description |
+|----------|-------------|
+| **[Technical Reference](technical-reference.md)** | Comprehensive documentation of cryptographic implementation for security researchers |
+| **[Threat Model](threat-model.md)** | What we protect against and what's out of scope |
+| **[Compliance](compliance.md)** | Standards and regulatory compliance information |
+| **[CI/CD Security Pipeline](ci-security-pipeline.md)** | 16+ automated checks across 4 workflows: testing, security scanning, AI code review, and release verification |
 
 ## Security Principles
 
@@ -47,19 +18,19 @@ CryptoServe is designed with security as a first-class concern. This section doc
 Multiple layers of security controls:
 
 ```
-┌─────────────────────────────────────────┐
-│           Transport Layer (TLS)          │
-├─────────────────────────────────────────┤
-│         Authentication (JWT/Ed25519)     │
-├─────────────────────────────────────────┤
-│         Authorization (Context ACL)      │
-├─────────────────────────────────────────┤
-│          Policy Engine (Rules)           │
-├─────────────────────────────────────────┤
-│     Encryption (AES-GCM, Key Commit)     │
-├─────────────────────────────────────────┤
-│          Audit Logging (Full)            │
-└─────────────────────────────────────────┘
++-------------------------------------------+
+|           Transport Layer (TLS)           |
++-------------------------------------------+
+|         Authentication (JWT/Ed25519)      |
++-------------------------------------------+
+|         Authorization (Context ACL)       |
++-------------------------------------------+
+|          Policy Engine (Rules)            |
++-------------------------------------------+
+|     Encryption (AES-GCM, Key Commit)      |
++-------------------------------------------+
+|          Audit Logging (Full)             |
++-------------------------------------------+
 ```
 
 ### Fail Secure
@@ -82,7 +53,7 @@ When errors occur, the system defaults to denying access rather than potentially
 
 If you discover a security vulnerability, please report it responsibly:
 
-1. **Email**: security@cryptoserve.io
+1. **Email**: security@cryptoserve.dev
 2. **GitHub**: [Security Advisories](https://github.com/ecolibria/cryptoserve/security/advisories/new)
 
 Please include:

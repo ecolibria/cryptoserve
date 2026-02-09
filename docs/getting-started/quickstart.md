@@ -28,8 +28,7 @@ cryptoserve login
 
 This opens your browser for GitHub OAuth. After authorizing, your credentials are stored locally in `~/.cryptoserve/`.
 
-!!! tip "One-Time Setup"
-    You only need to run `cryptoserve login` once per machine. All your applications will use these credentials for auto-registration.
+> **Tip:** You only need to run `cryptoserve login` once per machine. All your applications will use these credentials for auto-registration.
 
 ---
 
@@ -37,7 +36,8 @@ This opens your browser for GitHub OAuth. After authorizing, your credentials ar
 
 Create a Python file and try the SDK:
 
-```python title="test_crypto.py"
+```python
+# test_crypto.py
 from cryptoserve import CryptoServe
 
 # Initialize - auto-registers your app on first use
@@ -80,7 +80,8 @@ Success! Data encrypted and decrypted correctly.
 
 ## Step 4: Try More Operations
 
-```python title="crypto_operations.py"
+```python
+# crypto_operations.py
 from cryptoserve import CryptoServe
 
 crypto = CryptoServe(app_name="my-first-app")
@@ -106,7 +107,8 @@ if crypto.health_check():
 
 CryptoServe handles binary data like files:
 
-```python title="encrypt_file.py"
+```python
+# encrypt_file.py
 from cryptoserve import CryptoServe
 
 crypto = CryptoServe(app_name="my-first-app")
@@ -131,12 +133,12 @@ print(f"Encrypted {len(original)} bytes successfully")
 
 ## Step 6: View in Community Dashboard
 
-Open the dashboard at [http://localhost:3003](http://localhost:3003) to see:
+Open the dashboard (default: `http://localhost:3003`) to see:
 
-- **Your Applications** - View auto-registered apps
-- **Usage Analytics** - Monitor encryption/decryption operations
-- **Contexts** - See which contexts you're using
-- **Audit Logs** - Complete audit trail of all operations
+- **Your Applications** — View auto-registered apps
+- **Usage Analytics** — Monitor encryption/decryption operations
+- **Contexts** — See which contexts you're using
+- **Audit Logs** — Complete audit trail of all operations
 
 | Timestamp | Operation | Context | App | Status |
 |-----------|-----------|---------|-----|--------|
@@ -258,38 +260,9 @@ except ContextNotFoundError as e:
 
 ## Next Steps
 
-<div class="grid cards" markdown>
-
--   :material-book-open:{ .lg .middle } **Learn the Concepts**
-
-    ---
-
-    Understand the architecture and context model
-
-    [:octicons-arrow-right-24: Concepts](../concepts/index.md)
-
--   :material-api:{ .lg .middle } **API Reference**
-
-    ---
-
-    Complete API documentation
-
-    [:octicons-arrow-right-24: API Reference](../api-reference/index.md)
-
--   :material-shield-lock:{ .lg .middle } **Security**
-
-    ---
-
-    Read the technical reference
-
-    [:octicons-arrow-right-24: Security](../security/technical-reference.md)
-
--   :material-rocket-launch:{ .lg .middle } **Production**
-
-    ---
-
-    Deploy to production
-
-    [:octicons-arrow-right-24: Production Guide](../guides/production.md)
-
-</div>
+| Resource | Description |
+|----------|-------------|
+| **[Concepts](../concepts/index.md)** | Understand the architecture and context model |
+| **[API Reference](../api-reference/index.md)** | Complete API documentation |
+| **[Security](../security/technical-reference.md)** | Read the technical reference |
+| **[Production](../guides/production.md)** | Deploy to production |

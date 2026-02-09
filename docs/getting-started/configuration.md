@@ -22,12 +22,13 @@ GITHUB_CLIENT_ID=Iv1.abc123def456
 GITHUB_CLIENT_SECRET=secret123...
 ```
 
-!!! info "Setting up GitHub OAuth"
-    1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-    2. Click **New OAuth App**
-    3. Set **Homepage URL**: `http://localhost:3003`
-    4. Set **Callback URL**: `http://localhost:8003/auth/github/callback`
-    5. Copy the Client ID and generate a Client Secret
+> **Setting up GitHub OAuth**
+>
+> 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+> 2. Click **New OAuth App**
+> 3. Set **Homepage URL** to your frontend URL (default: `http://localhost:3003`)
+> 4. Set **Callback URL** to your backend URL + `/auth/github/callback` (default: `http://localhost:8003/auth/github/callback`)
+> 5. Copy the Client ID and generate a Client Secret
 
 ### Security Keys
 
@@ -39,11 +40,12 @@ CRYPTOSERVE_MASTER_KEY=your-secure-random-key-here-min-32-chars
 JWT_SECRET_KEY=another-secure-random-key-for-jwt
 ```
 
-!!! danger "Production Keys"
-    In production, generate cryptographically secure keys:
-    ```bash
-    python -c "import secrets; print(secrets.token_hex(32))"
-    ```
+> **Warning: Production Keys**
+>
+> In production, generate cryptographically secure keys:
+> ```bash
+> python -c "import secrets; print(secrets.token_hex(32))"
+> ```
 
 ---
 
@@ -81,9 +83,9 @@ FIPS_MODE=disabled
 
 | Mode | ChaCha20 | AES-GCM | ML-KEM | Argon2 |
 |------|----------|---------|--------|--------|
-| disabled | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| preferred | :warning: warn | :white_check_mark: | :white_check_mark: | :warning: warn |
-| enabled | :x: blocked | :white_check_mark: | :white_check_mark: | :x: blocked |
+| disabled | Yes | Yes | Yes | Yes |
+| preferred | Warn | Yes | Yes | Warn |
+| enabled | Blocked | Yes | Yes | Blocked |
 
 ### Logging
 
@@ -134,7 +136,8 @@ CORS_ALLOW_CREDENTIALS=true
 
 ### Development
 
-```bash title=".env.development"
+```bash
+# .env.development
 LOG_LEVEL=DEBUG
 DATABASE_URL=sqlite:///./cryptoserve.db
 FIPS_MODE=disabled
@@ -143,7 +146,8 @@ RATE_LIMIT_ENABLED=false
 
 ### Staging
 
-```bash title=".env.staging"
+```bash
+# .env.staging
 LOG_LEVEL=INFO
 DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cryptoserve
 FIPS_MODE=preferred
@@ -153,7 +157,8 @@ RATE_LIMIT_PER_MINUTE=500
 
 ### Production
 
-```bash title=".env.production"
+```bash
+# .env.production
 LOG_LEVEL=WARNING
 LOG_FORMAT=json
 DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cryptoserve
@@ -170,7 +175,8 @@ AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789:key/abc123
 
 The `docker-compose.yml` can reference environment variables:
 
-```yaml title="docker-compose.yml"
+```yaml
+# docker-compose.yml
 services:
   backend:
     image: cryptoserve/backend
@@ -237,17 +243,17 @@ ERROR: CRYPTOSERVE_MASTER_KEY must be at least 32 characters
 
 ## Security Best Practices
 
-!!! warning "Production Checklist"
-
-    - [ ] Generate unique `CRYPTOSERVE_MASTER_KEY` (32+ chars)
-    - [ ] Generate unique `JWT_SECRET_KEY`
-    - [ ] Use PostgreSQL instead of SQLite
-    - [ ] Enable FIPS mode if required
-    - [ ] Configure KMS for key management
-    - [ ] Set appropriate CORS origins
-    - [ ] Enable rate limiting
-    - [ ] Use TLS termination (nginx/load balancer)
-    - [ ] Rotate secrets regularly
+> **Warning: Production Checklist**
+>
+> - [ ] Generate unique `CRYPTOSERVE_MASTER_KEY` (32+ chars)
+> - [ ] Generate unique `JWT_SECRET_KEY`
+> - [ ] Use PostgreSQL instead of SQLite
+> - [ ] Enable FIPS mode if required
+> - [ ] Configure KMS for key management
+> - [ ] Set appropriate CORS origins
+> - [ ] Enable rate limiting
+> - [ ] Use TLS termination (nginx/load balancer)
+> - [ ] Rotate secrets regularly
 
 ---
 
