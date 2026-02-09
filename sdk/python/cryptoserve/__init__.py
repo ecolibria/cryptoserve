@@ -45,6 +45,7 @@ from cryptoserve_client.errors import (
     TokenRefreshError,
 )
 from cryptoserve._identity import IDENTITY, AUTO_REFRESH_ENABLED, get_refresh_token
+from cryptoserve._pqc_engine import analyze_offline as _pqc_analyze_offline
 
 # New in 0.6.0: Auto-registration CryptoServe class
 from cryptoserve._auto_register import (
@@ -630,6 +631,21 @@ class PQCRecommendationResult:
         """Ordered migration plan steps."""
         return self._data.get("migration_plan", [])
 
+    @property
+    def compliance_references(self) -> list[dict]:
+        """Applicable compliance framework references."""
+        return self._data.get("compliance_references", [])
+
+    @property
+    def threat_timelines(self) -> dict:
+        """Per-algorithm quantum threat timelines."""
+        return self._data.get("threat_timelines", {})
+
+    @property
+    def data_profile_info(self) -> dict:
+        """Data profile used for the analysis."""
+        return self._data.get("data_profile", {})
+
     def to_dict(self) -> dict:
         """Get the full recommendation data."""
         return self._data
@@ -777,11 +793,16 @@ def get_pqc_recommendations(
 
     Args:
         data_profile: Data sensitivity profile for risk calculation
-            - "healthcare": 100 year protection (HIPAA)
             - "national_security": 75 year protection
+            - "healthcare": 100 year protection (HIPAA)
             - "financial": 25 year protection (PCI-DSS)
+            - "intellectual_property": 20 year protection
+            - "legal": 30 year protection
             - "general": 10 year protection (default)
-            - "short_lived": 1 year protection (session tokens)
+            - "authentication": 1 year protection
+            - "session_tokens": 0 year protection
+            - "ephemeral": 1 year protection
+            - "short_lived": alias for session_tokens
 
     Returns:
         PQCRecommendationResult with migration guidance
@@ -817,49 +838,7 @@ def get_pqc_recommendations(
     libraries = _init_config.get("libraries", [])
 
     if _is_mock_mode():
-        # Mock recommendations
-        has_vulnerable = any(lib["quantum_risk"] in ["high", "critical"] for lib in libraries)
-        return PQCRecommendationResult({
-            "sndl_assessment": {
-                "vulnerable": has_vulnerable,
-                "protection_years_required": 10,
-                "estimated_quantum_years": 15,
-                "risk_window_years": -5 if not has_vulnerable else 5,
-                "risk_level": "medium" if has_vulnerable else "low",
-                "explanation": "Mock SNDL assessment",
-            },
-            "kem_recommendations": [
-                {
-                    "current_algorithm": "RSA",
-                    "recommended_algorithm": "ML-KEM-768",
-                    "fips_standard": "FIPS 203",
-                    "security_level": "NIST Level 3",
-                    "rationale": "RSA is vulnerable to Shor's algorithm",
-                    "migration_complexity": "medium",
-                }
-            ] if has_vulnerable else [],
-            "signature_recommendations": [],
-            "migration_plan": [
-                {
-                    "priority": 1,
-                    "phase": "immediate",
-                    "action": "Inventory all asymmetric key usage",
-                    "algorithms_affected": ["RSA", "ECDSA"],
-                    "estimated_effort": "low",
-                }
-            ] if has_vulnerable else [],
-            "overall_urgency": "medium" if has_vulnerable else "low",
-            "quantum_readiness_score": 30.0 if has_vulnerable else 80.0,
-            "key_findings": [
-                f"Detected {len(libraries)} cryptographic libraries",
-                "Quantum-vulnerable algorithms in use" if has_vulnerable else "No critical quantum vulnerabilities",
-            ],
-            "next_steps": [
-                "Review algorithm recommendations",
-                "Plan hybrid deployment strategy",
-                "Train team on PQC concepts",
-            ],
-        })
+        return PQCRecommendationResult(_pqc_analyze_offline(libraries, data_profile))
 
     # Try server first, fall back to offline analysis
     import requests
@@ -880,57 +859,5 @@ def get_pqc_recommendations(
     except (requests.RequestException, KeyError):
         pass  # Fall through to offline analysis
 
-    # Offline fallback — use local library data + data profile
-    protection_years = {
-        "healthcare": 100,
-        "national_security": 75,
-        "financial": 25,
-        "general": 10,
-        "short_lived": 1,
-    }.get(data_profile, 10)
-    estimated_quantum_years = 15
-    has_vulnerable = any(lib["quantum_risk"] in ["high", "critical"] for lib in libraries)
-    risk_window = estimated_quantum_years - protection_years
-
-    return PQCRecommendationResult({
-        "sndl_assessment": {
-            "vulnerable": has_vulnerable or risk_window < 0,
-            "protection_years_required": protection_years,
-            "estimated_quantum_years": estimated_quantum_years,
-            "risk_window_years": risk_window,
-            "risk_level": "critical" if risk_window < -20 else "high" if risk_window < 0 else "medium" if has_vulnerable else "low",
-            "explanation": f"Offline analysis: {data_profile} profile requires {protection_years}-year protection window",
-        },
-        "kem_recommendations": [
-            {
-                "current_algorithm": "RSA",
-                "recommended_algorithm": "ML-KEM-768",
-                "fips_standard": "FIPS 203",
-                "security_level": "NIST Level 3",
-                "rationale": "RSA is vulnerable to Shor's algorithm",
-                "migration_complexity": "medium",
-            }
-        ] if has_vulnerable else [],
-        "signature_recommendations": [],
-        "migration_plan": [
-            {
-                "priority": 1,
-                "phase": "immediate",
-                "action": "Inventory all asymmetric key usage",
-                "algorithms_affected": ["RSA", "ECDSA"],
-                "estimated_effort": "low",
-            }
-        ] if has_vulnerable else [],
-        "overall_urgency": "critical" if risk_window < -20 else "high" if risk_window < 0 else "medium" if has_vulnerable else "low",
-        "quantum_readiness_score": 10.0 if risk_window < -20 else 30.0 if has_vulnerable else 80.0,
-        "key_findings": [
-            f"Detected {len(libraries)} cryptographic libraries",
-            f"Data profile '{data_profile}' requires {protection_years}-year protection",
-            "Quantum-vulnerable algorithms in use" if has_vulnerable else "No critical quantum vulnerabilities",
-        ],
-        "next_steps": [
-            "Review algorithm recommendations",
-            "Plan hybrid deployment strategy",
-            "Train team on PQC concepts",
-        ],
-    })
+    # Offline fallback — full analysis via embedded PQC engine
+    return PQCRecommendationResult(_pqc_analyze_offline(libraries, data_profile))

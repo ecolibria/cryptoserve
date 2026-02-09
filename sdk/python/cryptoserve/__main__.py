@@ -2591,24 +2591,51 @@ def _upload_cbom(cbom_result, scan_path: str = None, scan_name: str = None) -> b
 
 def cmd_pqc():
     """Get PQC recommendations."""
+    import json as json_module
     from cryptoserve import get_pqc_recommendations
 
-    # Parse data profile argument
+    # Parse arguments
     data_profile = "general"
+    output_format = "text"
+    verbose = False
 
-    for i, arg in enumerate(sys.argv[2:], 2):
-        if arg in ["--profile", "-p"] and i + 1 < len(sys.argv):
+    all_profiles = [
+        "national_security", "healthcare", "financial", "intellectual_property",
+        "legal", "general", "authentication", "session_tokens", "ephemeral",
+        "short_lived",
+    ]
+
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in ("--profile", "-p") and i + 1 < len(sys.argv):
             data_profile = sys.argv[i + 1]
-        elif arg in ["healthcare", "national_security", "financial", "general", "short_lived"]:
+            i += 2
+        elif arg in ("--format", "-f") and i + 1 < len(sys.argv):
+            output_format = sys.argv[i + 1]
+            i += 2
+        elif arg in ("--verbose", "-v"):
+            verbose = True
+            i += 1
+        elif arg in all_profiles:
             data_profile = arg
+            i += 1
+        else:
+            i += 1
 
-    print(compact_header("PQC ANALYSIS"))
-    print(dim(f"  Analyzing post-quantum cryptography readiness..."))
-    print(dim(f"  Profile: {data_profile}"))
-    print()
+    if output_format != "json":
+        print(compact_header("PQC ANALYSIS"))
+        print(dim(f"  Analyzing post-quantum cryptography readiness..."))
+        print(dim(f"  Profile: {data_profile}"))
+        print()
 
     try:
         result = get_pqc_recommendations(data_profile=data_profile)
+
+        # JSON output path
+        if output_format == "json":
+            print(json_module.dumps(result.to_dict(), indent=2))
+            return 0
 
         print(divider())
         print()
@@ -2633,17 +2660,29 @@ def cmd_pqc():
         else:
             score_display = error(f"{score:.0f}%")
 
+        # Data profile info
+        profile_info = result.data_profile_info
+        profile_name = profile_info.get("name", data_profile)
+        lifespan = profile_info.get("lifespan_years", "?")
+
         print(f"  {bold('QUANTUM READINESS')}")
         print()
         print(f"    Migration Urgency: {urgency_display}")
         print(f"    Readiness Score:   {score_display}")
+        print(f"    Data Profile:      {profile_name} ({lifespan}yr protection)")
         print()
 
         # SNDL warning
         if result.sndl_vulnerable:
             print(f"  {error('SNDL RISK')}")
-            print(f"    Your data may be vulnerable to")
-            print(f"    'Store Now, Decrypt Later' attacks!")
+            sndl = result.to_dict().get("sndl_assessment", {})
+            explanation = sndl.get("explanation", "")
+            if explanation:
+                # Wrap long explanation
+                print(f"    {explanation}")
+            else:
+                print(f"    Your data may be vulnerable to")
+                print(f"    'Store Now, Decrypt Later' attacks!")
             print()
 
         # Key findings
@@ -2654,23 +2693,82 @@ def cmd_pqc():
                 print(f"    - {finding}")
             print()
 
-        # Recommendations
+        # Threat timelines
+        timelines = result.threat_timelines
+        if timelines:
+            print(f"  {bold('QUANTUM THREAT TIMELINES')}")
+            print()
+            print(f"    {'Algorithm':<20} {'Threat Window':<18} {'Status'}")
+            print(f"    {'─' * 20} {'─' * 18} {'─' * 10}")
+            for _key, tl in timelines.items():
+                window = f"{tl['min_years']}-{tl['max_years']} years"
+                status_str = tl["status"]
+                if status_str == "AT RISK":
+                    status_display = error(status_str)
+                else:
+                    status_display = success(status_str)
+                print(f"    {tl['algorithm']:<20} {window:<18} {status_display}")
+            print()
+
+        # KEM Recommendations
         if result.kem_recommendations:
             print(f"  {bold('KEM (KEY EXCHANGE) RECOMMENDATIONS')}")
             print()
             for rec in result.kem_recommendations:
-                print(f"    {dim(rec['current_algorithm'])} -> {bold(rec['recommended_algorithm'])}")
-                print(f"      Standard:  {rec['fips_standard']}")
+                score_val = rec.get("score", 0)
+                score_bar = f"[{score_val:.0f}/100]"
+                print(f"    {dim(rec['current_algorithm'])} -> {bold(rec['recommended_algorithm'])} {dim(score_bar)}")
+                print(f"      Standard:  {rec['fips_standard']}  |  {rec.get('security_level', '')}")
+                if rec.get("hybrid_option"):
+                    print(f"      Hybrid:    {rec['hybrid_option']}")
                 print(f"      Rationale: {rec['rationale']}")
                 print()
 
+        # Signature Recommendations
         if result.signature_recommendations:
             print(f"  {bold('SIGNATURE RECOMMENDATIONS')}")
             print()
             for rec in result.signature_recommendations:
-                print(f"    {dim(rec['current_algorithm'])} -> {bold(rec['recommended_algorithm'])}")
-                print(f"      Standard: {rec['fips_standard']}")
+                score_val = rec.get("score", 0)
+                score_bar = f"[{score_val:.0f}/100]"
+                print(f"    {dim(rec['current_algorithm'])} -> {bold(rec['recommended_algorithm'])} {dim(score_bar)}")
+                print(f"      Standard:  {rec['fips_standard']}  |  {rec.get('security_level', '')}")
+                print(f"      Rationale: {rec['rationale']}")
                 print()
+
+        # Migration Plan
+        if result.migration_plan:
+            print(f"  {bold('MIGRATION PLAN')}")
+            print()
+            print(f"    {'Step':<6} {'Action':<35} {'Priority':<12} {'Effort'}")
+            print(f"    {'─' * 6} {'─' * 35} {'─' * 12} {'─' * 8}")
+            for step in result.migration_plan:
+                step_num = str(step.get("step", ""))
+                action = step.get("action", "")[:35]
+                priority = step.get("priority", "")
+                effort = step.get("effort", "")
+                if priority in ("CRITICAL",):
+                    priority_display = error(priority)
+                elif priority in ("HIGH",):
+                    priority_display = warning(priority)
+                else:
+                    priority_display = dim(priority)
+                print(f"    {step_num:<6} {action:<35} {priority_display:<21} {effort}")
+            print()
+
+        # Compliance References (show for critical/high or with --verbose)
+        compliance = result.compliance_references
+        if compliance and (urgency in ("critical", "high") or verbose):
+            print(f"  {bold('COMPLIANCE REFERENCES')}")
+            print()
+            for ref in compliance:
+                name = ref.get("framework", "")
+                authority = ref.get("authority", "")
+                detail = ref.get("detail", "")
+                print(f"    {bold(name)} ({authority})")
+                if detail:
+                    print(f"      {detail}")
+            print()
 
         # Next steps
         if result.next_steps:
@@ -3088,7 +3186,11 @@ def cmd_help():
     print(dim("               --output <file>"))
     print()
     print(f"    {bold('pqc')}        Get PQC migration recommendations")
-    print(dim("               --profile healthcare|financial|general"))
+    print(dim("               --profile <name>  Data sensitivity profile"))
+    print(dim("                 national_security|healthcare|financial|intellectual_property"))
+    print(dim("                 legal|general|authentication|session_tokens|ephemeral"))
+    print(dim("               --format json     Machine-readable output"))
+    print(dim("               --verbose         Show compliance references"))
     print()
     print(f"    {bold('gate')}       CI/CD policy gate check")
     print(dim("               --policy strict|standard|permissive"))
