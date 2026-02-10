@@ -179,9 +179,26 @@ export function scanProject(projectDir) {
     filesScanned: 0,
   };
 
-  // 1. Scan package.json for crypto dependencies
-  const pkgPath = join(projectDir, 'package.json');
-  if (existsSync(pkgPath)) {
+  // 1. Scan package.json for crypto dependencies (root + monorepo workspaces)
+  const pkgPaths = [join(projectDir, 'package.json')];
+  // Check common monorepo locations for nested package.json files
+  const monorepoGlobs = ['apps', 'packages', 'libs', 'modules', 'services'];
+  for (const sub of monorepoGlobs) {
+    const subDir = join(projectDir, sub);
+    try {
+      const entries = readdirSync(subDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const nested = join(subDir, entry.name, 'package.json');
+          if (existsSync(nested)) pkgPaths.push(nested);
+        }
+      }
+    } catch { /* dir doesn't exist */ }
+  }
+
+  const seenPkgs = new Set();
+  for (const pkgPath of pkgPaths) {
+    if (!existsSync(pkgPath)) continue;
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
       const allDeps = {
@@ -190,7 +207,8 @@ export function scanProject(projectDir) {
       };
 
       for (const [name, version] of Object.entries(allDeps)) {
-        if (name in CRYPTO_PACKAGES) {
+        if (name in CRYPTO_PACKAGES && !seenPkgs.has(name)) {
+          seenPkgs.add(name);
           const info = CRYPTO_PACKAGES[name];
           results.libraries.push({
             name,
@@ -198,7 +216,7 @@ export function scanProject(projectDir) {
             algorithms: info.algorithms,
             quantumRisk: info.quantumRisk,
             category: info.category,
-            source: 'package.json',
+            source: pkgPath.replace(projectDir + '/', ''),
           });
         }
       }
