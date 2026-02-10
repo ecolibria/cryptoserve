@@ -130,13 +130,13 @@ function deriveKeyFromPassword(password, salt, keySize = 32) {
   });
 }
 
-export function encryptString(text, password, algorithm = 'AES-256-GCM') {
+export function encryptString(text, password, algorithm = 'AES-256-GCM', context = 'cli') {
   const salt = randomBytes(SALT_SIZE);
   const spec = ALGORITHMS[algorithm];
   if (!spec) throw new Error(`Unsupported algorithm: ${algorithm}`);
 
   const key = deriveKeyFromPassword(password, salt, spec.keySize);
-  const blob = encrypt(Buffer.from(text, 'utf-8'), key, 'password-derived', 'cli', algorithm);
+  const blob = encrypt(Buffer.from(text, 'utf-8'), key, 'password-derived', context, algorithm);
 
   // Format: [16-byte salt][encrypted blob] → base64
   return Buffer.concat([salt, blob]).toString('base64');
@@ -159,14 +159,14 @@ export function decryptString(base64Text, password) {
   return decrypt(blob, key).toString('utf-8');
 }
 
-export function encryptFile(inPath, outPath, password, algorithm = 'AES-256-GCM') {
+export function encryptFile(inPath, outPath, password, algorithm = 'AES-256-GCM', context = 'file') {
   const plaintext = readFileSync(inPath);
   const salt = randomBytes(SALT_SIZE);
   const spec = ALGORITHMS[algorithm];
   if (!spec) throw new Error(`Unsupported algorithm: ${algorithm}`);
 
   const key = deriveKeyFromPassword(password, salt, spec.keySize);
-  const blob = encrypt(plaintext, key, 'password-derived', 'file', algorithm);
+  const blob = encrypt(plaintext, key, 'password-derived', context, algorithm);
 
   writeFileSync(outPath, Buffer.concat([salt, blob]), { mode: 0o600 });
 }

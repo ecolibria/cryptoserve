@@ -9,11 +9,12 @@
  *   cryptoserve init [--insecure-storage]
  *   cryptoserve pqc [--profile P] [--format json] [--verbose]
  *   cryptoserve scan [path] [--format json]
- *   cryptoserve encrypt "text" [--password P] [--algorithm A]
+ *   cryptoserve encrypt "text" [--context C | --algorithm A] [--password P]
  *   cryptoserve decrypt "blob" [--password P]
- *   cryptoserve encrypt --file in --output out [--password P]
+ *   cryptoserve encrypt --file in --output out [--context C | --algorithm A] [--password P]
  *   cryptoserve decrypt --file in --output out [--password P]
  *   cryptoserve hash-password [--algorithm scrypt|pbkdf2]
+ *   cryptoserve context list | show NAME [--verbose] [--format json]
  *   cryptoserve vault init|set|get|list|delete|run|import|export
  *   cryptoserve login [--server URL]
  *   cryptoserve status
@@ -41,7 +42,7 @@ function getOption(args, name, defaultValue = null) {
   return args[idx + 1];
 }
 
-function getPositional(args, optionsWithValues = ['--password', '--algorithm', '--profile', '--format', '--file', '--output', '--server']) {
+function getPositional(args, optionsWithValues = ['--password', '--algorithm', '--profile', '--format', '--file', '--output', '--server', '--context']) {
   const result = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
@@ -68,11 +69,16 @@ async function cmdHelp() {
   console.log(`    ${info('scan [path] [--format json]')}           Scan project for crypto & secrets`);
   console.log();
   console.log(`  ${bold('Encryption')}`);
+  console.log(`    ${info('encrypt "text" [--context C]')}          Encrypt with context-aware algorithm selection`);
   console.log(`    ${info('encrypt "text" [--password P]')}         Encrypt text (interactive password if omitted)`);
   console.log(`    ${info('decrypt "blob" [--password P]')}         Decrypt text`);
   console.log(`    ${info('encrypt --file F --output O')}           Encrypt file`);
   console.log(`    ${info('decrypt --file F --output O')}           Decrypt file`);
   console.log(`    ${info('hash-password [--algorithm A]')}         Hash a password (scrypt/pbkdf2)`);
+  console.log();
+  console.log(`  ${bold('Contexts')}`);
+  console.log(`    ${info('context list')}                          List available encryption contexts`);
+  console.log(`    ${info('context show NAME [--verbose]')}         Show context details and resolved algorithm`);
   console.log();
   console.log(`  ${bold('Key Management')}`);
   console.log(`    ${info('init [--insecure-storage]')}             Set up master key + AI tool protection`);
@@ -345,7 +351,27 @@ async function cmdEncrypt(args) {
   const file = getOption(args, '--file');
   const output = getOption(args, '--output');
   let password = getOption(args, '--password');
-  const algorithm = getOption(args, '--algorithm', 'AES-256-GCM');
+  const contextName = getOption(args, '--context');
+  const verbose = getFlag(args, '--verbose');
+  let algorithm = getOption(args, '--algorithm', 'AES-256-GCM');
+
+  // Context-aware algorithm selection
+  if (contextName) {
+    const { resolveContext } = await import('../lib/context-resolver.mjs');
+    const resolved = resolveContext(contextName);
+    if (resolved.error) {
+      console.error(`${resolved.error}\nValid contexts: ${resolved.validContexts.join(', ')}`);
+      process.exit(1);
+    }
+    algorithm = resolved.algorithm;
+
+    if (verbose) {
+      const { dim, success, labelValue } = await import('../lib/cli-style.mjs');
+      console.error(labelValue('Context', `${contextName} → ${algorithm}`));
+      for (const f of resolved.factors) console.error(`  ${dim(f)}`);
+      console.error();
+    }
+  }
 
   // Interactive password prompt if not provided
   if (!password) {
@@ -355,13 +381,13 @@ async function cmdEncrypt(args) {
 
   if (file) {
     const outPath = output || file + '.enc';
-    encryptFile(file, outPath, password, algorithm);
+    encryptFile(file, outPath, password, algorithm, contextName || 'file');
     console.log(`Encrypted: ${outPath}`);
   } else {
     const positional = getPositional(args);
     const text = positional[0];
     if (!text) { console.error('Provide text to encrypt or use --file.'); process.exit(1); }
-    console.log(encryptString(text, password, algorithm));
+    console.log(encryptString(text, password, algorithm, contextName || 'cli'));
   }
 }
 
@@ -535,6 +561,119 @@ async function cmdVault(args) {
   }
 }
 
+async function cmdContext(args) {
+  const { compactHeader, section, labelValue, tableHeader, tableRow, success, warning, dim, bold, info, statusBadge } = await import('../lib/cli-style.mjs');
+  const { resolveContext, listContexts } = await import('../lib/context-resolver.mjs');
+
+  const subcommand = args[0];
+  const format = getOption(args, '--format', 'text');
+  const verbose = getFlag(args, '--verbose');
+
+  if (!subcommand || subcommand === 'list') {
+    const contexts = listContexts();
+
+    if (format === 'json') {
+      console.log(JSON.stringify(contexts, null, 2));
+      return;
+    }
+
+    console.log(compactHeader('contexts'));
+    console.log(tableHeader(['Context', 'Sensitivity', 'Algorithm', 'Compliance'], [20, 12, 20, 20]));
+    for (const ctx of contexts) {
+      const badge = ctx.custom ? dim('(custom)') : '';
+      console.log(tableRow(
+        [ctx.name, ctx.sensitivity, ctx.algorithm, ctx.compliance.join(', ') || '—'],
+        [20, 12, 20, 20]
+      ));
+    }
+    console.log();
+    return;
+  }
+
+  if (subcommand === 'show') {
+    const name = args[1];
+    if (!name) { console.error('Usage: context show NAME [--verbose]'); process.exit(1); }
+
+    const resolved = resolveContext(name);
+    if (resolved.error) {
+      console.error(`${resolved.error}\nValid contexts: ${resolved.validContexts.join(', ')}`);
+      process.exit(1);
+    }
+
+    if (format === 'json') {
+      console.log(JSON.stringify(resolved, null, 2));
+      return;
+    }
+
+    console.log(compactHeader('context'));
+
+    // Identity
+    console.log(section(resolved.context.displayName));
+    console.log(labelValue('Context', resolved.context.name));
+    if (resolved.context.description) {
+      console.log(labelValue('Description', resolved.context.description));
+    }
+    if (resolved.context.custom) {
+      console.log(labelValue('Source', dim('custom (.cryptoserve.json)')));
+    }
+
+    // Resolved algorithm
+    console.log(section('Resolved Algorithm'));
+    console.log(labelValue('Algorithm', bold(resolved.algorithm)));
+    console.log(labelValue('Key size', `${resolved.keyBits} bits`));
+    console.log(labelValue('Key rotation', `${resolved.rotationDays} days`));
+    if (resolved.quantumRisk) {
+      console.log(labelValue('Quantum risk', warning('PQC migration recommended')));
+    }
+
+    // 5-layer summary
+    console.log(section('Context Layers'));
+    console.log(labelValue('1. Sensitivity', resolved.context.sensitivity.toUpperCase()));
+
+    const flags = [];
+    if (resolved.context.pii) flags.push('PII');
+    if (resolved.context.phi) flags.push('PHI');
+    if (resolved.context.pci) flags.push('PCI');
+    if (flags.length) console.log(labelValue('   Data flags', flags.join(', ')));
+
+    console.log(labelValue('2. Compliance', resolved.context.compliance.join(', ') || '—'));
+    console.log(labelValue('3. Threat model', resolved.context.adversaries.join(', ')));
+    console.log(labelValue('   Protection', `${resolved.context.protectionYears} years`));
+    console.log(labelValue('4. Access', `${resolved.context.frequency} frequency, ${resolved.context.usage}`));
+
+    // Examples
+    if (resolved.context.examples.length > 0) {
+      console.log(labelValue('   Examples', resolved.context.examples.join(', ')));
+    }
+
+    // Verbose: full rationale
+    if (verbose) {
+      console.log(section('Resolution Rationale'));
+      for (const f of resolved.factors) {
+        console.log(`  ${dim(f)}`);
+      }
+
+      if (resolved.alternatives.length > 0) {
+        console.log(section('Alternatives'));
+        for (const alt of resolved.alternatives) {
+          console.log(`  ${info(alt.algorithm)}`);
+          console.log(`    ${dim(alt.reason)}`);
+        }
+      }
+    }
+
+    // Usage hint
+    console.log(section('Usage'));
+    console.log(`  ${dim(`cryptoserve encrypt "data" --context ${name} --password P`)}`);
+    console.log();
+    return;
+  }
+
+  console.error(`Unknown context command: ${subcommand}`);
+  console.error('Usage: context list | context show NAME');
+  process.exit(1);
+}
+
 async function cmdLogin(args) {
   const { login } = await import('../lib/client.mjs');
   const server = getOption(args, '--server', 'https://localhost:8003');
@@ -650,6 +789,9 @@ try {
       break;
     case 'hash-password':
       await cmdHashPassword(commandArgs);
+      break;
+    case 'context':
+      await cmdContext(commandArgs);
       break;
     case 'vault':
       await cmdVault(commandArgs);
