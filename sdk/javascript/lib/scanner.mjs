@@ -51,9 +51,15 @@ const IMPORT_PATTERNS = [
   { pattern: /createDecipheriv\s*\(/g, lib: 'node:crypto', detail: 'cipher' },
   { pattern: /createSign\s*\(/g, lib: 'node:crypto', detail: 'signature' },
   { pattern: /createVerify\s*\(/g, lib: 'node:crypto', detail: 'signature' },
+  { pattern: /createHash\s*\(/g, lib: 'node:crypto', detail: 'hash' },
+  { pattern: /createHmac\s*\(/g, lib: 'node:crypto', detail: 'hmac' },
   { pattern: /generateKeyPair(?:Sync)?\s*\(/g, lib: 'node:crypto', detail: 'keygen' },
+  { pattern: /createDiffieHellman(?:Group)?\s*\(/g, lib: 'node:crypto', detail: 'keyagreement' },
+  { pattern: /createECDH\s*\(/g, lib: 'node:crypto', detail: 'keyagreement' },
   { pattern: /scrypt(?:Sync)?\s*\(/g, lib: 'node:crypto', detail: 'kdf' },
   { pattern: /pbkdf2(?:Sync)?\s*\(/g, lib: 'node:crypto', detail: 'kdf' },
+  { pattern: /randomBytes\s*\(/g, lib: 'node:crypto', detail: 'random' },
+  { pattern: /randomUUID\s*\(/g, lib: 'node:crypto', detail: 'random' },
   { pattern: /createCipher\s*\(/g, lib: 'node:crypto', detail: 'DEPRECATED-no-iv' },
   { pattern: /CryptoJS\./g, lib: 'crypto-js' },
   { pattern: /forge\.\w+/g, lib: 'node-forge' },
@@ -69,6 +75,10 @@ const ALGO_LITERALS = [
   { pattern: /['"`]sha(?:256|384|512|1)['"`]/gi, algo: 'SHA-256' },
   { pattern: /['"`](?:HS|RS|ES|PS)(?:256|384|512)['"`]/gi, algo: 'RS256' },
   { pattern: /['"`]ed25519['"`]/gi, algo: 'Ed25519' },
+  { pattern: /['"`]x25519['"`]/gi, algo: 'X25519' },
+  { pattern: /['"`](?:ecdsa|ecdh|ec|secp256k1|secp384r1|prime256v1)['"`]/gi, algo: 'ECDSA' },
+  { pattern: /['"`](?:rsa|rsa-pss)['"`]/gi, algo: 'RSA' },
+  { pattern: /['"`](?:dsa)['"`]/gi, algo: 'DSA' },
   { pattern: /minVersion:\s*['"`]TLSv1\.[0-3]['"`]/g, algo: 'TLS' },
   { pattern: /['"`](?:md5|MD5)['"`]/g, algo: 'MD5' },
   { pattern: /['"`](?:des|DES|3des|3DES|des-ede3)['"`]/gi, algo: 'DES' },
@@ -281,11 +291,17 @@ export function scanProject(projectDir) {
     if (seenImports.has('node:crypto:') || seenImports.has('node:crypto:cipher')) {
       if (!nodeCryptoAlgos.includes('AES')) nodeCryptoAlgos.push('AES');
     }
+    if (seenImports.has('node:crypto:') || seenImports.has('node:crypto:hash') || seenImports.has('node:crypto:hmac')) {
+      if (!nodeCryptoAlgos.includes('SHA-256')) nodeCryptoAlgos.push('SHA-256');
+    }
     if (seenImports.has('node:crypto:signature')) {
       if (!nodeCryptoAlgos.includes('RSA')) nodeCryptoAlgos.push('RSA');
     }
+    if (seenImports.has('node:crypto:keygen') || seenImports.has('node:crypto:keyagreement')) {
+      if (!nodeCryptoAlgos.includes('ECDSA')) nodeCryptoAlgos.push('ECDSA');
+    }
     if (seenImports.has('node:crypto:kdf')) {
-      nodeCryptoAlgos.push('scrypt');
+      if (!nodeCryptoAlgos.includes('scrypt')) nodeCryptoAlgos.push('scrypt');
     }
 
     if (nodeCryptoAlgos.length > 0) {
