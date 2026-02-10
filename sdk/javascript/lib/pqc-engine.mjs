@@ -473,12 +473,15 @@ function generateMigrationPlan(libraries, classifications, sndl) {
 
 function calculateQuantumScore(libraries, classifications) {
   if (libraries.length === 0) return 100.0;
+  if (classifications.length === 0) return 100.0;
 
-  const safe = libraries.filter(
-    lib => ['none', 'low'].includes((lib.quantumRisk || '').toLowerCase())
+  // Score by individual algorithm classifications, not library count.
+  // A project with 5 symmetric + 1 asymmetric algorithm is mostly ready, not 0%.
+  const safe = classifications.filter(
+    c => c.category !== 'asymmetric' || c.category === 'pqc'
   ).length;
-  const vulnerable = libraries.filter(
-    lib => ['high', 'critical'].includes((lib.quantumRisk || '').toLowerCase())
+  const vulnerable = classifications.filter(
+    c => c.category === 'asymmetric'
   ).length;
   const total = safe + vulnerable;
 

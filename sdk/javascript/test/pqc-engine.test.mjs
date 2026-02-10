@@ -104,21 +104,39 @@ describe('calculateQuantumScore', () => {
     assert.equal(calculateQuantumScore([], []), 100);
   });
 
-  it('returns lower score for vulnerable libraries', () => {
-    const libs = [
-      { quantumRisk: 'high' },
-      { quantumRisk: 'high' },
-      { quantumRisk: 'low' },
+  it('returns lower score for vulnerable classifications', () => {
+    const libs = [{ quantumRisk: 'high' }, { quantumRisk: 'low' }];
+    const classifications = [
+      { category: 'asymmetric' },
+      { category: 'asymmetric' },
+      { category: 'symmetric' },
     ];
-    const score = calculateQuantumScore(libs, []);
-    assert.ok(score < 100);
-    assert.ok(score > 0);
+    const score = calculateQuantumScore(libs, classifications);
+    assert.ok(score < 100, `expected score < 100, got ${score}`);
+    assert.ok(score > 0, `expected score > 0, got ${score}`);
+  });
+
+  it('returns high score when only symmetric algorithms found', () => {
+    const libs = [{ quantumRisk: 'low' }];
+    const classifications = [
+      { category: 'symmetric' },
+      { category: 'hash' },
+    ];
+    const score = calculateQuantumScore(libs, classifications);
+    assert.equal(score, 100);
   });
 
   it('boosts score when PQC is present', () => {
-    const libs = [{ quantumRisk: 'high' }, { quantumRisk: 'low' }];
-    const withoutPqc = calculateQuantumScore(libs, []);
-    const withPqc = calculateQuantumScore(libs, [{ category: 'pqc' }]);
-    assert.ok(withPqc > withoutPqc);
+    const libs = [{ quantumRisk: 'high' }];
+    const withoutPqc = calculateQuantumScore(libs, [
+      { category: 'asymmetric' },
+      { category: 'symmetric' },
+    ]);
+    const withPqc = calculateQuantumScore(libs, [
+      { category: 'asymmetric' },
+      { category: 'symmetric' },
+      { category: 'pqc' },
+    ]);
+    assert.ok(withPqc > withoutPqc, `expected ${withPqc} > ${withoutPqc}`);
   });
 });
