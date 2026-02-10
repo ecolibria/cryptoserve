@@ -36,46 +36,65 @@ jobs:
           trigger_phrase: "@claude"
           timeout_minutes: 10
           custom_instructions: |
-            You are reviewing a pull request for CryptoServe, an open-source cryptographic inventory and post-quantum readiness platform. Apply these domain-specific criteria:
+            You are reviewing a pull request for CryptoServe, an open-source cryptographic inventory and post-quantum readiness platform. The project is a polyglot monorepo: Python backend + SDK (sdk/python/), Node.js zero-dependency CLI (sdk/javascript/), and GitHub Actions workflows. Apply these domain-specific criteria:
 
-            ## 1. Cryptographic Correctness (Critical)
+            ## 1. Logic Correctness (Critical — Most Important)
+            Trace through code with concrete inputs. Do not just read the code — simulate execution.
+
+            - **Scoring and metrics**: When a function computes a score, ratio, or percentage, verify the math with edge cases:
+              - What happens with 0 items? 1 item? All items of the same type?
+              - Does the denominator make sense? Can division-by-zero occur?
+              - Does the scoring unit match the data being counted? (e.g., counting libraries vs algorithms vs classifications — these are different things)
+            - **Filter predicates**: Check that .filter() / list comprehension predicates actually select what the variable name claims. Walk through with a concrete example.
+            - **Conditional logic**: Check for tautologies (always true) and contradictions (always false) in boolean expressions. e.g., `x !== 'a' || x === 'b'` is always true when x is anything except 'a'.
+            - **Data flow**: Verify that function parameters match what callers actually pass. Check that the function operates on the right level of abstraction (per-library vs per-algorithm vs per-classification).
+            - **Off-by-one and boundary errors**: Array indexing, loop bounds, string slicing.
+
+            ## 2. Cryptographic Correctness (Critical)
             - Key material must never be logged, serialized to JSON, or returned in API responses
             - Algorithm identifiers must match IANA/NIST naming (e.g., ML-KEM-768, not kyber768)
             - Nonces/IVs must never be reused — check for deterministic generation patterns
-            - Random values must use CSPRNG (secrets module, not random)
-            - Key derivation must use appropriate KDFs (HKDF, Argon2) with proper salt handling
+            - Random values must use CSPRNG (Python: secrets module, not random; Node.js: crypto.randomBytes, not Math.random)
+            - Key derivation must use appropriate KDFs (HKDF, Argon2, scrypt) with proper salt handling
             - Certificate parsing must validate chain of trust, not just leaf cert
+            - Encryption blob format must be byte-identical between Python and Node.js SDKs
 
-            ## 2. Security
+            ## 3. Security
             - No hardcoded secrets, API keys, or credentials
-            - No eval(), exec(), pickle.loads() on untrusted input
+            - No eval(), exec(), pickle.loads() (Python) or eval(), Function() (JS) on untrusted input
             - SQL queries must use parameterized statements
             - User input must be validated before use in file paths, shell commands, or queries
             - Authentication/authorization checks must not be bypassable
             - Error messages must not leak internal state or stack traces to clients
+            - Node.js: check for prototype pollution, ReDoS in regex, command injection via child_process
 
-            ## 3. SDK API Stability
-            - Public function signatures in cryptoserve_core, cryptoserve_client, cryptoserve_auto must not change without a deprecation path
-            - New required parameters on existing public functions are breaking changes — flag them
-            - Type hints on public APIs must be present and accurate
-            - __all__ exports must be updated when adding new public symbols
+            ## 4. Cross-SDK Consistency
+            - When the same logic exists in both Python (sdk/python/) and Node.js (sdk/javascript/), verify they produce equivalent results for the same inputs
+            - Shared data structures (threat timelines, profiles, algorithm classifications, compliance frameworks) must have identical values
+            - Scoring functions, risk assessments, and recommendations should produce the same outputs given the same inputs
+            - The encrypted blob format must be interoperable
 
-            ## 4. Test Coverage
+            ## 5. Test Adequacy
             - New code paths should have corresponding tests
+            - Tests must actually exercise the logic being tested — watch for tests that pass empty/trivial inputs that skip the interesting code paths
             - Cryptographic operations need both positive and negative test cases
-            - Edge cases: empty input, maximum sizes, malformed data, expired certificates
-            - Mock external services, do not make real network calls in tests
+            - Scoring functions need tests with realistic inputs, not just edge cases
+            - Edge cases: empty input, single item, all-same-type, maximum sizes, malformed data
 
-            ## 5. Code Quality
+            ## 6. SDK API Stability
+            - Public function signatures (Python: cryptoserve_core, Node.js: lib/*.mjs exports) must not change without a deprecation path
+            - New required parameters on existing public functions are breaking changes — flag them
+
+            ## 7. Code Quality
             - Functions over 50 lines should be examined for decomposition opportunities
             - Avoid deep nesting (>3 levels) — suggest early returns
-            - Error handling should be specific (no bare except:)
-            - Resource cleanup should use context managers (with statements)
+            - Error handling should be specific (Python: no bare except; JS: no empty catch)
+            - Resource cleanup: Python context managers (with), Node.js try/finally patterns
 
             ## What to Skip
-            - Style/formatting issues (ruff and black enforce these via CI)
-            - Import ordering (handled by ruff)
-            - Docstring style (not enforced in this project)
+            - Style/formatting issues (enforced by linters in CI)
+            - Import ordering
+            - Docstring/JSDoc style
             - Minor naming preferences that don't affect clarity
 
   # Job 2: Security-focused review
@@ -99,18 +118,30 @@ jobs:
           model: claude-sonnet-4-5-20250929
           timeout_minutes: 8
           direct_prompt: |
-            Perform a security-focused review of this PR. Focus on:
+            Perform a security-focused review of this PR. This is a polyglot project (Python + Node.js).
+
+            ## Security Checks
             1. Injection vulnerabilities (SQL, command, path traversal)
             2. Authentication/authorization bypasses
-            3. Insecure deserialization or eval usage
+            3. Insecure deserialization or eval usage (Python: pickle; JS: eval, Function, vm)
             4. Hardcoded credentials or secrets
             5. SSRF or open redirect risks
-            6. Cryptographic misuse (weak algorithms, nonce reuse, key leakage)
+            6. Cryptographic misuse (weak algorithms, nonce reuse, key leakage, Math.random for crypto)
+            7. Prototype pollution (JS: object spread from user input, __proto__ access)
+            8. ReDoS (regex denial of service from user-controlled input)
+            9. Command injection (Python: subprocess with shell=True; JS: child_process.exec with string interpolation)
 
-            False positive suppressions:
+            ## Logic Bugs That Create Security Issues
+            10. Scoring/gating functions that produce incorrect results (e.g., always returning 0 or 100 due to wrong counting unit)
+            11. Filter predicates that are tautologies (always true) or contradictions (always false)
+            12. Boolean expressions with redundant clauses that mask intent
+
+            For items 10-12, trace through the code with 2-3 concrete inputs to verify correctness.
+
+            ## False Positive Suppressions
             - Policy/gate files (*_gate.py, *_policies.py) reference algorithm names for detection, not usage
             - Test files may intentionally use weak cryptographic material as fixtures
-            - crypto_audit.py references algorithms in documentation
+            - crypto_audit.py and scanner.mjs reference algorithms in detection rules, not usage
             - Scanner output files contain algorithm names as scan results
 
             At the end, output a single line: FINDINGS_COUNT=N where N is the number of security issues found.
