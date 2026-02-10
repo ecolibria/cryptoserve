@@ -8,7 +8,7 @@ We take security seriously. If you discover a security vulnerability in CryptoSe
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email us at: **info@cryptoserve.dev**
+Instead, please email us at: **info@opena2a.org**
 
 Include:
 - Description of the vulnerability
