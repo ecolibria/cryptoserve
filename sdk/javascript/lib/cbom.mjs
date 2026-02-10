@@ -42,16 +42,17 @@ export function generatePurl(name, version, ecosystem) {
 // Git metadata
 // ---------------------------------------------------------------------------
 
-function getGitMetadata() {
+function getGitMetadata(projectDir) {
+  const opts = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], cwd: projectDir || process.cwd() };
   const result = { gitCommit: null, gitBranch: null, gitRepo: null };
   try {
-    result.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    result.gitCommit = execSync('git rev-parse HEAD', opts).trim();
   } catch { /* not a git repo */ }
   try {
-    result.gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    result.gitBranch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
   } catch { /* ignore */ }
   try {
-    result.gitRepo = execSync('git remote get-url origin', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    result.gitRepo = execSync('git remote get-url origin', opts).trim();
   } catch { /* ignore */ }
   return result;
 }
@@ -68,7 +69,7 @@ function getGitMetadata() {
  * @param {string} [projectName] - Project name override
  * @returns {Object} Internal CBOM structure
  */
-export function generateCbom(scanResults, pqcAnalysis, projectName = null) {
+export function generateCbom(scanResults, pqcAnalysis, projectName = null, projectDir = null) {
   const components = [];
 
   // Add libraries as components
@@ -147,7 +148,7 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null) {
   const componentsJson = JSON.stringify(components);
   const contentHash = createHash('sha256').update(componentsJson).digest('hex');
 
-  const git = getGitMetadata();
+  const git = getGitMetadata(projectDir);
 
   return {
     id: randomUUID(),
@@ -246,7 +247,7 @@ export function toSpdx(cbom) {
       name: c.name,
       downloadLocation: c.purl || 'NOASSERTION',
       filesAnalyzed: false,
-      primaryPackagePurpose: c.type === 'algorithm' ? 'LIBRARY' : 'LIBRARY',
+      primaryPackagePurpose: c.type === 'protocol' ? 'FRAMEWORK' : 'LIBRARY',
       annotations: [
         {
           annotationType: 'OTHER',

@@ -7,7 +7,7 @@
  * Zero dependencies — uses only node:fs and node:path.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
 import { walkProject } from './walker.mjs';
 
@@ -91,13 +91,17 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 export function scanBinary(filePath) {
   let buf;
   try {
-    buf = readFileSync(filePath);
+    const size = statSync(filePath).size;
+    if (size > MAX_FILE_SIZE) {
+      const fd = openSync(filePath, 'r');
+      buf = Buffer.alloc(MAX_FILE_SIZE);
+      readSync(fd, buf, 0, MAX_FILE_SIZE, 0);
+      closeSync(fd);
+    } else {
+      buf = readFileSync(filePath);
+    }
   } catch {
     return [];
-  }
-
-  if (buf.length > MAX_FILE_SIZE) {
-    buf = buf.subarray(0, MAX_FILE_SIZE);
   }
 
   const matches = [];

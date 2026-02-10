@@ -791,7 +791,7 @@ async function cmdCbom(args) {
   const pqcResult = analyzeOffline(libraries);
   const projectName = basename(scanDir);
 
-  const cbom = generateCbom(scanResults, pqcResult, projectName);
+  const cbom = generateCbom(scanResults, pqcResult, projectName, scanDir);
 
   let formatted;
   switch (format) {
