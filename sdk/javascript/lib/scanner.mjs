@@ -13,40 +13,15 @@
  * Zero dependencies — uses only node:fs and node:path.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
 import { LANGUAGE_PATTERNS, scanSourceFile, detectLanguage, MULTI_LANG_EXTENSIONS } from './scanner-languages.mjs';
-import { scanManifests, CRYPTO_PACKAGES as MANIFEST_CRYPTO_PACKAGES } from './scanner-manifests.mjs';
+import { scanManifests } from './scanner-manifests.mjs';
 import { scanTlsConfigs } from './scanner-tls.mjs';
-import { scanBinaries } from './scanner-binary.mjs';
 import { lookupAlgorithm } from './algorithm-db.mjs';
-
-// ---------------------------------------------------------------------------
-// Known npm crypto packages → algorithm mappings
-// ---------------------------------------------------------------------------
-
-const CRYPTO_PACKAGES = {
-  'crypto-js':                { algorithms: ['AES', 'DES', '3DES', 'MD5', 'SHA-256', 'SHA-512', 'HMAC'], quantumRisk: 'low', category: 'symmetric' },
-  'bcrypt':                   { algorithms: ['bcrypt'], quantumRisk: 'none', category: 'kdf' },
-  'bcryptjs':                 { algorithms: ['bcrypt'], quantumRisk: 'none', category: 'kdf' },
-  'jsonwebtoken':             { algorithms: ['RS256', 'HS256', 'ES256'], quantumRisk: 'high', category: 'token' },
-  'jose':                     { algorithms: ['RS256', 'ES256', 'EdDSA', 'AES-GCM'], quantumRisk: 'high', category: 'token' },
-  'node-forge':               { algorithms: ['RSA', 'AES', 'SHA-256', 'HMAC', 'TLS'], quantumRisk: 'high', category: 'tls' },
-  'tweetnacl':                { algorithms: ['X25519', 'Ed25519', 'XSalsa20'], quantumRisk: 'high', category: 'asymmetric' },
-  'libsodium-wrappers':       { algorithms: ['X25519', 'Ed25519', 'ChaCha20', 'AES-256-GCM'], quantumRisk: 'high', category: 'asymmetric' },
-  '@noble/curves':            { algorithms: ['ECDSA', 'Ed25519', 'X25519'], quantumRisk: 'high', category: 'asymmetric' },
-  '@noble/hashes':            { algorithms: ['SHA-256', 'SHA-512', 'SHA3', 'Blake2'], quantumRisk: 'low', category: 'hash' },
-  '@noble/post-quantum':      { algorithms: ['ML-KEM', 'ML-DSA', 'SLH-DSA'], quantumRisk: 'none', category: 'pqc' },
-  'openpgp':                  { algorithms: ['RSA', 'ECDSA', 'AES', 'SHA-256'], quantumRisk: 'high', category: 'asymmetric' },
-  'elliptic':                 { algorithms: ['ECDSA', 'ECDHE', 'Ed25519'], quantumRisk: 'high', category: 'asymmetric' },
-  'secp256k1':                { algorithms: ['ECDSA'], quantumRisk: 'high', category: 'asymmetric' },
-  'argon2':                   { algorithms: ['Argon2'], quantumRisk: 'none', category: 'kdf' },
-  'scrypt':                   { algorithms: ['scrypt'], quantumRisk: 'none', category: 'kdf' },
-  'pbkdf2':                   { algorithms: ['PBKDF2'], quantumRisk: 'none', category: 'kdf' },
-  'tls':                      { algorithms: ['TLS', 'RSA', 'ECDSA'], quantumRisk: 'high', category: 'tls' },
-  'ssh2':                     { algorithms: ['RSA', 'Ed25519', 'ECDSA', 'AES'], quantumRisk: 'high', category: 'asymmetric' },
-  'node-rsa':                 { algorithms: ['RSA'], quantumRisk: 'high', category: 'asymmetric' },
-};
+import { lookupNpmPackage } from './crypto-registry.mjs';
+import { walkProject } from './walker.mjs';
+import { loadScannerConfig } from './config.mjs';
 
 // ---------------------------------------------------------------------------
 // Import/require patterns to detect in JS/TS source code
@@ -125,62 +100,13 @@ const SECRET_PATTERNS = [
 // File patterns for cert/key discovery
 const CERT_EXTENSIONS = new Set(['.pem', '.key', '.crt', '.p12', '.pfx', '.jks', '.keystore']);
 
-// ---------------------------------------------------------------------------
-// File walker
-// ---------------------------------------------------------------------------
-
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.next', 'dist', 'build', 'coverage',
-  '.cache', '.nuxt', '.output', '.svelte-kit', '__pycache__',
-  'vendor', '.venv', 'venv',
-]);
-
 const JS_EXTENSIONS = new Set(['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx']);
-
-function walkFiles(dir, maxFiles = 10000, maxBytes = 500 * 1024 * 1024) {
-  const files = [];
-  let totalBytes = 0;
-
-  function walk(currentDir) {
-    if (files.length >= maxFiles || totalBytes >= maxBytes) return;
-
-    let entries;
-    try { entries = readdirSync(currentDir, { withFileTypes: true }); }
-    catch { return; }
-
-    for (const entry of entries) {
-      if (files.length >= maxFiles || totalBytes >= maxBytes) return;
-
-      if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
-          walk(join(currentDir, entry.name));
-        }
-        continue;
-      }
-
-      if (!entry.isFile()) continue;
-
-      const filePath = join(currentDir, entry.name);
-      try {
-        const stat = statSync(filePath);
-        if (stat.size > 1024 * 1024) continue; // Skip files >1MB
-        totalBytes += stat.size;
-        files.push(filePath);
-      } catch { continue; }
-    }
-  }
-
-  walk(dir);
-  return files;
-}
 
 // ---------------------------------------------------------------------------
 // Scanner
 // ---------------------------------------------------------------------------
 
 export function scanProject(projectDir, options = {}) {
-  const { binary = false } = options;
-
   const results = {
     libraries: [],
     secrets: [],
@@ -222,9 +148,9 @@ export function scanProject(projectDir, options = {}) {
       };
 
       for (const [name, version] of Object.entries(allDeps)) {
-        if (name in CRYPTO_PACKAGES && !seenPkgs.has(name)) {
+        const info = lookupNpmPackage(name);
+        if (info && !seenPkgs.has(name)) {
           seenPkgs.add(name);
-          const info = CRYPTO_PACKAGES[name];
           results.libraries.push({
             name,
             version: version.replace(/^[\^~]/, ''),
@@ -252,21 +178,28 @@ export function scanProject(projectDir, options = {}) {
     }
   }
 
-  // 3. Walk source files
-  const files = walkFiles(projectDir);
+  // 3. Walk source files (single-pass unified walker with config overrides)
+  const scannerConfig = loadScannerConfig(projectDir);
+  const walked = walkProject(projectDir, {
+    skipDirs: scannerConfig.skipDirs.length > 0 ? new Set(scannerConfig.skipDirs) : undefined,
+    includeExtensions: scannerConfig.includeExtensions.length > 0 ? new Set(scannerConfig.includeExtensions) : undefined,
+    maxFiles: scannerConfig.maxFiles,
+    maxBytes: scannerConfig.maxBytes,
+    maxFileSize: scannerConfig.maxFileSize,
+    maxBinaryFiles: scannerConfig.binary.maxFiles,
+    maxBinaryFileSize: scannerConfig.binary.maxFileSize,
+  });
   const seenImports = new Set();
   const seenAlgos = new Set();
   const seenSourceAlgos = new Set();
 
-  for (const filePath of files) {
+  // Cert files from walker
+  for (const certPath of walked.certFiles) {
+    results.certFiles.push(relative(projectDir, certPath));
+  }
+
+  for (const filePath of walked.sourceFiles) {
     const ext = extname(filePath);
-
-    // Check for cert/key files
-    if (CERT_EXTENSIONS.has(ext)) {
-      results.certFiles.push(relative(projectDir, filePath));
-      continue;
-    }
-
     const relPath = relative(projectDir, filePath);
 
     // Multi-language scanning (Go, Python, Java, Rust, C/C++)
@@ -396,13 +329,11 @@ export function scanProject(projectDir, options = {}) {
     }
   }
 
-  // 4. TLS scanning (always on)
-  results.tlsFindings = scanTlsConfigs(projectDir);
+  // 4. TLS scanning — pass pre-walked source+config files
+  const tlsFiles = [...walked.sourceFiles, ...walked.configFiles];
+  results.tlsFindings = scanTlsConfigs(projectDir, tlsFiles);
 
-  // 5. Binary scanning (optional)
-  if (binary) {
-    results.binaryFindings = scanBinaries(projectDir);
-  }
+  // 5. Binary scanning moved to CLI layer (lazy-loaded via dynamic import)
 
   // Convert sets to arrays for JSON serialization
   results.languagesDetected = [...results.languagesDetected];

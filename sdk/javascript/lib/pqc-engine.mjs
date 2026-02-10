@@ -172,63 +172,101 @@ export const COMPLIANCE_FRAMEWORKS = {
 };
 
 // ---------------------------------------------------------------------------
-// Algorithm classification rules
+// Algorithm classification
 // ---------------------------------------------------------------------------
 
-// [pattern, timelineKey, category] — first match wins
-const ALGO_CLASSIFICATION_RULES = [
-  // PQC (safe)
-  ['Kyber',     'pqc',        'pqc'],
-  ['ML-KEM',    'pqc',        'pqc'],
-  ['Dilithium', 'pqc',        'pqc'],
-  ['ML-DSA',    'pqc',        'pqc'],
-  ['Falcon',    'pqc',        'pqc'],
-  ['SPHINCS',   'pqc',        'pqc'],
-  ['SLH-DSA',   'pqc',        'pqc'],
-  // Asymmetric (quantum-vulnerable via Shor's)
-  ['RSA',       'rsa_2048',   'asymmetric'],
-  ['ECDSA',     'ecdsa_p256', 'asymmetric'],
-  ['ECDHE',     'ecdsa_p256', 'asymmetric'],
-  ['ECC',       'ecdsa_p256', 'asymmetric'],
-  ['Ed25519',   'ed25519',    'asymmetric'],
-  ['EdDSA',     'ed25519',    'asymmetric'],
-  ['Curve25519','x25519',     'asymmetric'],
-  ['X25519',    'x25519',     'asymmetric'],
-  ['DH',        'dh_2048',    'asymmetric'],
-  // Symmetric (Grover's — key-doubling sufficient)
-  ['AES',       'aes_256',    'symmetric'],
-  ['ChaCha20',  'chacha20',   'symmetric'],
-  ['3DES',      'aes_128',    'symmetric'],
-  ['DES',       'aes_128',    'symmetric'],
-  ['XSalsa20',  'chacha20',   'symmetric'],
+// Timeline mapping: [pattern, timelineKey] — first match wins.
+// Category is now derived from algorithm-db.mjs's classifyFromDb().
+const TIMELINE_RULES = [
+  // PQC
+  ['Kyber',     'pqc'],
+  ['ML-KEM',    'pqc'],
+  ['Dilithium', 'pqc'],
+  ['ML-DSA',    'pqc'],
+  ['Falcon',    'pqc'],
+  ['SPHINCS',   'pqc'],
+  ['SLH-DSA',   'pqc'],
+  // Asymmetric
+  ['RSA',       'rsa_2048'],
+  ['ECDSA',     'ecdsa_p256'],
+  ['ECDHE',     'ecdsa_p256'],
+  ['ECC',       'ecdsa_p256'],
+  ['Ed25519',   'ed25519'],
+  ['EdDSA',     'ed25519'],
+  ['Curve25519','x25519'],
+  ['X25519',    'x25519'],
+  ['DH',        'dh_2048'],
+  // Symmetric
+  ['AES',       'aes_256'],
+  ['ChaCha20',  'chacha20'],
+  ['3DES',      'aes_128'],
+  ['DES',       'aes_128'],
+  ['XSalsa20',  'chacha20'],
   // Hashing
-  ['SHA-256',   'sha_256',    'hash'],
-  ['SHA-512',   'sha_256',    'hash'],
-  ['SHA-1',     'sha_256',    'hash'],
-  ['SHA3',      'sha_256',    'hash'],
-  ['Blake2',    'sha_256',    'hash'],
-  ['MD5',       'sha_256',    'hash'],
-  // KDF / MAC / CSPRNG
-  ['HMAC',      'sha_256',    'hash'],
-  ['bcrypt',    null,         'kdf'],
-  ['Argon2',    null,         'kdf'],
-  ['PBKDF2',    null,         'kdf'],
-  ['scrypt',    null,         'kdf'],
-  ['CSPRNG',    null,         'random'],
-  ['Poly1305',  null,         'mac'],
+  ['SHA-256',   'sha_256'],
+  ['SHA-512',   'sha_256'],
+  ['SHA-1',     'sha_256'],
+  ['SHA3',      'sha_256'],
+  ['Blake2',    'sha_256'],
+  ['MD5',       'sha_256'],
+  // MAC / KDF
+  ['HMAC',      'sha_256'],
+  ['bcrypt',    null],
+  ['Argon2',    null],
+  ['PBKDF2',    null],
+  ['scrypt',    null],
+  ['CSPRNG',    null],
+  ['Poly1305',  null],
   // Token / TLS wrappers
-  ['TLS',       'rsa_2048',   'asymmetric'],
-  ['JWS',       'rsa_2048',   'asymmetric'],
-  ['JWE',       'rsa_2048',   'asymmetric'],
-  ['JWK',       'rsa_2048',   'asymmetric'],
-  ['RS256',     'rsa_2048',   'asymmetric'],
-  ['ES256',     'ecdsa_p256', 'asymmetric'],
-  ['HS256',     'sha_256',    'hash'],
+  ['TLS',       'rsa_2048'],
+  ['JWS',       'rsa_2048'],
+  ['JWE',       'rsa_2048'],
+  ['JWK',       'rsa_2048'],
+  ['RS256',     'rsa_2048'],
+  ['ES256',     'ecdsa_p256'],
+  ['HS256',     'sha_256'],
 ];
 
-// ---------------------------------------------------------------------------
-// Classification
-// ---------------------------------------------------------------------------
+/**
+ * Map algorithm-db category + quantumRisk to PQC engine classification category.
+ * This derives the quantum vulnerability class from algorithm-db metadata.
+ */
+function dbCategoryToPqcCategory(dbEntry) {
+  if (!dbEntry) return null;
+  const { category, quantumRisk } = dbEntry;
+
+  // PQC algorithms: signing/key_exchange with no quantum risk
+  // (classical asymmetric has 'high' risk, PQC has 'none')
+  if (quantumRisk === 'none' && (category === 'signing' || category === 'key_exchange')) {
+    return 'pqc';
+  }
+
+  // Signing and key exchange → asymmetric (quantum-vulnerable via Shor's)
+  if (category === 'signing' || category === 'key_exchange') return 'asymmetric';
+
+  // Encryption with high quantum risk → asymmetric (RSA encryption)
+  if (category === 'encryption' && quantumRisk === 'high') return 'asymmetric';
+
+  // Encryption with none/low risk → symmetric
+  if (category === 'encryption') return 'symmetric';
+
+  // Hashing
+  if (category === 'hashing') return 'hash';
+
+  // MAC
+  if (category === 'mac') return 'hash';
+
+  // KDF
+  if (category === 'kdf') return 'kdf';
+
+  // Protocol (TLS) → asymmetric (involves key exchange)
+  if (category === 'protocol') return 'asymmetric';
+
+  // Random
+  if (category === 'random') return 'random';
+
+  return null;
+}
 
 function classifyAlgorithms(libraries) {
   const seen = new Set();
@@ -239,20 +277,33 @@ function classifyAlgorithms(libraries) {
       if (seen.has(algoName)) continue;
       seen.add(algoName);
 
-      let matched = false;
+      // Look up timeline key via pattern matching
+      let timelineKey = null;
       const upper = algoName.toUpperCase();
-
-      for (const [pattern, timelineKey, category] of ALGO_CLASSIFICATION_RULES) {
+      for (const [pattern, tKey] of TIMELINE_RULES) {
         if (upper.includes(pattern.toUpperCase())) {
-          results.push({ algo: algoName, timelineKey, category });
-          matched = true;
+          timelineKey = tKey;
           break;
         }
       }
 
-      if (!matched) {
-        results.push({ algo: algoName, timelineKey: null, category: 'unknown' });
+      // Derive category from algorithm-db
+      const dbEntry = classifyFromDb(algoName);
+      let category = dbEntry ? dbCategoryToPqcCategory(dbEntry) : null;
+
+      // Fallback: if algorithm-db doesn't know this algo, infer from timeline
+      if (!category) {
+        if (timelineKey === 'pqc') category = 'pqc';
+        else if (timelineKey && timelineKey in QUANTUM_THREAT_TIMELINE) {
+          // Timeline keys like rsa_2048, ecdsa_p256 → asymmetric
+          const t = QUANTUM_THREAT_TIMELINE[timelineKey];
+          category = t.median <= 30 ? 'asymmetric' : 'symmetric';
+        } else {
+          category = 'unknown';
+        }
       }
+
+      results.push({ algo: algoName, timelineKey, category });
     }
   }
 

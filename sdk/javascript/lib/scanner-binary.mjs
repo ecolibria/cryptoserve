@@ -7,8 +7,9 @@
  * Zero dependencies — uses only node:fs and node:path.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
+import { walkProject } from './walker.mjs';
 
 // ---------------------------------------------------------------------------
 // Binary signatures — byte patterns for compiled crypto
@@ -77,21 +78,7 @@ export const BINARY_SIGNATURES = [
   },
 ];
 
-// Binary file extensions to scan
-const BINARY_EXTENSIONS = new Set([
-  '.exe', '.dll', '.so', '.dylib', '.wasm',
-  '.class', '.jar', '.war',
-  '.o', '.a', '.lib',
-  '.pyc', '.pyd',
-]);
-
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.next', 'dist', 'build', 'coverage',
-  '.cache', '__pycache__', 'vendor', '.venv', 'venv',
-]);
-
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_FILES = 50;
 
 // ---------------------------------------------------------------------------
 // Scanner functions
@@ -129,46 +116,22 @@ export function scanBinary(filePath) {
 }
 
 /**
- * Walk project directory for binary files and scan each.
- * Returns combined results with file paths.
+ * Scan binary files for crypto byte signatures.
+ *
+ * @param {string} projectDir - Root directory for relative path calculation
+ * @param {string[]|undefined} preFilteredFiles - Pre-walked binary file list.
+ *   If omitted, walks the directory internally for backward compat.
+ * @returns {Array<{name: string, algorithm: string, severity: string, offset: number, file: string}>}
  */
-export function scanBinaries(projectDir) {
+export function scanBinaries(projectDir, preFilteredFiles) {
   const results = [];
-  const files = [];
-
-  function walk(dir) {
-    if (files.length >= MAX_FILES) return;
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); }
-    catch { return; }
-
-    for (const entry of entries) {
-      if (files.length >= MAX_FILES) return;
-
-      if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
-          walk(join(dir, entry.name));
-        }
-        continue;
-      }
-
-      if (!entry.isFile()) continue;
-      const filePath = join(dir, entry.name);
-      const ext = extname(entry.name).toLowerCase();
-
-      // Check if binary by extension
-      if (!BINARY_EXTENSIONS.has(ext)) continue;
-
-      try {
-        const stat = statSync(filePath);
-        if (stat.size > MAX_FILE_SIZE) continue;
-      } catch { continue; }
-
-      files.push(filePath);
-    }
+  let files;
+  if (Array.isArray(preFilteredFiles)) {
+    files = preFilteredFiles;
+  } else {
+    const walked = walkProject(projectDir);
+    files = walked.binaryFiles;
   }
-
-  walk(projectDir);
 
   for (const filePath of files) {
     const matches = scanBinary(filePath);

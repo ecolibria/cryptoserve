@@ -33,6 +33,16 @@ const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-
 // Arg parsing helpers
 // ---------------------------------------------------------------------------
 
+const OPTIONS_WITH_VALUES = new Set([
+  '--password', '--algorithm', '--profile', '--format', '--file',
+  '--output', '--server', '--context', '--max-risk', '--min-score',
+]);
+
+const KNOWN_FLAGS = new Set([
+  '--insecure-storage', '--verbose', '--binary', '--fail-on-weak',
+  '--help', '--version',
+]);
+
 function getFlag(args, name) {
   const idx = args.indexOf(name);
   return idx !== -1;
@@ -44,17 +54,26 @@ function getOption(args, name, defaultValue = null) {
   return args[idx + 1];
 }
 
-function getPositional(args, optionsWithValues = ['--password', '--algorithm', '--profile', '--format', '--file', '--output', '--server', '--context', '--max-risk', '--min-score']) {
+function getPositional(args) {
   const result = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
-      // Skip the flag; if it takes a value, skip the next arg too
-      if (optionsWithValues.includes(args[i])) i++;
+      if (OPTIONS_WITH_VALUES.has(args[i])) i++;
       continue;
     }
     result.push(args[i]);
   }
   return result;
+}
+
+function warnUnknownFlags(args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith('--') && !OPTIONS_WITH_VALUES.has(arg) && !KNOWN_FLAGS.has(arg)) {
+      console.error(`Warning: unknown flag "${arg}"`);
+    }
+    if (OPTIONS_WITH_VALUES.has(arg)) i++; // skip value
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +328,13 @@ async function cmdScan(args) {
   const format = getOption(args, '--format', 'text');
   const binaryFlag = getFlag(args, '--binary');
 
-  const results = scanProject(scanDir, { binary: binaryFlag });
+  const results = scanProject(scanDir);
+
+  // Binary scanning — lazy-loaded only when requested
+  if (binaryFlag) {
+    const { scanBinaries } = await import('../lib/scanner-binary.mjs');
+    results.binaryFindings = scanBinaries(scanDir);
+  }
 
   if (format === 'json') {
     console.log(JSON.stringify(results, null, 2));
@@ -971,9 +996,10 @@ const args = process.argv.slice(2);
 const command = args[0];
 const commandArgs = args.slice(1);
 
-// Filter out the command from args for sub-parsers
-// Strip flags that belong to the command router
-const filteredArgs = commandArgs.filter(a => a !== command);
+// Warn about unknown flags (skip for vault/context which have subcommands)
+if (command && !['vault', 'context', 'help', '--help', '-h', 'version', '--version', '-v'].includes(command)) {
+  warnUnknownFlags(commandArgs);
+}
 
 try {
   switch (command) {

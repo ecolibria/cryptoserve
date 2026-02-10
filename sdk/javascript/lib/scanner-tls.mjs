@@ -6,8 +6,9 @@
  * Zero dependencies.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, extname, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { extname, relative } from 'node:path';
+import { walkProject } from './walker.mjs';
 
 // ---------------------------------------------------------------------------
 // TLS version risk levels
@@ -108,62 +109,23 @@ const PATTERNS = [
 // Scanner
 // ---------------------------------------------------------------------------
 
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.next', 'dist', 'build', 'coverage',
-  '.cache', '__pycache__', 'vendor', '.venv', 'venv',
-]);
-
-function walkConfigFiles(dir, maxFiles = 500) {
-  const files = [];
-  const configExts = new Set([
-    '.conf', '.cfg', '.ini', '.toml', '.yaml', '.yml', '.json', '.xml',
-    '.js', '.ts', '.mjs', '.cjs', '.go', '.java', '.kt', '.scala', '.py',
-  ]);
-  const configNames = new Set([
-    'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
-    'nginx.conf', 'httpd.conf', 'apache2.conf', 'ssl.conf',
-    '.env',
-  ]);
-
-  function walk(currentDir) {
-    if (files.length >= maxFiles) return;
-    let entries;
-    try { entries = readdirSync(currentDir, { withFileTypes: true }); }
-    catch { return; }
-
-    for (const entry of entries) {
-      if (files.length >= maxFiles) return;
-
-      if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
-          walk(join(currentDir, entry.name));
-        }
-        continue;
-      }
-
-      if (!entry.isFile()) continue;
-      const ext = extname(entry.name).toLowerCase();
-      if (configExts.has(ext) || configNames.has(entry.name)) {
-        const filePath = join(currentDir, entry.name);
-        try {
-          const stat = statSync(filePath);
-          if (stat.size <= 1024 * 1024) files.push(filePath);
-        } catch { /* skip */ }
-      }
-    }
-  }
-
-  walk(dir);
-  return files;
-}
-
 /**
  * Scan project for deprecated TLS/SSL versions.
- * Returns array of findings: [{ file, line, protocol, risk, recommendation }]
+ *
+ * @param {string} projectDir - Root directory for relative path calculation
+ * @param {string[]|undefined} preFilteredFiles - Pre-walked file list (source+config).
+ *   If omitted, walks the directory internally for backward compat.
+ * @returns {Array<{file: string, line: number, protocol: string, risk: string, recommendation: string}>}
  */
-export function scanTlsConfigs(projectDir) {
+export function scanTlsConfigs(projectDir, preFilteredFiles) {
   const findings = [];
-  const files = walkConfigFiles(projectDir);
+  let files;
+  if (Array.isArray(preFilteredFiles)) {
+    files = preFilteredFiles;
+  } else {
+    const walked = walkProject(projectDir);
+    files = [...walked.sourceFiles, ...walked.configFiles];
+  }
 
   for (const filePath of files) {
     let content;
