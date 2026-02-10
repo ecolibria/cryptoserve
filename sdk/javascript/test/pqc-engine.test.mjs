@@ -126,14 +126,38 @@ describe('calculateQuantumScore', () => {
     assert.equal(score, 100);
   });
 
+  it('does not produce 0% for single asymmetric algorithm', () => {
+    const libs = [{ quantumRisk: 'high' }];
+    const classifications = [{ category: 'asymmetric' }];
+    const score = calculateQuantumScore(libs, classifications);
+    assert.ok(score > 0, `expected score > 0 for 1 algo, got ${score}`);
+    assert.ok(score < 100, `expected score < 100, got ${score}`);
+  });
+
+  it('decreases score as more vulnerable algorithms are found', () => {
+    const libs = [{ quantumRisk: 'high' }];
+    const score1 = calculateQuantumScore(libs, [{ category: 'asymmetric' }]);
+    const score2 = calculateQuantumScore(libs, [{ category: 'asymmetric' }, { category: 'asymmetric' }]);
+    const score3 = calculateQuantumScore(libs, [
+      { category: 'asymmetric' }, { category: 'asymmetric' },
+      { category: 'asymmetric' }, { category: 'asymmetric' },
+    ]);
+    assert.ok(score1 > score2, `1 vuln (${score1}) should score higher than 2 (${score2})`);
+    assert.ok(score2 > score3, `2 vuln (${score2}) should score higher than 4 (${score3})`);
+  });
+
   it('boosts score when PQC is present', () => {
     const libs = [{ quantumRisk: 'high' }];
     const withoutPqc = calculateQuantumScore(libs, [
       { category: 'asymmetric' },
       { category: 'symmetric' },
+      { category: 'symmetric' },
+      { category: 'symmetric' },
     ]);
     const withPqc = calculateQuantumScore(libs, [
       { category: 'asymmetric' },
+      { category: 'symmetric' },
+      { category: 'symmetric' },
       { category: 'symmetric' },
       { category: 'pqc' },
     ]);

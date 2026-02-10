@@ -487,7 +487,15 @@ function calculateQuantumScore(libraries, classifications) {
 
   if (total === 0) return 100.0;
 
-  let score = (safe / total) * 100;
+  // Two scoring approaches:
+  // - Ratio: safe / total (good for large samples)
+  // - Penalty: 100 - 30 per vulnerable (good for small samples)
+  // Small samples (≤3 algorithms) produce extreme ratios (1/1 = 0% or 100%),
+  // so use whichever approach gives the more representative score.
+  const ratioScore = (safe / total) * 100;
+  const penaltyScore = Math.max(0, 100 - vulnerable * 30);
+  let score = total <= 3 ? Math.max(ratioScore, penaltyScore) : ratioScore;
+
   if (classifications.some(c => c.category === 'pqc')) {
     score = Math.min(100, score + 20);
   }
