@@ -1,6 +1,6 @@
 # CryptoServe CLI (Node.js)
 
-Zero-dependency CLI for cryptographic scanning, post-quantum readiness analysis, encryption, and local key management.
+Zero-dependency CLI for cryptographic scanning, post-quantum readiness analysis, CBOM generation, CI/CD gating, encryption, and local key management.
 
 ```bash
 npx cryptoserve pqc
@@ -24,6 +24,8 @@ Requires Node.js 18 or later. No dependencies — uses only Node.js built-in mod
 |---------|-------------|
 | `scan [path]` | Scan project for crypto libraries, hardcoded secrets, and weak patterns |
 | `pqc` | Post-quantum readiness analysis with SNDL risk assessment |
+| `cbom [path]` | Generate Cryptographic Bill of Materials (CycloneDX, SPDX, JSON) |
+| `gate [path]` | CI/CD quality gate with configurable thresholds |
 | `encrypt` / `decrypt` | Password-based encryption (strings and files) |
 | `context list` / `show` | List and inspect context-aware algorithm presets |
 | `hash-password` | scrypt / PBKDF2 password hashing |
@@ -33,18 +35,46 @@ Requires Node.js 18 or later. No dependencies — uses only Node.js built-in mod
 
 ## Scan
 
-Detect crypto libraries, algorithm usage, hardcoded secrets, and certificate files in JavaScript/TypeScript projects.
+Detect crypto libraries, algorithm usage, hardcoded secrets, and certificate files across multiple languages and ecosystems.
 
 ```bash
 cryptoserve scan .
 cryptoserve scan ./src --format json
+cryptoserve scan . --binary          # Include binary crypto detection
 ```
 
-Detects 20+ crypto packages (`jsonwebtoken`, `node-forge`, `@noble/curves`, etc.), `node:crypto` API usage, algorithm string literals, weak patterns (MD5, DES, ECB, `createCipher`), and hardcoded API keys (AWS, OpenAI, Anthropic, GitHub, Stripe, and more).
+### Supported Languages
+
+| Language | Extensions | Detection |
+|----------|-----------|-----------|
+| JavaScript/TypeScript | `.js`, `.ts`, `.mjs`, `.cjs`, `.jsx`, `.tsx` | Imports, algorithm literals, weak patterns |
+| Go | `.go` | `crypto/*` stdlib, `x/crypto`, `circl` |
+| Python | `.py` | `hashlib`, `cryptography`, `PyCryptodome`, `bcrypt` |
+| Java/Kotlin | `.java`, `.kt`, `.scala` | `Cipher.getInstance`, `MessageDigest`, `KeyPairGenerator` |
+| Rust | `.rs` | `aes-gcm`, `ring`, `ed25519-dalek`, `pqcrypto` |
+| C/C++ | `.c`, `.h`, `.cpp`, `.hpp`, `.cc` | OpenSSL `EVP_*`, `RSA_*`, `SHA*_Init` |
+
+### Supported Manifests
+
+| Manifest | Ecosystem |
+|----------|-----------|
+| `package.json` | npm |
+| `go.mod` | Go modules |
+| `requirements.txt` | PyPI |
+| `pyproject.toml` | PyPI (PEP 621 + Poetry) |
+| `Cargo.toml` | Cargo (Rust) |
+| `pom.xml` | Maven (Java) |
+
+### Additional Detection
+
+- **TLS/SSL versions** — nginx, Apache, Node.js, Go, Java configs
+- **Binary signatures** — AES S-box, DES tables, SHA constants, ChaCha20 sigma (with `--binary`)
+- **80+ algorithms** classified by quantum risk, weakness, and category
+- **Hardcoded secrets** — AWS, OpenAI, Anthropic, GitHub, Stripe, and more
 
 ## PQC Analysis
 
-Offline post-quantum readiness assessment. Evaluates your project's cryptographic posture against quantum threat timelines.
+Offline post-quantum readiness assessment with confidence indicators.
 
 ```bash
 cryptoserve pqc
@@ -55,7 +85,67 @@ cryptoserve pqc --format json
 
 **Profiles:** `general`, `national_security`, `healthcare`, `financial`, `intellectual_property`, `legal`, `authentication`, `session_tokens`, `ephemeral`
 
-Output includes quantum readiness score (0-100), SNDL risk assessment, KEM/signature recommendations (ML-KEM, ML-DSA, SLH-DSA), migration plan, and compliance references (CNSA 2.0, NIST SP 800-208, BSI, ANSSI).
+Output includes:
+- Quantum readiness score (0-100) with confidence level
+- Risk breakdown (critical/high/medium/low/safe)
+- Migration urgency (immediate/high/medium/low/none)
+- SNDL risk assessment
+- KEM/signature recommendations (ML-KEM, ML-DSA, SLH-DSA)
+- Migration plan with compliance references (CNSA 2.0, NIST SP 800-208, BSI, ANSSI)
+
+## CBOM Generation
+
+Generate a Cryptographic Bill of Materials in industry-standard formats.
+
+```bash
+# CycloneDX 1.5 format
+cryptoserve cbom . --format cyclonedx --output cbom.json
+
+# SPDX 2.3 format
+cryptoserve cbom . --format spdx --output cbom-spdx.json
+
+# Native JSON with quantum readiness data
+cryptoserve cbom . --format json --output cbom-native.json
+
+# Print to stdout
+cryptoserve cbom .
+```
+
+Each CBOM includes:
+- All detected crypto components with Package URLs (purls)
+- Quantum readiness score and risk assessment
+- Git metadata (commit, branch, remote)
+- Content hash for integrity verification
+
+## CI/CD Gate
+
+Enforce cryptographic policies in your CI/CD pipeline.
+
+```bash
+# Default: fail if quantum risk > high or score < 50
+cryptoserve gate .
+
+# Strict: fail on any high-risk algorithm
+cryptoserve gate . --max-risk medium
+
+# Fail on weak/deprecated algorithms (MD5, DES, RC4, etc.)
+cryptoserve gate . --fail-on-weak
+
+# Custom score threshold
+cryptoserve gate . --min-score 70
+
+# JSON output for CI parsing
+cryptoserve gate . --format json
+```
+
+**Exit codes:** `0` = pass, `1` = fail, `2` = error
+
+**Example GitHub Actions step:**
+
+```yaml
+- name: Crypto gate
+  run: npx cryptoserve gate . --max-risk high --min-score 50 --fail-on-weak
+```
 
 ## Encrypt / Decrypt
 
@@ -90,13 +180,8 @@ The encrypted blob format is byte-identical between the Python and Node.js SDKs.
 A 5-layer algorithm resolver selects the optimal encryption algorithm based on data sensitivity, compliance requirements, threat model, and access patterns.
 
 ```bash
-# List available contexts
 cryptoserve context list
-
-# Show full resolution rationale
 cryptoserve context show user-pii --verbose
-
-# Encrypt with automatic algorithm selection
 cryptoserve encrypt "patient diagnosis" --context health-data --password mypassword
 ```
 
@@ -176,6 +261,8 @@ import { encrypt, decrypt, encryptString, decryptString } from 'cryptoserve/lib/
 import { analyzeOffline } from 'cryptoserve/lib/pqc-engine.mjs';
 import { scanProject } from 'cryptoserve/lib/scanner.mjs';
 import { resolveContext } from 'cryptoserve/lib/context-resolver.mjs';
+import { generateCbom, toCycloneDx, toSpdx } from 'cryptoserve/lib/cbom.mjs';
+import { ALGORITHM_DB, lookupAlgorithm } from 'cryptoserve/lib/algorithm-db.mjs';
 ```
 
 ## License
