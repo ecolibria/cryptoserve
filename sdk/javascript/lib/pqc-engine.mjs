@@ -5,6 +5,8 @@
  * Provides air-gapped quantum readiness analysis with zero dependencies.
  */
 
+import { lookupAlgorithm, classifyFromDb } from './algorithm-db.mjs';
+
 // ---------------------------------------------------------------------------
 // Embedded intelligence data
 // ---------------------------------------------------------------------------
@@ -605,7 +607,107 @@ function buildThreatTimelines(classifications) {
 // Main entry point
 // ---------------------------------------------------------------------------
 
-export function analyzeOffline(libraries, dataProfile = null) {
+// ---------------------------------------------------------------------------
+// Confidence calculation
+// ---------------------------------------------------------------------------
+
+function calculateConfidence(libraries, classifications, scanMeta = {}) {
+  const algorithmsFound = classifications.length;
+  const languagesScanned = scanMeta.languagesDetected?.length || 0;
+  const filesScanned = scanMeta.filesScanned || 0;
+  const manifestsFound = scanMeta.manifestsFound?.length || 0;
+
+  let score = 0;
+
+  // Algorithms contribute up to 40 points
+  if (algorithmsFound >= 10) score += 40;
+  else if (algorithmsFound >= 5) score += 30;
+  else if (algorithmsFound >= 3) score += 20;
+  else if (algorithmsFound >= 1) score += 10;
+
+  // Manifests contribute up to 25 points
+  if (manifestsFound >= 3) score += 25;
+  else if (manifestsFound >= 2) score += 20;
+  else if (manifestsFound >= 1) score += 15;
+
+  // Files scanned contribute up to 20 points
+  if (filesScanned >= 100) score += 20;
+  else if (filesScanned >= 50) score += 15;
+  else if (filesScanned >= 20) score += 10;
+  else if (filesScanned >= 5) score += 5;
+
+  // Languages contribute up to 15 points
+  if (languagesScanned >= 3) score += 15;
+  else if (languagesScanned >= 2) score += 10;
+  else if (languagesScanned >= 1) score += 5;
+
+  let level;
+  if (score >= 70) level = 'high';
+  else if (score >= 40) level = 'medium';
+  else level = 'low';
+
+  const parts = [];
+  if (algorithmsFound > 0) parts.push(`${algorithmsFound} algorithms found`);
+  if (languagesScanned > 0) parts.push(`${languagesScanned} languages`);
+  if (filesScanned > 0) parts.push(`${filesScanned} files`);
+  if (manifestsFound > 0) parts.push(`${manifestsFound} manifests`);
+
+  return {
+    level,
+    score,
+    reason: parts.join(', ') || 'no data scanned',
+    algorithmsFound,
+    languagesScanned,
+    filesScanned,
+    manifestsFound,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Migration urgency mapping
+// ---------------------------------------------------------------------------
+
+function getMigrationUrgency(riskLevel) {
+  switch (riskLevel) {
+    case 'critical': return 'immediate';
+    case 'high':     return 'high';
+    case 'medium':   return 'medium';
+    case 'low':      return 'low';
+    default:         return 'none';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Risk breakdown
+// ---------------------------------------------------------------------------
+
+function getRiskBreakdown(classifications) {
+  const breakdown = { critical: 0, high: 0, medium: 0, low: 0, none: 0 };
+
+  for (const c of classifications) {
+    // Use algorithm-db for per-algorithm risk if available
+    const dbEntry = lookupAlgorithm(c.algo);
+    if (dbEntry) {
+      const risk = dbEntry.quantumRisk || 'none';
+      if (risk in breakdown) breakdown[risk]++;
+      else breakdown.none++;
+    } else if (c.category === 'pqc') {
+      breakdown.none++;
+    } else if (c.category === 'asymmetric') {
+      breakdown.high++;
+    } else {
+      breakdown.low++;
+    }
+  }
+
+  return breakdown;
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+
+export function analyzeOffline(libraries, dataProfile = null, scanMeta = {}) {
   const profileKey = dataProfile || 'general';
   const profile = DATA_PROFILES[profileKey] || DATA_PROFILES.general;
 
@@ -622,6 +724,11 @@ export function analyzeOffline(libraries, dataProfile = null) {
   const nextSteps = generateNextSteps(urgency, migrationPlan, sndl);
   const threatTimelines = buildThreatTimelines(classifications);
 
+  // New in v0.2.0
+  const confidence = calculateConfidence(libraries, classifications, scanMeta);
+  const migrationUrgency = getMigrationUrgency(urgency);
+  const riskBreakdown = getRiskBreakdown(classifications);
+
   return {
     generatedAt: new Date().toISOString(),
     analysisMode: 'offline',
@@ -630,7 +737,10 @@ export function analyzeOffline(libraries, dataProfile = null) {
     signatureRecommendations: sigRecs,
     migrationPlan,
     overallUrgency: urgency,
+    migrationUrgency,
     quantumReadinessScore: quantumScore,
+    confidence,
+    riskBreakdown,
     keyFindings: findings,
     nextSteps,
     complianceReferences: complianceRefs,

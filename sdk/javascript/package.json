@@ -1,6 +1,6 @@
 {
   "name": "cryptoserve",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "CryptoServe CLI - Cryptographic scanning, PQC analysis, encryption, and local key management",
   "type": "module",
   "bin": {
@@ -24,7 +24,12 @@
     "security",
     "scanner",
     "keychain",
-    "vault"
+    "vault",
+    "cbom",
+    "cyclonedx",
+    "spdx",
+    "binary-analysis",
+    "tls"
   ],
   "repository": {
     "type": "git",

@@ -1,10 +1,13 @@
 /**
- * JavaScript/TypeScript crypto dependency and secret scanner.
+ * Cryptographic dependency and secret scanner — orchestrates all sub-scanners.
  *
  * Scans projects for:
- * 1. Cryptographic dependencies (package.json, imports, algorithm strings)
- * 2. Hardcoded secrets (API keys, passwords — patterns from secretless-ai)
- * 3. Certificate/key files (.pem, .key, .crt, .p12)
+ * 1. Cryptographic dependencies (package.json, go.mod, requirements.txt, etc.)
+ * 2. Source code crypto patterns (JS/TS, Go, Python, Java, Rust, C/C++)
+ * 3. Hardcoded secrets (API keys, passwords — patterns from secretless-ai)
+ * 4. Certificate/key files (.pem, .key, .crt, .p12)
+ * 5. TLS version issues in config files
+ * 6. Binary crypto signatures (optional, via --binary flag)
  *
  * Output matches the library inventory format used by pqc-engine.mjs.
  * Zero dependencies — uses only node:fs and node:path.
@@ -12,9 +15,14 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
+import { LANGUAGE_PATTERNS, scanSourceFile, detectLanguage, MULTI_LANG_EXTENSIONS } from './scanner-languages.mjs';
+import { scanManifests, CRYPTO_PACKAGES as MANIFEST_CRYPTO_PACKAGES } from './scanner-manifests.mjs';
+import { scanTlsConfigs } from './scanner-tls.mjs';
+import { scanBinaries } from './scanner-binary.mjs';
+import { lookupAlgorithm } from './algorithm-db.mjs';
 
 // ---------------------------------------------------------------------------
-// Known crypto packages → algorithm mappings
+// Known npm crypto packages → algorithm mappings
 // ---------------------------------------------------------------------------
 
 const CRYPTO_PACKAGES = {
@@ -41,7 +49,7 @@ const CRYPTO_PACKAGES = {
 };
 
 // ---------------------------------------------------------------------------
-// Import/require patterns to detect in source code
+// Import/require patterns to detect in JS/TS source code
 // ---------------------------------------------------------------------------
 
 const IMPORT_PATTERNS = [
@@ -127,7 +135,7 @@ const SKIP_DIRS = new Set([
   'vendor', '.venv', 'venv',
 ]);
 
-const SOURCE_EXTENSIONS = new Set(['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx']);
+const JS_EXTENSIONS = new Set(['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx']);
 
 function walkFiles(dir, maxFiles = 10000, maxBytes = 500 * 1024 * 1024) {
   const files = [];
@@ -170,18 +178,25 @@ function walkFiles(dir, maxFiles = 10000, maxBytes = 500 * 1024 * 1024) {
 // Scanner
 // ---------------------------------------------------------------------------
 
-export function scanProject(projectDir) {
+export function scanProject(projectDir, options = {}) {
+  const { binary = false } = options;
+
   const results = {
     libraries: [],
     secrets: [],
     weakPatterns: [],
     certFiles: [],
     filesScanned: 0,
+    // New in v0.2.0
+    sourceAlgorithms: [],
+    tlsFindings: [],
+    binaryFindings: [],
+    languagesDetected: new Set(),
+    manifestsFound: [],
   };
 
   // 1. Scan package.json for crypto dependencies (root + monorepo workspaces)
   const pkgPaths = [join(projectDir, 'package.json')];
-  // Check common monorepo locations for nested package.json files
   const monorepoGlobs = ['apps', 'packages', 'libs', 'modules', 'services'];
   for (const sub of monorepoGlobs) {
     const subDir = join(projectDir, sub);
@@ -217,16 +232,31 @@ export function scanProject(projectDir) {
             quantumRisk: info.quantumRisk,
             category: info.category,
             source: pkgPath.replace(projectDir + '/', ''),
+            ecosystem: 'npm',
           });
         }
       }
+      results.manifestsFound.push('package.json');
     } catch { /* invalid package.json */ }
   }
 
-  // 2. Walk source files
+  // 2. Scan non-npm manifests (go.mod, requirements.txt, Cargo.toml, etc.)
+  const manifestLibs = scanManifests(projectDir);
+  for (const lib of manifestLibs) {
+    if (!seenPkgs.has(lib.name)) {
+      seenPkgs.add(lib.name);
+      results.libraries.push(lib);
+      if (!results.manifestsFound.includes(lib.source)) {
+        results.manifestsFound.push(lib.source);
+      }
+    }
+  }
+
+  // 3. Walk source files
   const files = walkFiles(projectDir);
   const seenImports = new Set();
   const seenAlgos = new Set();
+  const seenSourceAlgos = new Set();
 
   for (const filePath of files) {
     const ext = extname(filePath);
@@ -237,16 +267,44 @@ export function scanProject(projectDir) {
       continue;
     }
 
-    // Only scan source files for code patterns
-    if (!SOURCE_EXTENSIONS.has(ext)) continue;
+    const relPath = relative(projectDir, filePath);
+
+    // Multi-language scanning (Go, Python, Java, Rust, C/C++)
+    const language = detectLanguage(filePath);
+    if (language && !JS_EXTENSIONS.has(ext)) {
+      results.filesScanned++;
+      results.languagesDetected.add(language);
+
+      let content;
+      try { content = readFileSync(filePath, 'utf-8'); }
+      catch { continue; }
+
+      const langResult = scanSourceFile(filePath, content, language);
+      for (const algo of langResult.algorithms) {
+        if (!seenSourceAlgos.has(algo.algorithm)) {
+          seenSourceAlgos.add(algo.algorithm);
+          const dbEntry = lookupAlgorithm(algo.algorithm);
+          results.sourceAlgorithms.push({
+            algorithm: algo.algorithm,
+            category: algo.category,
+            language,
+            quantumRisk: dbEntry?.quantumRisk || 'unknown',
+            isWeak: dbEntry?.isWeak || false,
+          });
+        }
+      }
+      continue;
+    }
+
+    // Only scan JS/TS source files for JS-specific code patterns
+    if (!JS_EXTENSIONS.has(ext)) continue;
 
     results.filesScanned++;
+    results.languagesDetected.add('javascript');
 
     let content;
     try { content = readFileSync(filePath, 'utf-8'); }
     catch { continue; }
-
-    const relPath = relative(projectDir, filePath);
 
     // Detect imports/requires
     for (const { pattern, lib, detail } of IMPORT_PATTERNS) {
@@ -323,7 +381,6 @@ export function scanProject(projectDir) {
     }
 
     if (nodeCryptoAlgos.length > 0) {
-      // Determine quantum risk based on detected algorithms
       const hasAsymmetric = nodeCryptoAlgos.some(a =>
         ['RSA', 'ECDSA', 'Ed25519', 'RS256', 'ES256', 'DH'].includes(a)
       );
@@ -334,9 +391,21 @@ export function scanProject(projectDir) {
         quantumRisk: hasAsymmetric ? 'high' : 'low',
         category: hasAsymmetric ? 'asymmetric' : 'symmetric',
         source: 'source-code',
+        ecosystem: 'npm',
       });
     }
   }
+
+  // 4. TLS scanning (always on)
+  results.tlsFindings = scanTlsConfigs(projectDir);
+
+  // 5. Binary scanning (optional)
+  if (binary) {
+    results.binaryFindings = scanBinaries(projectDir);
+  }
+
+  // Convert sets to arrays for JSON serialization
+  results.languagesDetected = [...results.languagesDetected];
 
   return results;
 }
@@ -346,12 +415,41 @@ export function scanProject(projectDir) {
 // ---------------------------------------------------------------------------
 
 export function toLibraryInventory(scanResults) {
-  return scanResults.libraries.map(lib => ({
-    name: lib.name,
-    version: lib.version,
-    algorithms: lib.algorithms,
-    quantumRisk: lib.quantumRisk,
-    category: lib.category,
-    isDeprecated: false,
-  }));
+  const inventory = scanResults.libraries.map(lib => {
+    const entry = {
+      name: lib.name,
+      version: lib.version,
+      algorithms: lib.algorithms,
+      quantumRisk: lib.quantumRisk,
+      category: lib.category,
+      isDeprecated: lib.isDeprecated || false,
+    };
+    // Enrich with algorithm-db data
+    for (const algoName of lib.algorithms) {
+      const dbEntry = lookupAlgorithm(algoName);
+      if (dbEntry?.isWeak && !entry.isDeprecated) {
+        entry.isDeprecated = true;
+      }
+    }
+    return entry;
+  });
+
+  // Also add source-detected algorithms as synthetic library entries
+  for (const algo of (scanResults.sourceAlgorithms || [])) {
+    const alreadyInLib = inventory.some(lib =>
+      lib.algorithms.some(a => a.toLowerCase() === algo.algorithm.toLowerCase())
+    );
+    if (!alreadyInLib) {
+      inventory.push({
+        name: `${algo.language}:${algo.algorithm}`,
+        version: 'source-code',
+        algorithms: [algo.algorithm],
+        quantumRisk: algo.quantumRisk || 'unknown',
+        category: algo.category,
+        isDeprecated: algo.isWeak || false,
+      });
+    }
+  }
+
+  return inventory;
 }

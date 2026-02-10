@@ -15,13 +15,15 @@
  *   cryptoserve decrypt --file in --output out [--password P]
  *   cryptoserve hash-password [--algorithm scrypt|pbkdf2]
  *   cryptoserve context list | show NAME [--verbose] [--format json]
+ *   cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]
+ *   cryptoserve gate [path] [--max-risk R] [--min-score N] [--fail-on-weak] [--format json]
  *   cryptoserve vault init|set|get|list|delete|run|import|export
  *   cryptoserve login [--server URL]
  *   cryptoserve status
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve, dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,7 +44,7 @@ function getOption(args, name, defaultValue = null) {
   return args[idx + 1];
 }
 
-function getPositional(args, optionsWithValues = ['--password', '--algorithm', '--profile', '--format', '--file', '--output', '--server', '--context']) {
+function getPositional(args, optionsWithValues = ['--password', '--algorithm', '--profile', '--format', '--file', '--output', '--server', '--context', '--max-risk', '--min-score']) {
   const result = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
@@ -67,6 +69,8 @@ async function cmdHelp() {
   console.log(`  ${bold('Scanning & Analysis')}`);
   console.log(`    ${info('pqc [--profile P] [--format json]')}     Post-quantum readiness analysis`);
   console.log(`    ${info('scan [path] [--format json]')}           Scan project for crypto & secrets`);
+  console.log(`    ${info('cbom [path] [--format F] [--output O]')} Generate Crypto Bill of Materials`);
+  console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (exit 0=pass, 1=fail)`);
   console.log();
   console.log(`  ${bold('Encryption')}`);
   console.log(`    ${info('encrypt "text" [--context C]')}          Encrypt with context-aware algorithm selection`);
@@ -167,13 +171,19 @@ async function cmdPqc(args) {
 
   // Use scanner results if available, otherwise use example libraries
   let libraries = [];
+  let scanMeta = {};
   try {
     const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
     const scanResults = scanProject(process.cwd());
     libraries = toLibraryInventory(scanResults);
+    scanMeta = {
+      filesScanned: scanResults.filesScanned,
+      languagesDetected: scanResults.languagesDetected,
+      manifestsFound: scanResults.manifestsFound,
+    };
   } catch { /* scanner not available, empty libraries */ }
 
-  const result = analyzeOffline(libraries, profile);
+  const result = analyzeOffline(libraries, profile, scanMeta);
 
   if (format === 'json') {
     console.log(JSON.stringify(result, null, 2));
@@ -188,9 +198,28 @@ async function cmdPqc(args) {
   console.log(labelValue('Protection needed', `${result.dataProfile.lifespanYears} years`));
   console.log(labelValue('Urgency', result.dataProfile.urgency.toUpperCase()));
 
-  // Quantum readiness score
+  // Quantum readiness score with confidence
   console.log(section('Quantum Readiness'));
-  console.log(`  ${progressBar(result.quantumReadinessScore, 100)} ${bold(`${result.quantumReadinessScore}/100`)}`);
+  const conf = result.confidence;
+  console.log(`  ${progressBar(result.quantumReadinessScore, 100)} ${bold(`${result.quantumReadinessScore}/100`)} ${dim(`(${conf.level} confidence — ${conf.reason})`)}`);
+  console.log(labelValue('Migration urgency', result.migrationUrgency.toUpperCase()));
+
+  // Risk breakdown
+  if (result.riskBreakdown) {
+    const rb = result.riskBreakdown;
+    const parts = [];
+    if (rb.critical > 0) parts.push(error(`${rb.critical} critical`));
+    if (rb.high > 0) parts.push(warning(`${rb.high} high`));
+    if (rb.medium > 0) parts.push(`${rb.medium} medium`);
+    if (rb.low > 0) parts.push(`${rb.low} low`);
+    if (rb.none > 0) parts.push(success(`${rb.none} safe`));
+    if (parts.length > 0) console.log(labelValue('Risk breakdown', parts.join(' / ')));
+  }
+
+  // Languages detected
+  if (scanMeta.languagesDetected?.length > 0) {
+    console.log(labelValue('Languages', scanMeta.languagesDetected.join(', ')));
+  }
 
   // SNDL assessment
   const sndl = result.sndlAssessment;
@@ -278,8 +307,9 @@ async function cmdScan(args) {
   const positional = getPositional(args);
   const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
   const format = getOption(args, '--format', 'text');
+  const binaryFlag = getFlag(args, '--binary');
 
-  const results = scanProject(scanDir);
+  const results = scanProject(scanDir, { binary: binaryFlag });
 
   if (format === 'json') {
     console.log(JSON.stringify(results, null, 2));
@@ -327,6 +357,40 @@ async function cmdScan(args) {
     }
   }
 
+  // Multi-language source algorithms
+  if (results.sourceAlgorithms && results.sourceAlgorithms.length > 0) {
+    console.log(section('Source Code Crypto (Multi-Language)'));
+    console.log(tableHeader(['Algorithm', 'Category', 'Language', 'Risk'], [20, 14, 12, 10]));
+    for (const algo of results.sourceAlgorithms) {
+      console.log(tableRow(
+        [algo.algorithm, algo.category, algo.language, algo.quantumRisk],
+        [20, 14, 12, 10]
+      ));
+    }
+  }
+
+  // TLS findings
+  if (results.tlsFindings && results.tlsFindings.length > 0) {
+    console.log(section('TLS/SSL Issues'));
+    for (const tls of results.tlsFindings) {
+      const icon = tls.risk === 'critical' ? error(`[CRIT] ${tls.protocol}`) : warning(`[${tls.risk.toUpperCase()}] ${tls.protocol}`);
+      console.log(`  ${icon} ${dim(tls.file + ':' + tls.line)}`);
+      console.log(`    ${dim(tls.recommendation)}`);
+    }
+  }
+
+  // Binary findings
+  if (results.binaryFindings && results.binaryFindings.length > 0) {
+    console.log(section('Binary Crypto Signatures'));
+    console.log(tableHeader(['Signature', 'Algorithm', 'Severity', 'File'], [24, 12, 10, 30]));
+    for (const bf of results.binaryFindings) {
+      console.log(tableRow(
+        [bf.name, bf.algorithm, bf.severity, bf.file],
+        [24, 12, 10, 30]
+      ));
+    }
+  }
+
   // Cert files
   if (results.certFiles.length > 0) {
     console.log(section('Certificate/Key Files'));
@@ -338,8 +402,20 @@ async function cmdScan(args) {
   // Summary
   console.log(section('Summary'));
   console.log(labelValue('Libraries', String(results.libraries.length)));
+  if (results.sourceAlgorithms?.length > 0) {
+    console.log(labelValue('Source algorithms', String(results.sourceAlgorithms.length)));
+  }
+  if (results.languagesDetected?.length > 0) {
+    console.log(labelValue('Languages', results.languagesDetected.join(', ')));
+  }
+  if (results.manifestsFound?.length > 0) {
+    console.log(labelValue('Manifests', results.manifestsFound.join(', ')));
+  }
   console.log(labelValue('Secrets found', results.secrets.length > 0 ? error(String(results.secrets.length)) : success('0')));
   console.log(labelValue('Weak patterns', results.weakPatterns.length > 0 ? warning(String(results.weakPatterns.length)) : success('0')));
+  if (results.tlsFindings?.length > 0) {
+    console.log(labelValue('TLS issues', warning(String(results.tlsFindings.length))));
+  }
   console.log(labelValue('Cert/key files', String(results.certFiles.length)));
   console.log();
 }
@@ -674,6 +750,146 @@ async function cmdContext(args) {
   process.exit(1);
 }
 
+async function cmdCbom(args) {
+  const { compactHeader, section, labelValue, success, dim, bold, info } = await import('../lib/cli-style.mjs');
+  const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
+  const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
+  const { generateCbom, toCycloneDx, toSpdx, toNativeJson } = await import('../lib/cbom.mjs');
+
+  const positional = getPositional(args);
+  const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
+  const format = getOption(args, '--format', 'json');
+  const output = getOption(args, '--output');
+
+  const scanResults = scanProject(scanDir);
+  const libraries = toLibraryInventory(scanResults);
+  const pqcResult = analyzeOffline(libraries);
+  const projectName = basename(scanDir);
+
+  const cbom = generateCbom(scanResults, pqcResult, projectName);
+
+  let formatted;
+  switch (format) {
+    case 'cyclonedx': formatted = JSON.stringify(toCycloneDx(cbom), null, 2); break;
+    case 'spdx':      formatted = JSON.stringify(toSpdx(cbom), null, 2); break;
+    default:          formatted = JSON.stringify(toNativeJson(cbom), null, 2); break;
+  }
+
+  if (output) {
+    writeFileSync(output, formatted + '\n');
+    console.log(success(`CBOM written to ${output}`));
+    console.log(labelValue('Format', format));
+    console.log(labelValue('Components', String(cbom.components.length)));
+    console.log(labelValue('Quantum readiness', `${cbom.quantumReadiness.score}/100`));
+    console.log(labelValue('Risk level', cbom.quantumReadiness.riskLevel));
+  } else {
+    console.log(formatted);
+  }
+}
+
+async function cmdGate(args) {
+  const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
+  const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
+  const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
+
+  const positional = getPositional(args);
+  const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
+  const maxRisk = getOption(args, '--max-risk', 'high');
+  const minScore = parseInt(getOption(args, '--min-score', '50'), 10);
+  const failOnWeak = getFlag(args, '--fail-on-weak');
+  const format = getOption(args, '--format', 'text');
+
+  const riskOrder = ['none', 'low', 'medium', 'high', 'critical'];
+
+  try {
+    const scanResults = scanProject(scanDir);
+    const libraries = toLibraryInventory(scanResults);
+    const pqcResult = analyzeOffline(libraries);
+    const score = pqcResult.quantumReadinessScore;
+
+    // Collect violations
+    const violations = [];
+    const maxRiskIdx = riskOrder.indexOf(maxRisk);
+
+    for (const lib of libraries) {
+      for (const algoName of lib.algorithms) {
+        const entry = lookupAlgorithm(algoName);
+        if (!entry) continue;
+
+        const algoRiskIdx = riskOrder.indexOf(entry.quantumRisk);
+        if (algoRiskIdx > maxRiskIdx) {
+          violations.push({
+            algorithm: algoName,
+            risk: entry.quantumRisk,
+            source: lib.name + (lib.version !== 'source-code' ? `@${lib.version}` : ` (${lib.version})`),
+          });
+        }
+
+        if (failOnWeak && entry.isWeak) {
+          violations.push({
+            algorithm: algoName,
+            risk: entry.quantumRisk,
+            source: lib.name,
+            weak: true,
+            reason: entry.weaknessReason,
+          });
+        }
+      }
+    }
+
+    const scoreFail = score < minScore;
+    const pass = violations.length === 0 && !scoreFail;
+
+    const summary = {
+      total: libraries.reduce((sum, l) => sum + l.algorithms.length, 0),
+      safe: libraries.reduce((sum, l) => sum + l.algorithms.filter(a => {
+        const e = lookupAlgorithm(a);
+        return e && (e.quantumRisk === 'none' || e.quantumRisk === 'low');
+      }).length, 0),
+      vulnerable: violations.filter(v => !v.weak).length,
+      weak: violations.filter(v => v.weak).length,
+    };
+
+    if (format === 'json') {
+      console.log(JSON.stringify({
+        status: pass ? 'pass' : 'fail',
+        score,
+        violations,
+        summary,
+      }, null, 2));
+    } else {
+      const { compactHeader, success, error, warning, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
+      console.log(compactHeader('gate'));
+      console.log(labelValue('Status', pass ? success('PASS') : error('FAIL')));
+      console.log(labelValue('Score', `${score}/100 (min: ${minScore})`));
+      console.log(labelValue('Max risk', maxRisk));
+
+      if (violations.length > 0) {
+        console.log(`\n  ${bold('Violations:')}`);
+        for (const v of violations) {
+          const label = v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
+          console.log(`  ${label} — ${dim(v.source)}${v.reason ? ` (${v.reason})` : ''}`);
+        }
+      }
+
+      if (scoreFail) {
+        console.log(`\n  ${error(`Score ${score} is below minimum ${minScore}`)}`);
+      }
+
+      console.log();
+    }
+
+    process.exit(pass ? 0 : 1);
+  } catch (e) {
+    if (format === 'json') {
+      console.log(JSON.stringify({ status: 'error', error: e.message }, null, 2));
+    } else {
+      console.error(`Error: ${e.message}`);
+    }
+    process.exit(2);
+  }
+}
+
 async function cmdLogin(args) {
   const { login } = await import('../lib/client.mjs');
   const server = getOption(args, '--server', 'https://localhost:8003');
@@ -792,6 +1008,12 @@ try {
       break;
     case 'context':
       await cmdContext(commandArgs);
+      break;
+    case 'cbom':
+      await cmdCbom(commandArgs);
+      break;
+    case 'gate':
+      await cmdGate(commandArgs);
       break;
     case 'vault':
       await cmdVault(commandArgs);
