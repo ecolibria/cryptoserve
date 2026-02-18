@@ -214,8 +214,9 @@ export function scanProject(projectDir, options = {}) {
 
       const langResult = scanSourceFile(filePath, content, language);
       for (const algo of langResult.algorithms) {
-        if (!seenSourceAlgos.has(algo.algorithm)) {
-          seenSourceAlgos.add(algo.algorithm);
+        const sourceAlgoKey = `${algo.algorithm}:${language}`;
+        if (!seenSourceAlgos.has(sourceAlgoKey)) {
+          seenSourceAlgos.add(sourceAlgoKey);
           const dbEntry = lookupAlgorithm(algo.algorithm);
           results.sourceAlgorithms.push({
             algorithm: algo.algorithm,

@@ -121,7 +121,7 @@ export async function login(serverUrl = DEFAULT_SERVER) {
       console.log(`\nOpen this URL to log in:\n  ${authUrl}\n`);
 
       // Try to open browser
-      const { exec } = import('node:child_process').then(m => {
+      import('node:child_process').then(m => {
         const cmd = process.platform === 'darwin' ? 'open'
           : process.platform === 'win32' ? 'start'
           : 'xdg-open';

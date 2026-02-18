@@ -1,6 +1,7 @@
 """CryptoServe API client."""
 
 import base64
+import importlib.metadata
 import json
 import threading
 from datetime import datetime, timezone
@@ -116,7 +117,7 @@ class CryptoClient:
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
-            "User-Agent": "cryptoserve-sdk/1.0.0",
+            "User-Agent": f"cryptoserve-sdk/{importlib.metadata.version('cryptoserve')}",
         })
         self._update_auth_header()
 

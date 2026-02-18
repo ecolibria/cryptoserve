@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
 
-class KeyError(Exception):
+class CryptoKeyError(Exception):
     """Exception for key-related errors."""
     pass
 
@@ -43,7 +43,7 @@ class KeyDerivation:
             Random key bytes
         """
         if bits not in (128, 192, 256):
-            raise KeyError(f"Key size must be 128, 192, or 256 bits, got {bits}")
+            raise CryptoKeyError(f"Key size must be 128, 192, or 256 bits, got {bits}")
         return os.urandom(bits // 8)
 
     @staticmethod

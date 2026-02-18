@@ -500,6 +500,7 @@ class GateResult:
 
     def to_sarif(self) -> dict[str, Any]:
         """Convert to SARIF format for GitHub Security tab."""
+        from cryptoserve import __version__
         rules = []
         results = []
         seen_rules: set[str] = set()
@@ -549,8 +550,8 @@ class GateResult:
                     "tool": {
                         "driver": {
                             "name": "CryptoServe",
-                            "version": "0.5.0",
-                            "informationUri": "https://github.com/your-org/crypto-serve",
+                            "version": __version__,
+                            "informationUri": "https://github.com/ecolibria/cryptoserve",
                             "rules": rules,
                         }
                     },

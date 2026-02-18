@@ -531,7 +531,7 @@ function calculateQuantumScore(libraries, classifications) {
   // Score by individual algorithm classifications, not library count.
   // A project with 5 symmetric + 1 asymmetric algorithm is mostly ready, not 0%.
   const safe = classifications.filter(
-    c => c.category !== 'asymmetric' || c.category === 'pqc'
+    c => c.category !== 'asymmetric'
   ).length;
   const vulnerable = classifications.filter(
     c => c.category === 'asymmetric'

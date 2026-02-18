@@ -142,13 +142,13 @@ function protectAider(projectDir, result) {
 }
 
 function addInstructions(filePath, result) {
-  let content = existsSync(filePath) ? readFileSync(filePath, 'utf-8') : '';
+  const existed = existsSync(filePath);
+  let content = existed ? readFileSync(filePath, 'utf-8') : '';
   if (content.includes(MARKER)) return;
 
   content += buildSecretlessInstructions();
   writeFileSync(filePath, content);
 
-  const existed = existsSync(filePath);
   if (existed) {
     result.filesModified.push(filePath);
   } else {

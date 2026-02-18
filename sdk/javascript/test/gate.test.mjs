@@ -16,7 +16,7 @@ function cleanup() { if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: tru
 
 function runGate(args = '') {
   try {
-    const output = execSync(`node ${CLI} gate ${TEST_DIR} ${args}`, {
+    const output = execSync(`${process.execPath} ${CLI} gate ${TEST_DIR} ${args}`, {
       encoding: 'utf-8',
       timeout: 30000,
     });

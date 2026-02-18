@@ -4,9 +4,11 @@ on:
   push:
     paths:
       - 'sdk/python/**'
+      - 'backend/**'
   pull_request:
     paths:
       - 'sdk/python/**'
+      - 'backend/**'
 
 permissions:
   contents: read
