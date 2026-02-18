@@ -120,12 +120,12 @@ export async function login(serverUrl = DEFAULT_SERVER) {
       const authUrl = `${server}/auth/cli?redirect=http://localhost:${CALLBACK_PORT}/callback`;
       console.log(`\nOpen this URL to log in:\n  ${authUrl}\n`);
 
-      // Try to open browser
+      // Try to open browser (use spawn with array args to prevent command injection)
       import('node:child_process').then(m => {
         const cmd = process.platform === 'darwin' ? 'open'
           : process.platform === 'win32' ? 'start'
           : 'xdg-open';
-        m.exec(`${cmd} "${authUrl}"`);
+        m.spawn(cmd, [authUrl], { stdio: 'ignore', detached: true }).unref();
       });
     });
 
