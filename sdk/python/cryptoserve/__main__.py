@@ -1687,7 +1687,9 @@ def cmd_wizard():
     print()
     print(f"  {bold('CODE EXAMPLE')}")
     print()
-    print(dim(f'''    from cryptoserve import crypto
+    print(dim(f'''    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="my-team")
 
     # Encrypt sensitive data
     ciphertext = crypto.encrypt(
@@ -1829,7 +1831,9 @@ def cmd_contexts():
             print()
             print(f"  {bold('QUICK START')}")
             print()
-            print(dim(f'''    from cryptoserve import crypto
+            print(dim(f'''    from cryptoserve import CryptoServe
+
+    crypto = CryptoServe(app_name="my-app", team="my-team")
 
     # Encrypt
     ciphertext = crypto.encrypt(

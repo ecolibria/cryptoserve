@@ -14,8 +14,10 @@ from cryptoserve_core.ciphers import (
 )
 from cryptoserve_core.keys import (
     KeyDerivation,
-    KeyError,
+    CryptoKeyError,
 )
+# Deprecated alias — use CryptoKeyError instead
+KeyError = CryptoKeyError
 from cryptoserve_core.encoding import (
     encode_ciphertext,
     decode_ciphertext,
@@ -48,7 +50,7 @@ from cryptoserve_core.tokens import (
     TokenDecodeError,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     # Ciphers
@@ -57,7 +59,8 @@ __all__ = [
     "CipherError",
     # Key management
     "KeyDerivation",
-    "KeyError",
+    "CryptoKeyError",
+    "KeyError",  # Deprecated alias for CryptoKeyError
     # Encoding
     "encode_ciphertext",
     "decode_ciphertext",

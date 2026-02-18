@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryptoserve"
-version = "1.4.0"
+version = "1.4.1"
 description = "CryptoServe SDK - Zero-config cryptographic operations with auto-registration and local key caching"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -29,6 +29,7 @@ dependencies = [
     "cryptoserve-client>=0.3.0",
     "cryptography>=41.0.0",  # For local key caching
     "pyyaml>=6.0",  # For policy gate YAML parsing
+    "requests>=2.28.0",  # For server API calls
 ]
 
 [project.urls]
