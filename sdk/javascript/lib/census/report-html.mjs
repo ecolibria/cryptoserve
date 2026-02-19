@@ -464,7 +464,7 @@ new Chart(document.getElementById('chart-pypi-donut'), {
 });
 
 // Top packages bar chart
-const allTop = [...(DATA.npm.topPackages || []), ...(DATA.pypi.topPackages || [])]
+const allTop = [...(DATA.npm?.topPackages || []), ...(DATA.pypi?.topPackages || []), ...(DATA.go?.topPackages || []), ...(DATA.maven?.topPackages || []), ...(DATA.crates?.topPackages || []), ...(DATA.packagist?.topPackages || []), ...(DATA.nuget?.topPackages || []), ...(DATA.rubygems?.topPackages || []), ...(DATA.hex?.topPackages || []), ...(DATA.pub?.topPackages || []), ...(DATA.cocoapods?.topPackages || [])]
   .sort((a, b) => b.downloads - a.downloads)
   .slice(0, 15);
 

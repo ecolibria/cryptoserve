@@ -1,14 +1,30 @@
 /**
  * Census orchestrator: run collectors, aggregate, cache results.
+ *
+ * Supports 11 ecosystems: npm, PyPI, Go, Maven, crates.io, Packagist, NuGet,
+ * RubyGems, Hex (Elixir), pub.dev (Dart), and CocoaPods (Swift/ObjC).
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-import { NPM_PACKAGES, PYPI_PACKAGES } from './package-catalog.mjs';
+import {
+  NPM_PACKAGES, PYPI_PACKAGES, GO_PACKAGES,
+  MAVEN_PACKAGES, CRATES_PACKAGES, PACKAGIST_PACKAGES, NUGET_PACKAGES,
+  RUBYGEMS_PACKAGES, HEX_PACKAGES, PUB_PACKAGES, COCOAPODS_PACKAGES,
+} from './package-catalog.mjs';
 import { collectNpmDownloads } from './collectors/npm-downloads.mjs';
 import { collectPypiDownloads } from './collectors/pypi-downloads.mjs';
+import { collectGoDownloads } from './collectors/go-downloads.mjs';
+import { collectMavenDownloads } from './collectors/maven-downloads.mjs';
+import { collectCratesDownloads } from './collectors/crates-downloads.mjs';
+import { collectPackagistDownloads } from './collectors/packagist-downloads.mjs';
+import { collectNugetDownloads } from './collectors/nuget-downloads.mjs';
+import { collectRubygemsDownloads } from './collectors/rubygems-downloads.mjs';
+import { collectHexDownloads } from './collectors/hex-downloads.mjs';
+import { collectPubDownloads } from './collectors/pub-downloads.mjs';
+import { collectCocoapodsDownloads } from './collectors/cocoapods-downloads.mjs';
 import { collectNvdCves } from './collectors/nvd-cves.mjs';
 import { collectGithubAdvisories } from './collectors/github-advisories.mjs';
 import { aggregate } from './aggregator.mjs';
@@ -68,42 +84,66 @@ export async function runCensus(options = {}) {
     }
   }
 
-  const enabledSources = sources || ['npm', 'pypi', 'nvd', 'github'];
+  const enabledSources = sources || [
+    'npm', 'pypi', 'go', 'maven', 'crates', 'packagist', 'nuget',
+    'rubygems', 'hex', 'pub', 'cocoapods',
+    'nvd', 'github',
+  ];
   const collectorOpts = { verbose, fetchFn };
+  const empty = { packages: [], period: 'last_month', collectedAt: new Date().toISOString() };
 
-  if (verbose) process.stderr.write('Collecting census data...\n');
+  if (verbose) process.stderr.write('Collecting census data across 11 ecosystems...\n');
 
-  // Phase 1: Package downloads (npm + PyPI in parallel)
-  const downloadPromises = [];
-  if (enabledSources.includes('npm')) {
-    if (verbose) process.stderr.write('\nFetching npm download counts...\n');
-    downloadPromises.push(collectNpmDownloads(NPM_PACKAGES, collectorOpts));
-  } else {
-    downloadPromises.push(Promise.resolve({ packages: [], period: {}, collectedAt: new Date().toISOString() }));
-  }
-  if (enabledSources.includes('pypi')) {
-    if (verbose) process.stderr.write('\nFetching PyPI download counts...\n');
-    downloadPromises.push(collectPypiDownloads(PYPI_PACKAGES, collectorOpts));
-  } else {
-    downloadPromises.push(Promise.resolve({ packages: [], period: 'last_month', collectedAt: new Date().toISOString() }));
-  }
+  // Phase 1: Package downloads (all 11 ecosystems in parallel)
+  const downloadPromises = [
+    enabledSources.includes('npm')
+      ? (verbose && process.stderr.write('\nFetching npm download counts...\n'), collectNpmDownloads(NPM_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('pypi')
+      ? (verbose && process.stderr.write('\nFetching PyPI download counts...\n'), collectPypiDownloads(PYPI_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('go')
+      ? (verbose && process.stderr.write('\nFetching Go module stats...\n'), collectGoDownloads(GO_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('maven')
+      ? (verbose && process.stderr.write('\nFetching Maven Central stats...\n'), collectMavenDownloads(MAVEN_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('crates')
+      ? (verbose && process.stderr.write('\nFetching crates.io download counts...\n'), collectCratesDownloads(CRATES_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('packagist')
+      ? (verbose && process.stderr.write('\nFetching Packagist download counts...\n'), collectPackagistDownloads(PACKAGIST_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('nuget')
+      ? (verbose && process.stderr.write('\nFetching NuGet download counts...\n'), collectNugetDownloads(NUGET_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('rubygems')
+      ? (verbose && process.stderr.write('\nFetching RubyGems download counts...\n'), collectRubygemsDownloads(RUBYGEMS_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('hex')
+      ? (verbose && process.stderr.write('\nFetching Hex.pm download counts...\n'), collectHexDownloads(HEX_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('pub')
+      ? (verbose && process.stderr.write('\nFetching pub.dev download counts...\n'), collectPubDownloads(PUB_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+    enabledSources.includes('cocoapods')
+      ? (verbose && process.stderr.write('\nFetching CocoaPods pod counts...\n'), collectCocoapodsDownloads(COCOAPODS_PACKAGES, collectorOpts))
+      : Promise.resolve(empty),
+  ];
 
-  const [npmData, pypiData] = await Promise.all(downloadPromises);
+  const [npmData, pypiData, goData, mavenData, cratesData, packagistData, nugetData,
+         rubygemsData, hexData, pubData, cocoapodsData] =
+    await Promise.all(downloadPromises);
 
   // Phase 2: Vulnerability data (NVD + GitHub in parallel)
-  const vulnPromises = [];
-  if (enabledSources.includes('nvd')) {
-    if (verbose) process.stderr.write('\nFetching NVD CVE data...\n');
-    vulnPromises.push(collectNvdCves(collectorOpts));
-  } else {
-    vulnPromises.push(Promise.resolve({ cves: [], collectedAt: new Date().toISOString() }));
-  }
-  if (enabledSources.includes('github')) {
-    if (verbose) process.stderr.write('\nFetching GitHub advisories...\n');
-    vulnPromises.push(collectGithubAdvisories(collectorOpts));
-  } else {
-    vulnPromises.push(Promise.resolve({ advisories: [], collectedAt: new Date().toISOString() }));
-  }
+  const vulnPromises = [
+    enabledSources.includes('nvd')
+      ? (verbose && process.stderr.write('\nFetching NVD CVE data...\n'), collectNvdCves(collectorOpts))
+      : Promise.resolve({ cves: [], collectedAt: new Date().toISOString() }),
+    enabledSources.includes('github')
+      ? (verbose && process.stderr.write('\nFetching GitHub advisories...\n'), collectGithubAdvisories(collectorOpts))
+      : Promise.resolve({ advisories: [], collectedAt: new Date().toISOString() }),
+  ];
 
   const [nvdData, githubData] = await Promise.all(vulnPromises);
 
@@ -111,6 +151,15 @@ export async function runCensus(options = {}) {
   const result = aggregate({
     npm: npmData,
     pypi: pypiData,
+    go: goData,
+    maven: mavenData,
+    crates: cratesData,
+    packagist: packagistData,
+    nuget: nugetData,
+    rubygems: rubygemsData,
+    hex: hexData,
+    pub: pubData,
+    cocoapods: cocoapodsData,
     nvd: nvdData,
     github: githubData,
   });
