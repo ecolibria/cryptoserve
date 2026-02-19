@@ -1,82 +1,37 @@
 /**
  * Collect crypto-related security advisories from the GitHub Advisory Database.
  *
- * Endpoint: GET https://api.github.com/advisories?cwe=CWE-XXX&per_page=100
+ * Endpoint: GET https://api.github.com/advisories?per_page=100
+ * - The REST API does NOT support CWE filtering -- we fetch and filter client-side
  * - Free, no authentication required (60 req/hr unauthenticated)
- * - 2s delay between requests
- * - Paginate if needed (Link header), but usually < 100 results per CWE
+ * - We fetch up to MAX_PAGES pages and filter for crypto-related CWEs
  */
 
 const GITHUB_API = 'https://api.github.com/advisories';
 const REQUEST_DELAY_MS = 2000;
+const MAX_PAGES = 5; // 500 advisories max to stay under rate limits
 
-const CRYPTO_CWES = [
-  { id: 'CWE-327', name: 'Broken Crypto Algorithm' },
-  { id: 'CWE-326', name: 'Inadequate Encryption Strength' },
-  { id: 'CWE-328', name: 'Weak Hash' },
-];
+const CRYPTO_CWE_IDS = new Set(['CWE-327', 'CWE-326', 'CWE-328']);
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
- * Count advisories by severity and ecosystem from a list of advisory objects.
+ * Check if an advisory is crypto-related based on its CWEs.
  */
-function countAdvisories(advisories) {
-  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
-  const byEcosystem = {};
-
-  for (const adv of advisories) {
-    const sev = (adv.severity || 'unknown').toLowerCase();
-    if (sev in bySeverity) {
-      bySeverity[sev]++;
-    } else {
-      bySeverity.unknown++;
-    }
-
-    // Count affected ecosystems
-    const vulnerabilities = adv.vulnerabilities || [];
-    for (const vuln of vulnerabilities) {
-      const eco = vuln?.package?.ecosystem || 'other';
-      byEcosystem[eco] = (byEcosystem[eco] || 0) + 1;
-    }
-  }
-
-  return { bySeverity, byEcosystem };
+function isCryptoRelated(advisory) {
+  const cwes = advisory.cwes || [];
+  return cwes.some(c => CRYPTO_CWE_IDS.has(c.cwe_id));
 }
 
 /**
- * Fetch all pages for a given CWE query.
+ * Get the crypto CWE IDs from an advisory.
  */
-async function fetchAllPages(cweId, fetchFn, verbose) {
-  const allAdvisories = [];
-  let url = `${GITHUB_API}?cwe=${cweId}&per_page=100`;
-
-  while (url) {
-    const res = await fetchFn(url, {
-      headers: { 'Accept': 'application/vnd.github+json' },
-    });
-
-    if (!res.ok) {
-      if (verbose) process.stderr.write(`  github ${cweId}: HTTP ${res.status}\n`);
-      break;
-    }
-
-    const data = await res.json();
-    if (Array.isArray(data)) {
-      allAdvisories.push(...data);
-    }
-
-    // Check for next page via Link header
-    const linkHeader = res.headers?.get?.('link') || '';
-    const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-    url = nextMatch ? nextMatch[1] : null;
-
-    if (url) await sleep(REQUEST_DELAY_MS);
-  }
-
-  return allAdvisories;
+function getCryptoCweIds(advisory) {
+  return (advisory.cwes || [])
+    .filter(c => CRYPTO_CWE_IDS.has(c.cwe_id))
+    .map(c => c.cwe_id);
 }
 
 /**
@@ -91,39 +46,84 @@ export async function collectGithubAdvisories(options = {}) {
   const fetchFn = options.fetchFn || globalThis.fetch;
   const verbose = options.verbose || false;
 
-  const results = [];
+  // Accumulate crypto advisories across all pages
+  const byCwe = {};
+  for (const cweId of CRYPTO_CWE_IDS) {
+    byCwe[cweId] = {
+      count: 0,
+      bySeverity: { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 },
+      byEcosystem: {},
+    };
+  }
 
-  for (let i = 0; i < CRYPTO_CWES.length; i++) {
-    const cwe = CRYPTO_CWES[i];
+  let url = `${GITHUB_API}?per_page=100&type=reviewed`;
+  let page = 0;
+  let totalScanned = 0;
 
-    if (verbose) {
-      process.stderr.write(`  github ${i + 1}/${CRYPTO_CWES.length}: ${cwe.id}\n`);
-    }
+  while (url && page < MAX_PAGES) {
+    page++;
+    if (verbose) process.stderr.write(`  github page ${page}/${MAX_PAGES}\n`);
 
     try {
-      const advisories = await fetchAllPages(cwe.id, fetchFn, verbose);
-      const { bySeverity, byEcosystem } = countAdvisories(advisories);
-      results.push({
-        cweId: cwe.id,
-        count: advisories.length,
-        bySeverity,
-        byEcosystem,
+      const res = await fetchFn(url, {
+        headers: { 'Accept': 'application/vnd.github+json' },
       });
-    } catch (err) {
-      if (verbose) process.stderr.write(`  github ${cwe.id} error: ${err.message}\n`);
-      results.push({
-        cweId: cwe.id,
-        count: 0,
-        bySeverity: { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 },
-        byEcosystem: {},
-      });
-    }
 
-    // Delay between CWE queries
-    if (i < CRYPTO_CWES.length - 1) {
-      await sleep(REQUEST_DELAY_MS);
+      if (!res.ok) {
+        if (verbose) process.stderr.write(`  github page ${page}: HTTP ${res.status}\n`);
+        break;
+      }
+
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+
+      totalScanned += data.length;
+
+      for (const adv of data) {
+        if (!isCryptoRelated(adv)) continue;
+
+        const cweIds = getCryptoCweIds(adv);
+        const sev = (adv.severity || 'unknown').toLowerCase();
+
+        for (const cweId of cweIds) {
+          const entry = byCwe[cweId];
+          entry.count++;
+          if (sev in entry.bySeverity) {
+            entry.bySeverity[sev]++;
+          } else {
+            entry.bySeverity.unknown++;
+          }
+
+          const vulnerabilities = adv.vulnerabilities || [];
+          for (const vuln of vulnerabilities) {
+            const eco = vuln?.package?.ecosystem || 'other';
+            entry.byEcosystem[eco] = (entry.byEcosystem[eco] || 0) + 1;
+          }
+        }
+      }
+
+      // Check for next page
+      const linkHeader = res.headers?.get?.('link') || '';
+      const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+      url = nextMatch ? nextMatch[1] : null;
+
+      if (url) await sleep(REQUEST_DELAY_MS);
+    } catch (err) {
+      if (verbose) process.stderr.write(`  github page ${page} error: ${err.message}\n`);
+      break;
     }
   }
+
+  if (verbose) {
+    process.stderr.write(`  github scanned ${totalScanned} advisories across ${page} pages\n`);
+  }
+
+  const results = [...CRYPTO_CWE_IDS].map(cweId => ({
+    cweId,
+    count: byCwe[cweId].count,
+    bySeverity: byCwe[cweId].bySeverity,
+    byEcosystem: byCwe[cweId].byEcosystem,
+  }));
 
   return {
     advisories: results,

@@ -31,7 +31,6 @@ export const NPM_PACKAGES = [
   { name: 'node-forge',       tier: TIERS.WEAK,   algorithms: ['RSA', 'DES', 'RC2'],     note: 'Pure JS RSA, bundles weak ciphers' },
   { name: 'jssha',            tier: TIERS.WEAK,   algorithms: ['SHA-1', 'SHA-256'],      note: 'SHA-1 primary, no PQC' },
   { name: 'rc4',              tier: TIERS.WEAK,   algorithms: ['RC4'],                   note: 'Stream cipher broken since 2013' },
-  { name: 'base64-js',        tier: TIERS.WEAK,   algorithms: ['Base64'],                note: 'Encoding, not encryption (commonly misused as crypto)' },
 
   // --- modern ---
   { name: '@noble/curves',          tier: TIERS.MODERN, algorithms: ['ECDSA', 'EdDSA', 'secp256k1'], note: 'Audited, constant-time elliptic curves' },

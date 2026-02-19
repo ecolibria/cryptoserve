@@ -154,23 +154,29 @@ describe('nvd-cves collector', () => {
 // ---------------------------------------------------------------------------
 
 describe('github-advisories collector', () => {
-  it('collects advisory counts from mocked API', async () => {
-    const mockFetch = createMockFetch({
-      'cwe=CWE-327': [
-        { severity: 'high', vulnerabilities: [{ package: { ecosystem: 'npm' } }] },
-        { severity: 'critical', vulnerabilities: [{ package: { ecosystem: 'pip' } }] },
+  it('collects and filters crypto-related advisories', async () => {
+    const mockFetch = async (url, _opts) => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { severity: 'high', cwes: [{ cwe_id: 'CWE-327', name: 'Broken Crypto' }], vulnerabilities: [{ package: { ecosystem: 'npm' } }] },
+        { severity: 'critical', cwes: [{ cwe_id: 'CWE-326', name: 'Inadequate Encryption' }], vulnerabilities: [{ package: { ecosystem: 'pip' } }] },
+        { severity: 'low', cwes: [{ cwe_id: 'CWE-79', name: 'XSS' }], vulnerabilities: [] }, // non-crypto, should be filtered out
+        { severity: 'medium', cwes: [{ cwe_id: 'CWE-328', name: 'Weak Hash' }], vulnerabilities: [{ package: { ecosystem: 'npm' } }] },
       ],
-      'cwe=CWE-326': [
-        { severity: 'medium', vulnerabilities: [{ package: { ecosystem: 'npm' } }] },
-      ],
-      'cwe=CWE-328': [],
+      headers: { get: () => null }, // no next page
     });
 
     const result = await collectGithubAdvisories({ fetchFn: mockFetch });
     assert.equal(result.advisories.length, 3);
-    assert.equal(result.advisories[0].count, 2);
-    assert.equal(result.advisories[0].bySeverity.high, 1);
-    assert.equal(result.advisories[0].bySeverity.critical, 1);
+    const cwe327 = result.advisories.find(a => a.cweId === 'CWE-327');
+    assert.equal(cwe327.count, 1);
+    assert.equal(cwe327.bySeverity.high, 1);
+    const cwe326 = result.advisories.find(a => a.cweId === 'CWE-326');
+    assert.equal(cwe326.count, 1);
+    assert.equal(cwe326.bySeverity.critical, 1);
+    const cwe328 = result.advisories.find(a => a.cweId === 'CWE-328');
+    assert.equal(cwe328.count, 1);
   });
 });
 
