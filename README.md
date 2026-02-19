@@ -165,6 +165,16 @@ Downloads the compose file, generates secrets, and starts PostgreSQL + backend +
 | [Post-Quantum](docs/concepts/post-quantum.md) | ML-KEM, ML-DSA, SLH-DSA, hybrid key exchange |
 | [Security](docs/security/index.md) | FIPS compliance, threat model |
 
+## Global Crypto Census
+
+See what cryptography the open-source ecosystem actually uses:
+
+```bash
+npx cryptoserve census
+```
+
+Scans npm, PyPI, crates.io, Go, and Maven package registries. Live dashboard at [census.cryptoserve.dev](https://census.cryptoserve.dev).
+
 ## Security
 
 Report vulnerabilities via [GitHub Security Advisories](https://github.com/ecolibria/cryptoserve/security/advisories). See [SECURITY.md](SECURITY.md).
