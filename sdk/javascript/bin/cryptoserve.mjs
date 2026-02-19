@@ -20,6 +20,7 @@
  *   cryptoserve vault init|set|get|list|delete|run|import|export
  *   cryptoserve login [--server URL]
  *   cryptoserve status
+ *   cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -40,7 +41,7 @@ const OPTIONS_WITH_VALUES = new Set([
 
 const KNOWN_FLAGS = new Set([
   '--insecure-storage', '--verbose', '--binary', '--fail-on-weak',
-  '--help', '--version',
+  '--help', '--version', '--no-cache',
 ]);
 
 function getFlag(args, name) {
@@ -90,6 +91,9 @@ async function cmdHelp() {
   console.log(`    ${info('scan [path] [--format json]')}           Scan project for crypto & secrets`);
   console.log(`    ${info('cbom [path] [--format F] [--output O]')} Generate Crypto Bill of Materials`);
   console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (exit 0=pass, 1=fail)`);
+  console.log();
+  console.log(`  ${bold('Research')}`);
+  console.log(`    ${info('census [--format json|html]')}            Global crypto census (npm + PyPI + NVD)`);
   console.log();
   console.log(`  ${bold('Encryption')}`);
   console.log(`    ${info('encrypt "text" [--context C]')}          Encrypt with context-aware algorithm selection`);
@@ -989,6 +993,59 @@ function timeSince(date) {
 }
 
 // ---------------------------------------------------------------------------
+// Census — global crypto adoption survey
+// ---------------------------------------------------------------------------
+
+async function cmdCensus(args) {
+  const {
+    compactHeader, section, labelValue, tableHeader, tableRow,
+    warning, info, dim, bold, divider, progressBar,
+  } = await import('../lib/cli-style.mjs');
+
+  const format = getOption(args, '--format', 'text');
+  const output = getOption(args, '--output', null);
+  const verbose = getFlag(args, '--verbose');
+  const noCache = getFlag(args, '--no-cache');
+
+  const { runCensus } = await import('../lib/census/index.mjs');
+
+  if (format === 'text') {
+    console.log(compactHeader('census'));
+    console.log(dim('  Collecting data from npm, PyPI, NVD, and GitHub...'));
+    console.log(dim('  This may take 30-60 seconds on first run.\n'));
+  }
+
+  const data = await runCensus({ verbose, noCache });
+
+  if (format === 'json') {
+    const json = JSON.stringify(data, null, 2);
+    if (output) {
+      writeFileSync(resolve(output), json);
+      console.log(`Census data written to ${output}`);
+    } else {
+      console.log(json);
+    }
+    return;
+  }
+
+  if (format === 'html') {
+    const { generateHtml } = await import('../lib/census/report-html.mjs');
+    const html = generateHtml(data);
+    const outFile = output || 'crypto-census.html';
+    writeFileSync(resolve(outFile), html);
+    console.log(`HTML report written to ${outFile}`);
+    return;
+  }
+
+  // Default: terminal report
+  const { renderTerminal } = await import('../lib/census/report-terminal.mjs');
+  renderTerminal(data, {
+    compactHeader, section, labelValue, tableHeader, tableRow,
+    warning, info, dim, bold, divider, progressBar,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main router
 // ---------------------------------------------------------------------------
 
@@ -1049,6 +1106,9 @@ try {
       break;
     case 'status':
       await cmdStatus();
+      break;
+    case 'census':
+      await cmdCensus(commandArgs);
       break;
     default:
       console.error(`Unknown command: ${command}\nRun "cryptoserve help" for usage.`);
