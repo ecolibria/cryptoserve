@@ -93,7 +93,7 @@ async function cmdHelp() {
   console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (exit 0=pass, 1=fail)`);
   console.log();
   console.log(`  ${bold('Research')}`);
-  console.log(`    ${info('census [--format json|html]')}            Global crypto census (npm + PyPI + NVD)`);
+  console.log(`    ${info('census [--format json|html]')}            Global crypto census (11 ecosystems + NVD)`);
   console.log();
   console.log(`  ${bold('Encryption')}`);
   console.log(`    ${info('encrypt "text" [--context C]')}          Encrypt with context-aware algorithm selection`);
@@ -1011,8 +1011,8 @@ async function cmdCensus(args) {
 
   if (format === 'text') {
     console.log(compactHeader('census'));
-    console.log(dim('  Collecting data from npm, PyPI, NVD, and GitHub...'));
-    console.log(dim('  This may take 30-60 seconds on first run.\n'));
+    console.log(dim('  Collecting data from 11 ecosystems + NVD + GitHub...'));
+    console.log(dim('  This may take 90-120 seconds on first run.\n'));
   }
 
   const data = await runCensus({ verbose, noCache });

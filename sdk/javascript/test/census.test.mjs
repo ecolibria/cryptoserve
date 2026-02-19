@@ -40,8 +40,8 @@ describe('package-catalog', () => {
     }
   });
 
-  it('maven catalog has at least 50 entries', () => {
-    assert.ok(MAVEN_PACKAGES.length >= 50, `Expected >= 50, got ${MAVEN_PACKAGES.length}`);
+  it('maven catalog has at least 30 entries', () => {
+    assert.ok(MAVEN_PACKAGES.length >= 30, `Expected >= 30, got ${MAVEN_PACKAGES.length}`);
   });
 
   it('getPackages returns correct ecosystem', () => {

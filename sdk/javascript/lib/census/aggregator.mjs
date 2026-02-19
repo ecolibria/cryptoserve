@@ -1,12 +1,18 @@
 /**
  * Aggregate raw census data into headline metrics.
+ *
+ * Supports all 11 ecosystems: npm, PyPI, Go, Maven, crates.io, Packagist, NuGet,
+ * RubyGems, Hex (Elixir), pub.dev (Dart), and CocoaPods (Swift/ObjC).
+ * Includes project-level transparency stats when available.
  */
 
-import { TIERS } from './package-catalog.mjs';
+import { TIERS, getCatalogSize } from './package-catalog.mjs';
 
 // NIST Post-Quantum Cryptography deadlines
 const NIST_2030 = new Date('2030-01-01T00:00:00Z');
 const NIST_2035 = new Date('2035-01-01T00:00:00Z');
+
+const ECOSYSTEM_IDS = ['npm', 'pypi', 'go', 'maven', 'crates', 'packagist', 'nuget', 'rubygems', 'hex', 'pub', 'cocoapods'];
 
 /**
  * Sum downloads for a given tier from a packages array.
@@ -56,19 +62,56 @@ export function formatNumber(n) {
 }
 
 /**
+ * Build a per-ecosystem breakdown from a packages array.
+ */
+function buildEcosystemBreakdown(pkgs, period) {
+  const weak = sumByTier(pkgs, TIERS.WEAK);
+  const modern = sumByTier(pkgs, TIERS.MODERN);
+  const pqc = sumByTier(pkgs, TIERS.PQC);
+  return {
+    weak,
+    modern,
+    pqc,
+    total: weak + modern + pqc,
+    topPackages: topPackages(pkgs, 15),
+    period,
+  };
+}
+
+/**
  * Aggregate all census data into headline metrics.
  *
  * @param {Object} data
  * @param {Object} data.npm - Result from collectNpmDownloads
  * @param {Object} data.pypi - Result from collectPypiDownloads
+ * @param {Object} [data.go] - Result from collectGoDownloads
+ * @param {Object} [data.maven] - Result from collectMavenDownloads
+ * @param {Object} [data.crates] - Result from collectCratesDownloads
+ * @param {Object} [data.packagist] - Result from collectPackagistDownloads
+ * @param {Object} [data.nuget] - Result from collectNugetDownloads
+ * @param {Object} [data.rubygems] - Result from collectRubygemsDownloads
+ * @param {Object} [data.hex] - Result from collectHexDownloads
+ * @param {Object} [data.pub] - Result from collectPubDownloads
+ * @param {Object} [data.cocoapods] - Result from collectCocoapodsDownloads
  * @param {Object} [data.nvd] - Result from collectNvdCves
  * @param {Object} [data.github] - Result from collectGithubAdvisories
- * @returns {Object} Aggregated metrics
+ * @param {Object} [data.projectDeps] - Result from collectProjectDeps
+ * @returns {Object} Aggregated metrics matching CensusData type
  */
 export function aggregate(data) {
+  // Gather all package arrays
   const npmPkgs = data.npm?.packages || [];
   const pypiPkgs = data.pypi?.packages || [];
-  const allPkgs = [...npmPkgs, ...pypiPkgs];
+  const goPkgs = data.go?.packages || [];
+  const mavenPkgs = data.maven?.packages || [];
+  const cratesPkgs = data.crates?.packages || [];
+  const packagistPkgs = data.packagist?.packages || [];
+  const nugetPkgs = data.nuget?.packages || [];
+  const rubygemsPkgs = data.rubygems?.packages || [];
+  const hexPkgs = data.hex?.packages || [];
+  const pubPkgs = data.pub?.packages || [];
+  const cocoapodsPkgs = data.cocoapods?.packages || [];
+  const allPkgs = [...npmPkgs, ...pypiPkgs, ...goPkgs, ...mavenPkgs, ...cratesPkgs, ...packagistPkgs, ...nugetPkgs, ...rubygemsPkgs, ...hexPkgs, ...pubPkgs, ...cocoapodsPkgs];
 
   // Download totals by tier
   const totalWeakDownloads = sumByTier(allPkgs, TIERS.WEAK);
@@ -77,9 +120,15 @@ export function aggregate(data) {
   const totalDownloads = totalWeakDownloads + totalModernDownloads + totalPqcDownloads;
 
   // Percentages
-  const weakPercentage = totalDownloads > 0 ? (totalWeakDownloads / totalDownloads * 100) : 0;
-  const modernPercentage = totalDownloads > 0 ? (totalModernDownloads / totalDownloads * 100) : 0;
-  const pqcPercentage = totalDownloads > 0 ? (totalPqcDownloads / totalDownloads * 100) : 0;
+  const weakPercentage = totalDownloads > 0
+    ? Math.round((totalWeakDownloads / totalDownloads) * 1000) / 10
+    : 0;
+  const modernPercentage = totalDownloads > 0
+    ? Math.round((totalModernDownloads / totalDownloads) * 1000) / 10
+    : 0;
+  const pqcPercentage = totalDownloads > 0
+    ? Math.round((totalPqcDownloads / totalDownloads) * 1000) / 10
+    : 0;
 
   // The headline ratio
   const weakToPqcRatio = totalPqcDownloads > 0
@@ -87,12 +136,17 @@ export function aggregate(data) {
     : null;
 
   // Per-ecosystem breakdowns
-  const npmWeak = sumByTier(npmPkgs, TIERS.WEAK);
-  const npmModern = sumByTier(npmPkgs, TIERS.MODERN);
-  const npmPqc = sumByTier(npmPkgs, TIERS.PQC);
-  const pypiWeak = sumByTier(pypiPkgs, TIERS.WEAK);
-  const pypiModern = sumByTier(pypiPkgs, TIERS.MODERN);
-  const pypiPqc = sumByTier(pypiPkgs, TIERS.PQC);
+  const npm = buildEcosystemBreakdown(npmPkgs, data.npm?.period);
+  const pypi = buildEcosystemBreakdown(pypiPkgs, data.pypi?.period);
+  const go = buildEcosystemBreakdown(goPkgs, data.go?.period);
+  const maven = buildEcosystemBreakdown(mavenPkgs, data.maven?.period);
+  const crates = buildEcosystemBreakdown(cratesPkgs, data.crates?.period);
+  const packagist = buildEcosystemBreakdown(packagistPkgs, data.packagist?.period);
+  const nuget = buildEcosystemBreakdown(nugetPkgs, data.nuget?.period);
+  const rubygems = buildEcosystemBreakdown(rubygemsPkgs, data.rubygems?.period);
+  const hex = buildEcosystemBreakdown(hexPkgs, data.hex?.period);
+  const pub = buildEcosystemBreakdown(pubPkgs, data.pub?.period);
+  const cocoapods = buildEcosystemBreakdown(cocoapodsPkgs, data.cocoapods?.period);
 
   // CVE totals
   const nvdCves = data.nvd?.cves || [];
@@ -114,6 +168,16 @@ export function aggregate(data) {
   const nistDeadline2030Days = daysUntil(NIST_2030);
   const nistDeadline2035Days = daysUntil(NIST_2035);
 
+  // Project-level stats (if collected)
+  const projectDeps = data.projectDeps;
+  const projectStats = projectDeps?.stats || null;
+
+  // Count active ecosystems
+  const activeEcosystems = ECOSYSTEM_IDS.filter(eco => {
+    const d = data[eco];
+    return d?.packages?.length > 0;
+  });
+
   return {
     // Headline numbers
     totalDownloads,
@@ -126,18 +190,20 @@ export function aggregate(data) {
     weakToPqcRatio,
 
     // Per-ecosystem
-    npm: {
-      weak: npmWeak, modern: npmModern, pqc: npmPqc,
-      total: npmWeak + npmModern + npmPqc,
-      topPackages: topPackages(npmPkgs, 15),
-      period: data.npm?.period,
-    },
-    pypi: {
-      weak: pypiWeak, modern: pypiModern, pqc: pypiPqc,
-      total: pypiWeak + pypiModern + pypiPqc,
-      topPackages: topPackages(pypiPkgs, 15),
-      period: data.pypi?.period,
-    },
+    npm,
+    pypi,
+    go,
+    maven,
+    crates,
+    packagist,
+    nuget,
+    rubygems,
+    hex,
+    pub,
+    cocoapods,
+
+    // Project-level transparency
+    ...(projectStats ? { projectStats } : {}),
 
     // Vulnerabilities
     totalCryptoCves,
@@ -154,5 +220,7 @@ export function aggregate(data) {
 
     // Metadata
     collectedAt: data.npm?.collectedAt || data.pypi?.collectedAt || new Date().toISOString(),
+    catalogSize: getCatalogSize(),
+    ecosystemCount: activeEcosystems.length || ECOSYSTEM_IDS.length,
   };
 }
