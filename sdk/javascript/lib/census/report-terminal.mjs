@@ -114,12 +114,22 @@ export function renderTerminal(data, style) {
     lines.push('');
   }
 
-  // --- Next Steps ---
+  // --- Data Sources ---
   lines.push(divider());
+  lines.push(section('Data Sources'));
+  lines.push(dim('  Downloads: npm Registry API, PyPI Stats, Go Module Proxy, Maven Central, crates.io,'));
+  lines.push(dim('             Packagist, NuGet, RubyGems, Hex.pm, pub.dev, CocoaPods Trunk'));
+  lines.push(dim('  CVEs:      NIST NVD (CWE-326, CWE-327, CWE-328)'));
+  lines.push(dim('  Advisories: GitHub Advisory Database (reviewed, crypto-CWE filtered)'));
+  lines.push(dim('  Download counts reflect package installs (CI/CD + transitive deps), not direct usage'));
+  lines.push(dim('  NIST 2030/2035 deadlines target public-key crypto only (AES, SHA-2, SHA-3 unaffected)'));
+  lines.push('');
+
+  // --- Next Steps ---
   lines.push(section('Next Steps'));
   lines.push(info('Run `cryptoserve scan .` to find weak crypto in your code'));
   lines.push(info('Run `cryptoserve census --format html --output report.html` for visual report'));
-  lines.push(warning(`NIST requires PQC migration by 2030 -- ${data.nistDeadline2030} remaining`));
+  lines.push(warning(`NIST deprecates quantum-vulnerable public-key crypto by 2030 -- ${data.nistDeadline2030} remaining`));
   lines.push('');
 
   console.log(lines.join('\n'));

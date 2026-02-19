@@ -4,9 +4,13 @@
  * RubyGems, Hex (Elixir), pub.dev (Dart), and CocoaPods (Swift/ObjC).
  *
  * Tiers:
- *   weak    - Broken, deprecated, or quantum-vulnerable primitives
- *   modern  - Current-generation crypto (not PQC)
- *   pqc     - Post-quantum cryptography
+ *   weak    - Broken or deprecated algorithms (MD5, SHA-1, DES, RC4, Blowfish),
+ *             unmaintained implementations with known CVEs, or libraries
+ *             that default to insecure configurations
+ *   modern  - Current-generation cryptography with maintained implementations
+ *             (includes both quantum-vulnerable asymmetric crypto like RSA/ECDSA
+ *             and quantum-resistant symmetric crypto like AES-256/SHA-256)
+ *   pqc     - Post-quantum cryptography (NIST FIPS 203/204/205)
  */
 
 export const TIERS = { WEAK: 'weak', MODERN: 'modern', PQC: 'pqc' };
@@ -24,17 +28,16 @@ export const NPM_PACKAGES = [
   { name: 'des.js',           tier: TIERS.WEAK,   algorithms: ['DES', '3DES'],           note: 'Deprecated block cipher' },
   { name: 'js-md5',           tier: TIERS.WEAK,   algorithms: ['MD5'],                   note: 'Collision-broken hash' },
   { name: 'js-sha1',          tier: TIERS.WEAK,   algorithms: ['SHA-1'],                 note: 'Collision-broken hash' },
-  { name: 'object-hash',      tier: TIERS.WEAK,   algorithms: ['SHA-1', 'MD5'],          note: 'Defaults to SHA-1' },
-  { name: 'hash.js',          tier: TIERS.WEAK,   algorithms: ['SHA-1', 'SHA-256'],      note: 'No PQC, legacy API surface' },
+  { name: 'hash.js',          tier: TIERS.MODERN, algorithms: ['SHA-1', 'SHA-256', 'SHA-512'], note: 'SHA-2 family hashes, dependency of elliptic curve libraries' },
   { name: 'node-forge',       tier: TIERS.WEAK,   algorithms: ['RSA', 'DES', 'RC2'],     note: 'Pure JS RSA, bundles weak ciphers' },
-  { name: 'jssha',            tier: TIERS.WEAK,   algorithms: ['SHA-1', 'SHA-256'],      note: 'SHA-1 primary, no PQC' },
+  { name: 'jssha',            tier: TIERS.MODERN, algorithms: ['SHA-1', 'SHA-256', 'SHA-512', 'SHA-3'], note: 'Multi-algorithm hash library' },
   { name: 'rc4',              tier: TIERS.WEAK,   algorithms: ['RC4'],                   note: 'Stream cipher broken since 2013' },
-  { name: 'js-sha256',        tier: TIERS.WEAK,   algorithms: ['SHA-256'],               note: 'Redundant pure JS hash, no audit' },
-  { name: 'js-sha512',        tier: TIERS.WEAK,   algorithms: ['SHA-512'],               note: 'Redundant pure JS hash, no audit' },
-  { name: 'js-sha3',          tier: TIERS.WEAK,   algorithms: ['SHA-3'],                 note: 'Unmaintained, use @noble/hashes' },
-  { name: 'sha.js',           tier: TIERS.WEAK,   algorithms: ['SHA-1', 'SHA-256'],      note: 'Legacy streaming hash, unmaintained' },
-  { name: 'create-hash',      tier: TIERS.WEAK,   algorithms: ['MD5', 'SHA-1', 'SHA-256'], note: 'Legacy polyfill, defaults to SHA-1' },
-  { name: 'create-hmac',      tier: TIERS.WEAK,   algorithms: ['HMAC-SHA-1'],            note: 'Legacy polyfill, pairs with create-hash' },
+  { name: 'js-sha256',        tier: TIERS.MODERN, algorithms: ['SHA-256'],               note: 'Pure JS SHA-256 implementation' },
+  { name: 'js-sha512',        tier: TIERS.MODERN, algorithms: ['SHA-512'],               note: 'Pure JS SHA-512 implementation' },
+  { name: 'js-sha3',          tier: TIERS.MODERN, algorithms: ['SHA-3'],                 note: 'SHA-3 hash functions (unmaintained, prefer @noble/hashes)' },
+  { name: 'sha.js',           tier: TIERS.MODERN, algorithms: ['SHA-256', 'SHA-512'],    note: 'Streaming SHA-2 hashes (browserify legacy)' },
+  { name: 'create-hash',      tier: TIERS.MODERN, algorithms: ['SHA-256', 'SHA-512'],    note: 'Node crypto.createHash polyfill for browsers' },
+  { name: 'create-hmac',      tier: TIERS.MODERN, algorithms: ['HMAC-SHA-256'],          note: 'Node crypto.createHmac polyfill for browsers' },
   { name: 'md5.js',           tier: TIERS.WEAK,   algorithms: ['MD5'],                   note: 'Collision-broken hash' },
   { name: 'sha1-uint8array',  tier: TIERS.WEAK,   algorithms: ['SHA-1'],                 note: 'SHA-1 variant for typed arrays' },
   { name: 'ripemd160',        tier: TIERS.WEAK,   algorithms: ['RIPEMD-160'],            note: 'Legacy 160-bit hash, insufficient margin' },
@@ -81,7 +84,6 @@ export const PYPI_PACKAGES = [
   // --- weak ---
   { name: 'pycrypto',       tier: TIERS.WEAK,   algorithms: ['DES', 'Blowfish', 'ARC4'], note: 'Unmaintained since 2013, CVEs unfixed' },
   { name: 'simple-crypt',   tier: TIERS.WEAK,   algorithms: ['AES-CTR'],                  note: 'Wraps pycrypto, inherits vulnerabilities' },
-  { name: 'hashlib',        tier: TIERS.WEAK,   algorithms: ['MD5', 'SHA-1'],             note: 'Stdlib wrapper often used for MD5/SHA-1' },
   { name: 'tlslite',        tier: TIERS.WEAK,   algorithms: ['TLS 1.0', 'RC4', 'DES'],   note: 'Unmaintained, supports deprecated protocols' },
   { name: 'pyDes',          tier: TIERS.WEAK,   algorithms: ['DES', '3DES'],              note: 'Pure Python DES, deprecated cipher' },
   { name: 'rsa',            tier: TIERS.WEAK,   algorithms: ['RSA-PKCS1v15'],             note: 'Pure Python RSA, no constant-time operations' },
@@ -123,7 +125,7 @@ export const GO_PACKAGES = [
   { name: 'crypto/des',       tier: TIERS.WEAK,   algorithms: ['DES', '3DES'],   note: 'DES 56-bit brute-forceable, 3DES deprecated by NIST' },
   { name: 'crypto/rc4',       tier: TIERS.WEAK,   algorithms: ['RC4'],           note: 'Broken stream cipher, prohibited by RFC 7465' },
   { name: 'crypto/dsa',       tier: TIERS.WEAK,   algorithms: ['DSA'],           note: 'Deprecated in Go 1.16+, dropped by NIST FIPS 186-5' },
-  { name: 'crypto/elliptic',  tier: TIERS.WEAK,   algorithms: ['ECDH'],          note: 'Low-level API deprecated in Go 1.21' },
+  { name: 'crypto/elliptic',  tier: TIERS.MODERN, algorithms: ['ECDH'],          note: 'Low-level API deprecated in Go 1.21, use crypto/ecdh' },
 
   // --- weak (x/crypto) ---
   { name: 'golang.org/x/crypto/md4',          tier: TIERS.WEAK,   algorithms: ['MD4'],        note: 'Collision-broken, weaker than MD5' },
@@ -133,7 +135,7 @@ export const GO_PACKAGES = [
   { name: 'golang.org/x/crypto/cast5',        tier: TIERS.WEAK,   algorithms: ['CAST5'],      note: '64-bit block cipher' },
   { name: 'golang.org/x/crypto/blowfish',     tier: TIERS.WEAK,   algorithms: ['Blowfish'],   note: '64-bit block, Sweet32 vulnerable' },
   { name: 'golang.org/x/crypto/tea',          tier: TIERS.WEAK,   algorithms: ['TEA'],        note: 'Known weaknesses, not for security' },
-  { name: 'golang.org/x/crypto/salsa20',      tier: TIERS.WEAK,   algorithms: ['Salsa20'],    note: 'Superseded by ChaCha20, no AEAD' },
+  { name: 'golang.org/x/crypto/salsa20',      tier: TIERS.MODERN, algorithms: ['Salsa20'],    note: 'Stream cipher, predecessor to ChaCha20' },
 
   // --- weak (third-party) ---
   { name: 'github.com/dgrijalva/jwt-go',       tier: TIERS.WEAK,   algorithms: ['HMAC', 'RSA'], note: 'Unmaintained, CVE-2020-26160 none alg bypass' },
@@ -202,10 +204,8 @@ export const MAVEN_PACKAGES = [
   { name: 'com.madgag.spongycastle:core',        tier: TIERS.WEAK, algorithms: ['AES', 'RSA', 'DES'],     note: 'BC Android fork, deprecated' },
   { name: 'org.jasypt:jasypt',                    tier: TIERS.WEAK, algorithms: ['PBE', 'DES', 'MD5'],     note: 'Defaults to PBEWithMD5AndDES, unmaintained since 2014' },
   { name: 'org.keyczar:keyczar',                  tier: TIERS.WEAK, algorithms: ['AES', 'RSA', 'DSA'],     note: 'Google Keyczar, archived project' },
-  { name: 'commons-codec:commons-codec',          tier: TIERS.WEAK, algorithms: ['MD5', 'SHA-1', 'SHA-256'], note: 'DigestUtils md5Hex/sha1Hex widely used' },
-  { name: 'com.google.guava:guava',               tier: TIERS.WEAK, algorithms: ['MD5', 'SHA-1'],          note: 'Hashing.md5()/sha1() convenience methods' },
-  { name: 'org.apache.commons:commons-crypto',    tier: TIERS.WEAK, algorithms: ['AES-CTR', 'AES-CBC'],    note: 'No AEAD modes, no GCM support' },
-  { name: 'io.jsonwebtoken:jjwt',                 tier: TIERS.WEAK, algorithms: ['HS256', 'RS256'],        note: 'Legacy monolithic artifact, replaced by jjwt-api' },
+  { name: 'org.apache.commons:commons-crypto',    tier: TIERS.MODERN, algorithms: ['AES-CTR', 'AES-CBC'],   note: 'OpenSSL-backed AES; CTR and CBC modes' },
+  { name: 'io.jsonwebtoken:jjwt',                 tier: TIERS.MODERN, algorithms: ['HS256', 'RS256', 'ES256'], note: 'JWT library; legacy monolithic artifact, use jjwt-api for modular builds' },
   { name: 'org.apache.santuario:xmlsec',          tier: TIERS.WEAK, algorithms: ['RSA', 'SHA-1', 'DSA'],   note: 'XML-DSIG defaults to SHA-1' },
   { name: 'org.apache.wss4j:wss4j-ws-security-common', tier: TIERS.WEAK, algorithms: ['SHA-1', 'AES-CBC'], note: 'WS-Security with legacy defaults' },
   { name: 'org.owasp.esapi:esapi',                tier: TIERS.WEAK, algorithms: ['AES-CBC', 'SHA-1'],      note: 'Legacy OWASP ESAPI, known CVEs' },
@@ -361,7 +361,7 @@ export const NUGET_PACKAGES = [
   { name: 'CryptoHelper',                   tier: TIERS.WEAK, algorithms: ['bcrypt'],                  note: 'Unmaintained since 2020' },
 
   // --- modern ---
-  { name: 'BouncyCastle.Cryptography',      tier: TIERS.MODERN, algorithms: ['AES-GCM', 'ChaCha20-Poly1305', 'Ed25519', 'X25519', 'TLS 1.3'], note: 'Official BC .NET; actively maintained' },
+  { name: 'BouncyCastle.Cryptography',      tier: TIERS.MODERN, algorithms: ['AES-GCM', 'ChaCha20-Poly1305', 'Ed25519', 'X25519', 'TLS 1.3', 'ML-KEM', 'ML-DSA'], note: 'Official BC .NET; includes PQC suite since v2.0' },
   { name: 'System.IdentityModel.Tokens.Jwt', tier: TIERS.MODERN, algorithms: ['RS256', 'ES256', 'HS256'], note: 'Microsoft JWT library' },
   { name: 'Microsoft.IdentityModel.Tokens', tier: TIERS.MODERN, algorithms: ['RS256', 'ES256', 'EdDSA'], note: 'Token validation infrastructure' },
   { name: 'Microsoft.AspNetCore.DataProtection', tier: TIERS.MODERN, algorithms: ['AES-256-CBC', 'HMAC-SHA256'], note: 'ASP.NET Core data protection' },
@@ -381,7 +381,6 @@ export const NUGET_PACKAGES = [
   { name: 'Inferno',                        tier: TIERS.MODERN, algorithms: ['AES-CBC', 'HMAC-SHA2'],  note: 'SuiteB authenticated encryption' },
 
   // --- pqc ---
-  { name: 'BouncyCastle.Cryptography',      tier: TIERS.PQC, algorithms: ['ML-KEM', 'ML-DSA', 'SLH-DSA', 'NTRU', 'FrodoKEM'], note: 'BC PQC suite since v2.0' },
   { name: 'LibOQS.NET',                     tier: TIERS.PQC, algorithms: ['ML-KEM', 'ML-DSA', 'Falcon', 'SPHINCS+'], note: 'OQS .NET wrapper' },
 ];
 
@@ -392,8 +391,6 @@ export const NUGET_PACKAGES = [
 /** @type {import('./types').CatalogEntry[]} */
 export const RUBYGEMS_PACKAGES = [
   // --- weak ---
-  { name: 'digest',              tier: TIERS.WEAK, algorithms: ['MD5', 'SHA-1'],               note: 'Stdlib; Digest::MD5 and Digest::SHA1 widely used' },
-  { name: 'digest-crc',          tier: TIERS.WEAK, algorithms: ['CRC32', 'CRC16'],             note: 'CRC checksums, not cryptographic' },
   { name: 'crypt',               tier: TIERS.WEAK, algorithms: ['DES-crypt', 'MD5-crypt'],     note: 'Unix crypt() wrapper, legacy password hashing' },
   { name: 'fast-aes',            tier: TIERS.WEAK, algorithms: ['AES-ECB'],                    note: 'AES in ECB mode only, no IV, no authentication' },
   { name: 'gibberish',           tier: TIERS.WEAK, algorithms: ['AES-256-CBC', 'SHA-1'],       note: 'Uses SHA-1 for key derivation' },
@@ -433,10 +430,9 @@ export const RUBYGEMS_PACKAGES = [
 export const HEX_PACKAGES = [
   // --- weak ---
   { name: 'cipher',             tier: TIERS.WEAK, algorithms: ['AES-256-CBC', 'MD5'],         note: 'Uses MD5 for key derivation' },
-  { name: 'crypto',             tier: TIERS.WEAK, algorithms: ['DES', 'RC4', 'MD5'],          note: 'Erlang stdlib with access to weak algorithms' },
-  { name: 'keccakf1600',        tier: TIERS.WEAK, algorithms: ['Keccak-f1600'],               note: 'Low-level Keccak permutation NIF' },
 
   // --- modern ---
+  { name: 'keccakf1600',        tier: TIERS.MODERN, algorithms: ['Keccak-f1600'],             note: 'Keccak permutation NIF (core of SHA-3)' },
   { name: 'comeonin',           tier: TIERS.MODERN, algorithms: ['bcrypt', 'Argon2', 'Pbkdf2'], note: 'Password hashing behaviour' },
   { name: 'bcrypt_elixir',      tier: TIERS.MODERN, algorithms: ['bcrypt'],                    note: 'Bcrypt password hashing' },
   { name: 'argon2_elixir',      tier: TIERS.MODERN, algorithms: ['Argon2id', 'Argon2i'],       note: 'PHC winner password hashing' },
@@ -467,7 +463,6 @@ export const HEX_PACKAGES = [
 /** @type {import('./types').CatalogEntry[]} */
 export const PUB_PACKAGES = [
   // --- weak ---
-  { name: 'crypto',             tier: TIERS.WEAK, algorithms: ['MD5', 'SHA-1', 'SHA-256', 'HMAC'], note: 'Dart team package; includes MD5/SHA-1' },
   { name: 'crypto_dart',        tier: TIERS.WEAK, algorithms: ['MD5', 'SHA-1', 'AES-CBC'],    note: 'CryptoJS-like API, includes weak algorithms' },
   { name: 'md5_plugin',         tier: TIERS.WEAK, algorithms: ['MD5'],                        note: 'MD5 hash only, collision-broken' },
   { name: 'sha1',               tier: TIERS.WEAK, algorithms: ['SHA-1'],                      note: 'SHA-1 only, collision-broken' },
