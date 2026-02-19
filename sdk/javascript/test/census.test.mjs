@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { NPM_PACKAGES, PYPI_PACKAGES, TIERS, getPackages, getNamesByTier } from '../lib/census/package-catalog.mjs';
+import { NPM_PACKAGES, PYPI_PACKAGES, MAVEN_PACKAGES, TIERS, getPackages, getNamesByTier } from '../lib/census/package-catalog.mjs';
 import { collectNpmDownloads } from '../lib/census/collectors/npm-downloads.mjs';
 import { collectPypiDownloads } from '../lib/census/collectors/pypi-downloads.mjs';
 import { collectNvdCves } from '../lib/census/collectors/nvd-cves.mjs';
@@ -27,9 +27,31 @@ describe('package-catalog', () => {
     assert.ok(tiers.has(TIERS.PQC));
   });
 
+  it('has maven packages in all three tiers', () => {
+    const tiers = new Set(MAVEN_PACKAGES.map(p => p.tier));
+    assert.ok(tiers.has(TIERS.WEAK));
+    assert.ok(tiers.has(TIERS.MODERN));
+    assert.ok(tiers.has(TIERS.PQC));
+  });
+
+  it('maven packages use groupId:artifactId format', () => {
+    for (const pkg of MAVEN_PACKAGES) {
+      assert.ok(pkg.name.includes(':'), `${pkg.name} missing groupId:artifactId separator`);
+    }
+  });
+
+  it('maven catalog has at least 50 entries', () => {
+    assert.ok(MAVEN_PACKAGES.length >= 50, `Expected >= 50, got ${MAVEN_PACKAGES.length}`);
+  });
+
   it('getPackages returns correct ecosystem', () => {
     assert.deepStrictEqual(getPackages('npm'), NPM_PACKAGES);
     assert.deepStrictEqual(getPackages('pypi'), PYPI_PACKAGES);
+    assert.deepStrictEqual(getPackages('maven'), MAVEN_PACKAGES);
+  });
+
+  it('getPackages returns empty for unknown ecosystem', () => {
+    assert.deepStrictEqual(getPackages('unknown'), []);
   });
 
   it('getNamesByTier filters correctly', () => {
@@ -39,8 +61,15 @@ describe('package-catalog', () => {
     assert.ok(!weakNpm.includes('@noble/curves'));
   });
 
+  it('getNamesByTier works for maven', () => {
+    const weakMaven = getNamesByTier('maven', TIERS.WEAK);
+    assert.ok(weakMaven.includes('org.jasypt:jasypt'));
+    assert.ok(weakMaven.includes('org.bouncycastle:bcprov-jdk15on'));
+    assert.ok(!weakMaven.includes('com.google.crypto.tink:tink'));
+  });
+
   it('every entry has required fields', () => {
-    for (const pkg of [...NPM_PACKAGES, ...PYPI_PACKAGES]) {
+    for (const pkg of [...NPM_PACKAGES, ...PYPI_PACKAGES, ...MAVEN_PACKAGES]) {
       assert.ok(pkg.name, `missing name`);
       assert.ok(Object.values(TIERS).includes(pkg.tier), `invalid tier: ${pkg.tier}`);
       assert.ok(Array.isArray(pkg.algorithms), `${pkg.name} missing algorithms`);
