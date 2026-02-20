@@ -73,7 +73,7 @@ export async function collectGoDownloads(packages, options = {}) {
     // Stdlib packages: use hardcoded estimates
     if (pkg.name.startsWith('crypto/')) {
       const estimate = STDLIB_ESTIMATES[pkg.name] || 10_000;
-      results.push({ name: pkg.name, downloads: estimate, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: estimate, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       continue;
     }
 
@@ -84,7 +84,7 @@ export async function collectGoDownloads(packages, options = {}) {
 
       if (!res.ok) {
         if (verbose) process.stderr.write(`  go ${pkg.name}: proxy ${res.status}\n`);
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
         continue;
       }
 
@@ -115,10 +115,10 @@ export async function collectGoDownloads(packages, options = {}) {
           : Math.max(downloads, 500_000);
       }
 
-      results.push({ name: pkg.name, downloads, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     } catch (err) {
       if (verbose) process.stderr.write(`  go ${pkg.name} error: ${err.message}\n`);
-      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     }
 
     if (i < packages.length - 1) await sleep(REQUEST_DELAY_MS);

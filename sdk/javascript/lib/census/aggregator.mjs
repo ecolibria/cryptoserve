@@ -6,7 +6,7 @@
  * Includes project-level transparency stats when available.
  */
 
-import { TIERS, getCatalogSize } from './package-catalog.mjs';
+import { TIERS, CATEGORIES, getCatalogSize } from './package-catalog.mjs';
 
 // NIST Post-Quantum Cryptography deadlines
 const NIST_2030 = new Date('2030-01-01T00:00:00Z');
@@ -76,6 +76,50 @@ function buildEcosystemBreakdown(pkgs, period) {
     topPackages: topPackages(pkgs, 15),
     period,
   };
+}
+
+/**
+ * Build per-category breakdown across all packages.
+ * Groups packages by category and computes weak/modern/pqc totals + weak percentage.
+ */
+function buildCategoryBreakdown(allPkgs) {
+  const categoryMap = {};
+  for (const cat of CATEGORIES) {
+    categoryMap[cat] = { category: cat, weak: 0, modern: 0, pqc: 0, total: 0, weakPercentage: 0, topPackages: [] };
+  }
+
+  for (const pkg of allPkgs) {
+    const cat = pkg.category || 'general';
+    const entry = categoryMap[cat];
+    if (!entry) continue;
+
+    const dl = pkg.downloads || 0;
+    if (pkg.tier === TIERS.WEAK) entry.weak += dl;
+    else if (pkg.tier === TIERS.PQC) entry.pqc += dl;
+    else entry.modern += dl;
+
+    entry.total += dl;
+    entry.topPackages.push(pkg);
+  }
+
+  // Compute weak percentage and sort top packages
+  const result = [];
+  for (const cat of CATEGORIES) {
+    const entry = categoryMap[cat];
+    entry.weakPercentage = entry.total > 0
+      ? Math.round((entry.weak / entry.total) * 1000) / 10
+      : 0;
+    entry.topPackages = entry.topPackages
+      .sort((a, b) => b.downloads - a.downloads)
+      .slice(0, 10);
+    if (entry.total > 0) {
+      result.push(entry);
+    }
+  }
+
+  // Sort by total downloads descending
+  result.sort((a, b) => b.total - a.total);
+  return result;
 }
 
 /**
@@ -178,6 +222,9 @@ export function aggregate(data) {
     return d?.packages?.length > 0;
   });
 
+  // Category breakdown
+  const categoryBreakdown = buildCategoryBreakdown(allPkgs);
+
   return {
     // Headline numbers
     totalDownloads,
@@ -188,6 +235,9 @@ export function aggregate(data) {
     modernPercentage,
     pqcPercentage,
     weakToPqcRatio,
+
+    // Category breakdown
+    categoryBreakdown,
 
     // Per-ecosystem
     npm,

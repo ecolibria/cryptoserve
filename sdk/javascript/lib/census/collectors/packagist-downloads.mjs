@@ -41,15 +41,15 @@ export async function collectPackagistDownloads(packages, options = {}) {
 
       if (!res.ok) {
         if (verbose) process.stderr.write(`  packagist ${pkg.name}: ${res.status}\n`);
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       } else {
         const data = await res.json();
         const monthlyDownloads = data?.package?.downloads?.monthly || 0;
-        results.push({ name: pkg.name, downloads: monthlyDownloads, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: monthlyDownloads, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       }
     } catch (err) {
       if (verbose) process.stderr.write(`  packagist ${pkg.name} error: ${err.message}\n`);
-      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     }
 
     if (i < packages.length - 1) {

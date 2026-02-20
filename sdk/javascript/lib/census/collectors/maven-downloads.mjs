@@ -57,7 +57,7 @@ export async function collectMavenDownloads(packages, options = {}) {
 
       if (!res.ok) {
         if (verbose) process.stderr.write(`  maven ${pkg.name}: ${res.status}\n`);
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       } else {
         const data = await res.json();
         const doc = data?.response?.docs?.[0];
@@ -72,11 +72,15 @@ export async function collectMavenDownloads(packages, options = {}) {
           name: pkg.name,
           downloads: estimatedDownloads,
           tier: pkg.tier,
+          category: pkg.category,
+          replacedBy: pkg.replacedBy,
+          algorithms: pkg.algorithms,
+          note: pkg.note,
         });
       }
     } catch (err) {
       if (verbose) process.stderr.write(`  maven ${pkg.name} error: ${err.message}\n`);
-      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     }
 
     if (i < packages.length - 1) {

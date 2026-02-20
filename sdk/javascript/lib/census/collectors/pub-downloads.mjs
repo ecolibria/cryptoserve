@@ -40,16 +40,16 @@ export async function collectPubDownloads(packages, options = {}) {
 
       if (!res.ok) {
         if (verbose) process.stderr.write(`  pub ${pkg.name}: ${res.status}\n`);
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       } else {
         const data = await res.json();
         // pub.dev score endpoint has downloadCount30Days
         const downloads = data?.downloadCount30Days || 0;
-        results.push({ name: pkg.name, downloads: downloads, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: downloads, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       }
     } catch (err) {
       if (verbose) process.stderr.write(`  pub ${pkg.name} error: ${err.message}\n`);
-      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     }
 
     if (i < packages.length - 1) {

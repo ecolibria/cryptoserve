@@ -41,16 +41,16 @@ export async function collectPypiDownloads(packages, options = {}) {
       const res = await fetchFn(url);
       if (!res.ok) {
         if (verbose) process.stderr.write(`  pypi ${pkg.name}: ${res.status}\n`);
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       } else {
         const data = await res.json();
         // Response: { data: { last_month: N, last_week: N, last_day: N }, ... }
         const downloads = data?.data?.last_month || 0;
-        results.push({ name: pkg.name, downloads, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       }
     } catch (err) {
       if (verbose) process.stderr.write(`  pypi ${pkg.name} error: ${err.message}\n`);
-      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     }
 
     // Delay between requests

@@ -46,17 +46,17 @@ export async function collectCocoapodsDownloads(packages, options = {}) {
 
       if (!res.ok) {
         if (verbose) process.stderr.write(`  cocoapods ${pkg.name}: ${res.status}\n`);
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       } else {
         // Trunk API confirms pod exists but has no download stats.
         // Use conservative estimate: CocoaPods ecosystem is smaller,
         // most crypto pods get 1K-50K installs/month based on GitHub activity.
         // We set 0 and rely on scanner data if available.
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       }
     } catch (err) {
       if (verbose) process.stderr.write(`  cocoapods ${pkg.name} error: ${err.message}\n`);
-      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+      results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
     }
 
     if (i < packages.length - 1) {

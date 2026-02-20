@@ -28,13 +28,13 @@ async function fetchSingle(pkg, fetchFn, period, verbose) {
         period.start = data.start;
         period.end = data.end;
       }
-      return { name: pkg.name, downloads: data.downloads || 0, tier: pkg.tier };
+      return { name: pkg.name, downloads: data.downloads || 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note };
     }
     if (verbose) process.stderr.write(`  npm ${pkg.name}: HTTP ${res.status}\n`);
   } catch (err) {
     if (verbose) process.stderr.write(`  npm ${pkg.name} error: ${err.message}\n`);
   }
-  return { name: pkg.name, downloads: 0, tier: pkg.tier };
+  return { name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note };
 }
 
 /**
@@ -90,7 +90,7 @@ export async function collectNpmDownloads(packages, options = {}) {
           period.start = data.start;
           period.end = data.end;
         }
-        results.push({ name: batch[0].name, downloads: data.downloads || 0, tier: batch[0].tier });
+        results.push({ name: batch[0].name, downloads: data.downloads || 0, tier: batch[0].tier, category: batch[0].category, replacedBy: batch[0].replacedBy, algorithms: batch[0].algorithms, note: batch[0].note });
       } else {
         for (const pkg of batch) {
           const entry = data[pkg.name];
@@ -99,16 +99,16 @@ export async function collectNpmDownloads(packages, options = {}) {
               period.start = entry.start;
               period.end = entry.end;
             }
-            results.push({ name: pkg.name, downloads: entry.downloads || 0, tier: pkg.tier });
+            results.push({ name: pkg.name, downloads: entry.downloads || 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
           } else {
-            results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+            results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
           }
         }
       }
     } catch (err) {
       if (verbose) process.stderr.write(`  npm batch ${i + 1} error: ${err.message}\n`);
       for (const pkg of batch) {
-        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier });
+        results.push({ name: pkg.name, downloads: 0, tier: pkg.tier, category: pkg.category, replacedBy: pkg.replacedBy, algorithms: pkg.algorithms, note: pkg.note });
       }
     }
 
