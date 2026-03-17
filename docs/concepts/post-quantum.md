@@ -216,7 +216,7 @@ PQC private keys are stored encrypted:
 │ algorithm: "ML-KEM-768"                            │
 │ public_key: <1,184 bytes>                          │
 │ encrypted_private_key: AES-GCM(<secret key>)       │
-│ created_at: "2024-01-15T10:00:00Z"                 │
+│ created_at: "2026-01-15T10:00:00Z"                 │
 │ status: "active"                                    │
 └────────────────────────────────────────────────────┘
 ```

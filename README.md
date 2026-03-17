@@ -5,7 +5,7 @@
 <h1 align="center">CryptoServe</h1>
 
 <p align="center">
-  <strong>Scan your code for cryptographic risk. Get quantum-ready.</strong>
+  <strong>Scan codebases for cryptographic libraries, weak algorithms, and quantum-vulnerable patterns.</strong>
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 npx cryptoserve scan .
 ```
 
-That's it. Scans your project for cryptographic libraries, algorithms, weak patterns, and hardcoded secrets across 6 languages. No config, no server, no dependencies.
+That's it. Scans your project for cryptographic libraries, algorithms, weak patterns, and hardcoded secrets across 6 languages. No config, no server, zero npm dependencies.
 
 ```
 Found 4 crypto libraries, 3 source algorithms, 1 weak pattern
@@ -64,6 +64,16 @@ cryptoserve hash-password "mypassword"      # Password hashing (scrypt)
 
 See the [full CLI reference](docs/cli.md) for all commands and flags.
 
+## Built-in Help
+
+```bash
+cryptoserve help              # All commands and flags
+cryptoserve scan --help       # Scan-specific options
+cryptoserve --version         # Current version
+```
+
+Every command supports `--help` for detailed usage.
+
 ## Supported Languages
 
 | Language | Manifest | Source Detection |
@@ -74,6 +84,16 @@ See the [full CLI reference](docs/cli.md) for all commands and flags.
 | Java/Kotlin | `pom.xml` | `Cipher.getInstance`, `MessageDigest`, `KeyPairGenerator` |
 | Rust | `Cargo.toml` | `aes-gcm`, `ring`, `ed25519-dalek`, `pqcrypto` |
 | C/C++ | -- | OpenSSL `EVP_*`, `RSA_*`, `SHA*_Init` |
+
+## Use Cases
+
+| Scenario | Command | Time |
+|----------|---------|------|
+| Audit codebase for weak crypto before compliance review | `cryptoserve scan . && cryptoserve cbom --format cyclonedx` | ~30s |
+| Block quantum-vulnerable algorithms in CI | `cryptoserve gate . --fail-on-weak --min-score 70` | ~10s |
+| Assess post-quantum readiness for your organization | `cryptoserve pqc --profile healthcare --verbose` | ~5s |
+| Encrypt a file offline without any server | `cryptoserve encrypt --file data.csv --password $SECRET` | ~1s |
+| Generate CBOM for supply chain compliance | `cryptoserve cbom . --format spdx --output cbom.json` | ~15s |
 
 ## CI/CD Integration
 
@@ -86,13 +106,20 @@ Add to any CI pipeline:
 
 The `gate` command exits non-zero when violations are found. Use `--format sarif` to upload results to GitHub's Security tab.
 
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (scan clean, gate passed) |
+| `1` | Failure (gate failed, crypto issues found, invalid input) |
+
 ---
 
 ## SDK Usage
 
-### Node.js
+### Node.js SDK (offline, zero dependencies)
 
-Zero-dependency ES module SDK. Import individual modules:
+ES module SDK for local scanning, analysis, and encryption. No server required.
 
 ```javascript
 import { scanProject } from 'cryptoserve/lib/scanner.mjs';
@@ -103,7 +130,7 @@ import { encrypt, decrypt } from 'cryptoserve/lib/local-crypto.mjs';
 
 See the [Node.js SDK README](sdk/javascript/README.md).
 
-### Python
+### Python SDK (server-connected)
 
 The Python SDK adds managed key management and context-aware algorithm selection when connected to a CryptoServe server:
 
