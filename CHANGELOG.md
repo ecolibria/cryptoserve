@@ -5,6 +5,37 @@ All notable changes to CryptoServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [CLI 0.3.4] - 2026-03-17
+
+### Added
+- `--help` flag support for all subcommands (scan --help, pqc --help, etc.)
+- Built-in help text for scan, pqc, cbom, gate, context, vault, encrypt, decrypt, census commands
+- Nonexistent path detection with exit code 1 for scan command
+
+### Fixed
+- LICENSE file now included in npm package
+
+### Documentation
+- README: Added Built-in Help, Use Cases, and Exit Codes sections
+- README: Split SDK section into Node.js (offline) and Python (server-connected)
+- cli.md: Reconciled gate flags with actual CLI source, added output examples
+- cli.md: Added missing census command documentation
+- New CLI quickstart guide (docs/getting-started/cli-quickstart.md)
+
+---
+
+## [SDK 1.4.2] - 2026-03-17
+
+### Added
+- `encrypt()` now accepts both `str` and `bytes` input (auto-encodes strings to UTF-8)
+- `create_token()` and `verify_token()` now accept both `str` and `bytes` keys
+
+### Fixed
+- Python 3.14 compatibility: updated sqlalchemy (>=2.0.40) and asyncpg (>=0.30.0) pins
+- Dockerfile.allinone: application processes now run as non-root user
+
+---
+
 ## [SDK 1.0.1] - 2026-02-06
 
 ### Fixed
@@ -137,3 +168,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Personalized SDK generation
 - GitHub OAuth authentication
 - Audit logging
+
+---
+
+[CLI 0.3.4]: https://github.com/ecolibria/cryptoserve/compare/cli-v0.3.3...cli-v0.3.4
+[SDK 1.4.2]: https://github.com/ecolibria/cryptoserve/compare/sdk-v1.4.1...sdk-v1.4.2
+[SDK 1.0.1]: https://github.com/ecolibria/cryptoserve/compare/sdk-v1.0.0...sdk-v1.0.1
+[SDK 1.0.0]: https://github.com/ecolibria/cryptoserve/compare/v1.1.0...sdk-v1.0.0
+[1.1.0]: https://github.com/ecolibria/cryptoserve/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/ecolibria/cryptoserve/compare/v0.1.0...v1.0.0
+[0.1.0]: https://github.com/ecolibria/cryptoserve/releases/tag/v0.1.0

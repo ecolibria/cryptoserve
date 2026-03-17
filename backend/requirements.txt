@@ -25,6 +25,9 @@ python-slugify==8.0.4
 slowapi==0.1.9
 pycryptodome==3.23.0
 
+# Password Hashing
+argon2-cffi>=23.1.0
+
 # Post-Quantum Cryptography (NIST FIPS 203/204)
 # liboqs-python requires the liboqs C library to be installed
 # Install separately: pip install liboqs-python

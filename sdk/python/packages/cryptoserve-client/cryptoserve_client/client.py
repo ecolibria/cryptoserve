@@ -357,15 +357,30 @@ class CryptoClient:
 
         Args:
             data: Data to verify
-            expected: Expected hash (hex)
+            expected: Expected hash digest (hex or base64 encoded string)
             algorithm: Hash algorithm
 
         Returns:
             True if hash matches
         """
+        # Normalize to hex: if input is base64, decode to bytes then re-encode as hex.
+        # This ensures the server always receives a valid hex string, avoiding
+        # ambiguity when a base64 string happens to contain only hex characters.
+        try:
+            # Validate it's already valid hex
+            bytes.fromhex(expected)
+            normalized = expected
+        except ValueError:
+            # Not hex — assume base64 and convert to hex
+            try:
+                normalized = base64.b64decode(expected).hex()
+            except Exception:
+                # Pass through as-is and let the server decide
+                normalized = expected
+
         response = self._request("POST", "/v1/crypto/hash/verify", json={
             "data": base64.b64encode(data).decode("ascii"),
-            "expected_digest": expected,
+            "expected_digest": normalized,
             "algorithm": algorithm,
         })
         return response["valid"]

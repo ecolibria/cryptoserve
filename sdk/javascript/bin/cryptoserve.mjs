@@ -13,11 +13,11 @@
  *   cryptoserve decrypt "blob" [--password P]
  *   cryptoserve encrypt --file in --output out [--context C | --algorithm A] [--password P]
  *   cryptoserve decrypt --file in --output out [--password P]
- *   cryptoserve hash-password [--algorithm scrypt|pbkdf2]
+ *   cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]
  *   cryptoserve context list | show NAME [--verbose] [--format json]
  *   cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]
  *   cryptoserve gate [path] [--max-risk R] [--min-score N] [--fail-on-weak] [--format json]
- *   cryptoserve vault init|set|get|list|delete|run|import|export
+ *   cryptoserve vault init|set|get|list|delete|run|import|export [--password P]
  *   cryptoserve login [--server URL]
  *   cryptoserve status
  *   cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]
@@ -101,7 +101,7 @@ async function cmdHelp() {
   console.log(`    ${info('decrypt "blob" [--password P]')}         Decrypt text`);
   console.log(`    ${info('encrypt --file F --output O')}           Encrypt file`);
   console.log(`    ${info('decrypt --file F --output O')}           Decrypt file`);
-  console.log(`    ${info('hash-password [--algorithm A]')}         Hash a password (scrypt/pbkdf2)`);
+  console.log(`    ${info('hash-password [--password P] [--algorithm A]')}  Hash a password (scrypt/pbkdf2)`);
   console.log();
   console.log(`  ${bold('Contexts')}`);
   console.log(`    ${info('context list')}                          List available encryption contexts`);
@@ -109,13 +109,13 @@ async function cmdHelp() {
   console.log();
   console.log(`  ${bold('Key Management')}`);
   console.log(`    ${info('init [--insecure-storage]')}             Set up master key + AI tool protection`);
-  console.log(`    ${info('vault init')}                            Create encrypted vault`);
-  console.log(`    ${info('vault set KEY VALUE')}                   Store a secret`);
-  console.log(`    ${info('vault get KEY')}                         Retrieve a secret`);
-  console.log(`    ${info('vault list')}                            List stored secrets`);
-  console.log(`    ${info('vault delete KEY')}                      Remove a secret`);
-  console.log(`    ${info('vault run -- CMD [ARGS]')}               Run command with secrets as env vars`);
-  console.log(`    ${info('vault import .env')}                     Import .env file into vault`);
+  console.log(`    ${info('vault init [--password P]')}              Create encrypted vault`);
+  console.log(`    ${info('vault set KEY VALUE [--password P]')}   Store a secret`);
+  console.log(`    ${info('vault get KEY [--password P]')}         Retrieve a secret`);
+  console.log(`    ${info('vault list [--password P]')}            List stored secrets`);
+  console.log(`    ${info('vault delete KEY [--password P]')}      Remove a secret`);
+  console.log(`    ${info('vault run [--password P] -- CMD')}      Run command with secrets as env vars`);
+  console.log(`    ${info('vault import .env [--password P]')}     Import .env file into vault`);
   console.log();
   console.log(`  ${bold('Platform')}`);
   console.log(`    ${info('login [--server URL]')}                  Authenticate with CryptoServe server`);
@@ -537,8 +537,11 @@ async function cmdHashPassword(args) {
   const { hashPassword } = await import('../lib/local-crypto.mjs');
 
   const algorithm = getOption(args, '--algorithm', 'scrypt');
-  const positional = getPositional(args);
-  let password = positional[0];
+  let password = getOption(args, '--password');
+  if (!password) {
+    const positional = getPositional(args);
+    password = positional[0];
+  }
 
   if (!password) {
     password = await promptPassword('Password to hash: ');
@@ -572,14 +575,19 @@ async function cmdVault(args) {
 
   const vault = await import('../lib/vault.mjs');
 
+  // Support --password flag for non-interactive/CI usage
+  const flagPassword = getOption(restArgs, '--password');
+
   if (subcommand === 'init') {
     if (vault.vaultExists()) {
       console.log(warning('Vault already exists.'));
       return;
     }
-    const pw = await promptPassword('Set vault password: ');
-    const pw2 = await promptPassword('Confirm password: ');
-    if (pw !== pw2) { console.error('Passwords do not match.'); process.exit(1); }
+    const pw = flagPassword || await promptPassword('Set vault password: ');
+    if (!flagPassword) {
+      const pw2 = await promptPassword('Confirm password: ');
+      if (pw !== pw2) { console.error('Passwords do not match.'); process.exit(1); }
+    }
     vault.initVault(pw);
     console.log(success('Vault created at ~/.cryptoserve/vault.enc'));
     return;
@@ -592,7 +600,7 @@ async function cmdVault(args) {
   }
 
   // All other commands need the vault password
-  const pw = await promptPassword('Vault password: ');
+  const pw = flagPassword || await promptPassword('Vault password: ');
 
   try {
     switch (subcommand) {
@@ -1061,11 +1069,11 @@ const COMMAND_HELP = {
   scan: 'cryptoserve scan [path] [--format json] [--binary]\n\n  Scan a project directory for crypto libraries, hardcoded secrets, weak patterns, and certificates.',
   encrypt: 'cryptoserve encrypt "text" [--context C | --algorithm A] [--password P]\ncryptoserve encrypt --file F --output O [--context C | --algorithm A] [--password P]\n\n  Encrypt text or a file with context-aware algorithm selection.',
   decrypt: 'cryptoserve decrypt "blob" [--password P]\ncryptoserve decrypt --file F --output O [--password P]\n\n  Decrypt text or a file.',
-  'hash-password': 'cryptoserve hash-password [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.',
+  'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',
   context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
   cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials.',
   gate: 'cryptoserve gate [path] [--max-risk R] [--min-score N] [--fail-on-weak] [--format json]\n\n  CI/CD gate: exit 0 on pass, 1 on fail.',
-  vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset\n\n  Manage an encrypted secrets vault.',
+  vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',
   census: 'cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]\n\n  Global crypto adoption census across 11 ecosystems + NVD.',
