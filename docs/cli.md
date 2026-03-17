@@ -236,14 +236,16 @@ cryptoserve decrypt --file secret.enc -p secret -o decrypted.txt
 Generates password hashes using scrypt (default) or PBKDF2.
 
 ```bash
-cryptoserve hash-password                              # Prompted input
+cryptoserve hash-password                              # Interactive prompt
+cryptoserve hash-password --password mypass             # Non-interactive (CI/scripts)
 cryptoserve hash-password "mypassword"
-cryptoserve hash-password "mypassword" --algo pbkdf2
+cryptoserve hash-password "mypassword" --algorithm pbkdf2
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--algo <alg>` / `-a` | Algorithm: `scrypt` (default), `pbkdf2` |
+| `--password <pw>` | Password to hash (prompted if omitted) |
+| `--algorithm <alg>` | Algorithm: `scrypt` (default), `pbkdf2` |
 
 ### `token` — JWT Token Creation
 
@@ -259,6 +261,27 @@ cryptoserve token --key mysecret --payload '{"sub":"user1"}' --expires 7200
 | `--key <secret>` / `-k` | Signing key (required) |
 | `--payload <json>` | JSON payload (default: `{}`) |
 | `--expires <sec>` / `-e` | Expiration in seconds (default: 3600) |
+
+### `vault` — Encrypted Secret Storage
+
+Stores secrets in an encrypted vault at `~/.cryptoserve/vault.enc`. All vault commands accept `--password P` for non-interactive/CI usage.
+
+```bash
+cryptoserve vault init                                  # Create new vault (prompts for password)
+cryptoserve vault init --password mysecret              # Non-interactive
+cryptoserve vault set API_KEY sk-abc123                 # Store a secret
+cryptoserve vault get API_KEY                           # Retrieve a secret
+cryptoserve vault list                                  # List stored secrets
+cryptoserve vault delete API_KEY                        # Remove a secret
+cryptoserve vault run -- node server.js                 # Run command with secrets as env vars
+cryptoserve vault import .env                           # Import .env file into vault
+cryptoserve vault export                                # Export encrypted bundle
+cryptoserve vault reset                                 # Delete vault
+```
+
+| Flag | Description |
+|------|-------------|
+| `--password <pw>` | Vault password (prompted if omitted) |
 
 ---
 

@@ -29,10 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `encrypt()` now accepts both `str` and `bytes` input (auto-encodes strings to UTF-8)
 - `create_token()` and `verify_token()` now accept both `str` and `bytes` keys
+- argon2 password hashing support (optional: `pip install cryptoserve-core[password]`)
+- `--password` flag for vault and hash-password CLI commands (non-interactive/CI mode)
 
 ### Fixed
 - Python 3.14 compatibility: updated sqlalchemy (>=2.0.40) and asyncpg (>=0.30.0) pins
 - Dockerfile.allinone: application processes now run as non-root user
+- SDK hash_verify format normalization (hex/base64 auto-detection)
+- Server key exchange now case-insensitive (X25519, x25519, ECDH-P256 all accepted)
+- argon2-cffi added to backend production requirements
+- Docker liboqs LD_LIBRARY_PATH fixed (PQC operations now work in containers)
+- pyhpke added to backend requirements (HPKE endpoints functional)
 
 ---
 
