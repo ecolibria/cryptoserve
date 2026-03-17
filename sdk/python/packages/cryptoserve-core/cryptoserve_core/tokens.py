@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Union
 
 
 class TokenError(Exception):
@@ -43,7 +44,7 @@ _MIN_KEY_LENGTH = 16  # 128 bits minimum for HS256
 
 def create_token(
     payload: dict,
-    key: bytes,
+    key: Union[bytes, str],
     expires_in: int = 3600,
 ) -> str:
     """
@@ -55,7 +56,8 @@ def create_token(
     Args:
         payload: Claims dictionary. Standard claims (sub, iss, aud, etc.)
                  are passed through as-is.
-        key: Secret key for HMAC-SHA256 (minimum 16 bytes).
+        key: Secret key for HMAC-SHA256 (minimum 16 bytes). Accepts
+             bytes or str (strings are UTF-8 encoded automatically).
         expires_in: Seconds until expiry (default: 3600 = 1 hour).
                     Set to 0 to skip auto-adding exp.
 
@@ -65,6 +67,8 @@ def create_token(
     Raises:
         TokenError: If key is too short or payload is invalid.
     """
+    if isinstance(key, str):
+        key = key.encode('utf-8')
     if len(key) < _MIN_KEY_LENGTH:
         raise TokenError(
             f"Key must be at least {_MIN_KEY_LENGTH} bytes, got {len(key)}"
@@ -94,7 +98,7 @@ def create_token(
 
 def verify_token(
     token: str,
-    key: bytes,
+    key: Union[bytes, str],
     leeway: int = 0,
 ) -> dict:
     """
@@ -104,7 +108,8 @@ def verify_token(
 
     Args:
         token: JWT string to verify.
-        key: Secret key used to create the token.
+        key: Secret key used to create the token. Accepts bytes or str
+             (strings are UTF-8 encoded automatically).
         leeway: Seconds of clock skew tolerance for expiry (default: 0).
 
     Returns:
@@ -115,6 +120,8 @@ def verify_token(
         TokenExpiredError: If token has expired.
         TokenDecodeError: If token format is invalid.
     """
+    if isinstance(key, str):
+        key = key.encode('utf-8')
     parts = token.split(".")
     if len(parts) != 3:
         raise TokenDecodeError(f"Invalid token format: expected 3 parts, got {len(parts)}")
