@@ -1,19 +1,21 @@
 # Python SDK
 
-The official Python SDK for CryptoServe with zero-configuration setup.
+The official Python SDK for CryptoServe with zero-configuration setup. Current version: **1.4.2**.
 
 ## Installation
 
 ```bash
-pip install cryptoserve
+pip install cryptoserve                        # Full SDK
+pip install cryptoserve[password]               # With argon2 password hashing support
 ```
 
 Individual packages are also available:
 
 ```bash
-pip install cryptoserve-core    # Pure crypto primitives only
-pip install cryptoserve-client  # API client only
-pip install cryptoserve-auto    # Auto-protect third-party libraries
+pip install cryptoserve-core                   # Pure crypto primitives only
+pip install cryptoserve-core[password]          # Core + argon2 support (argon2-cffi)
+pip install cryptoserve-client                 # API client only
+pip install cryptoserve-auto                   # Auto-protect third-party libraries
 ```
 
 After installing, run a one-time login:
@@ -26,6 +28,7 @@ cryptoserve login
 
 - Python 3.9+
 - `requests`, `cryptography`, `pyyaml` (installed automatically)
+- `argon2-cffi` (optional, installed with `[password]` extra)
 
 ---
 
@@ -146,6 +149,34 @@ local.decrypt(migrated, context="migrated")  # b"data"
 
 ---
 
+## Password Hashing
+
+The SDK supports scrypt (default) and argon2 for password hashing.
+
+```python
+from cryptoserve_core import hash_password, verify_password
+
+# scrypt (default, no extra dependencies)
+hashed = hash_password("my-password")
+assert verify_password("my-password", hashed)
+
+# argon2 (requires: pip install cryptoserve-core[password])
+hashed = hash_password("my-password", algorithm="argon2")
+assert verify_password("my-password", hashed)
+```
+
+The `verify_password` function auto-detects the hash format (hex, base64) and algorithm.
+
+## Token Creation and Verification
+
+```python
+from cryptoserve_core import create_token, verify_token
+
+# create_token and verify_token accept both str and bytes keys
+token = create_token(key="my-secret", payload={"sub": "user1"}, expires=3600)
+claims = verify_token(token, key=b"my-secret")  # bytes key also works
+```
+
 ## CLI Tools
 
 The SDK provides offline CLI commands. No server required.
@@ -161,9 +192,10 @@ cryptoserve decrypt "base64-ciphertext" --password my-pw
 cryptoserve encrypt --file input.txt --output encrypted.bin --password my-pw
 cryptoserve decrypt --file encrypted.bin --output output.txt --password my-pw
 
-# Hash a password (prompts for input)
-cryptoserve hash-password
-cryptoserve hash-password "my-password" --algo pbkdf2
+# Hash a password
+cryptoserve hash-password                              # Interactive prompt
+cryptoserve hash-password --password mypass             # Non-interactive (CI/scripts)
+cryptoserve hash-password "my-password" --algorithm pbkdf2
 
 # Create a JWT token
 cryptoserve token --key my-secret-key --payload '{"sub": "user-1"}' --expires 3600

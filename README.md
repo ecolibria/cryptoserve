@@ -59,7 +59,8 @@ cryptoserve pqc                             # Post-quantum readiness assessment
 cryptoserve cbom --format cyclonedx         # Generate CBOM
 cryptoserve gate . --fail-on-weak           # CI/CD quality gate
 cryptoserve encrypt "secret" -p mypassword  # Offline encryption
-cryptoserve hash-password "mypassword"      # Password hashing (scrypt)
+cryptoserve hash-password --password mypass  # Password hashing (CI mode)
+cryptoserve vault set API_KEY sk-abc123      # Encrypted secret storage
 ```
 
 See the [full CLI reference](docs/cli.md) for all commands and flags.
@@ -130,9 +131,14 @@ import { encrypt, decrypt } from 'cryptoserve/lib/local-crypto.mjs';
 
 See the [Node.js SDK README](sdk/javascript/README.md).
 
-### Python SDK (server-connected)
+### Python SDK v1.4.2 (server-connected)
 
 The Python SDK adds managed key management and context-aware algorithm selection when connected to a CryptoServe server:
+
+```bash
+pip install cryptoserve                  # Basic
+pip install cryptoserve[password]         # With argon2 support
+```
 
 ```python
 from cryptoserve import CryptoServe
@@ -142,6 +148,8 @@ crypto = CryptoServe(app_name="my-app", team="platform")
 ciphertext = crypto.encrypt(b"data", context="user-pii")
 plaintext = crypto.decrypt(ciphertext, context="user-pii")
 ```
+
+Key features: encrypt/decrypt (bytes and strings), password hashing (scrypt + argon2), JWT tokens, local mode (no server), async support.
 
 See the [Python SDK docs](docs/sdk/python.md).
 
