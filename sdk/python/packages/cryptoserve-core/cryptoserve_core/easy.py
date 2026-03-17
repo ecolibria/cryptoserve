@@ -36,7 +36,7 @@ _CHUNK_SIZE = 64 * 1024  # 64KB
 _FILE_CHUNK_THRESHOLD = _CHUNK_SIZE  # Files larger than this use chunked format
 
 
-def encrypt(plaintext: bytes, password: str) -> bytes:
+def encrypt(plaintext: Union[bytes, str], password: str) -> bytes:
     """
     Encrypt data with a password.
 
@@ -44,7 +44,7 @@ def encrypt(plaintext: bytes, password: str) -> bytes:
     Each call generates a fresh random salt and nonce.
 
     Args:
-        plaintext: Data to encrypt (can be empty).
+        plaintext: Data to encrypt (bytes or str; strings are UTF-8 encoded automatically).
         password: Password for key derivation.
 
     Returns:
@@ -53,6 +53,8 @@ def encrypt(plaintext: bytes, password: str) -> bytes:
     Raises:
         EasyEncryptionError: If encryption fails.
     """
+    if isinstance(plaintext, str):
+        plaintext = plaintext.encode('utf-8')
     try:
         salt = os.urandom(_SALT_SIZE)
         key, _ = KeyDerivation.from_password(

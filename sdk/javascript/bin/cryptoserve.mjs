@@ -326,11 +326,17 @@ async function cmdPqc(args) {
 async function cmdScan(args) {
   const { compactHeader, section, tableHeader, tableRow, success, warning, error, info, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
   const { scanProject } = await import('../lib/scanner.mjs');
+  const { existsSync } = await import('node:fs');
 
   const positional = getPositional(args);
   const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
   const format = getOption(args, '--format', 'text');
   const binaryFlag = getFlag(args, '--binary');
+
+  if (!existsSync(scanDir)) {
+    console.error(`Error: Path does not exist: ${scanDir}`);
+    process.exit(1);
+  }
 
   const results = scanProject(scanDir);
 
@@ -1046,12 +1052,49 @@ async function cmdCensus(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Subcommand help text
+// ---------------------------------------------------------------------------
+
+const COMMAND_HELP = {
+  init: 'cryptoserve init [--insecure-storage]\n\n  Set up master key and AI tool protection for the current project.',
+  pqc: 'cryptoserve pqc [--profile P] [--format json] [--verbose]\n\n  Analyze post-quantum cryptography readiness.',
+  scan: 'cryptoserve scan [path] [--format json] [--binary]\n\n  Scan a project directory for crypto libraries, hardcoded secrets, weak patterns, and certificates.',
+  encrypt: 'cryptoserve encrypt "text" [--context C | --algorithm A] [--password P]\ncryptoserve encrypt --file F --output O [--context C | --algorithm A] [--password P]\n\n  Encrypt text or a file with context-aware algorithm selection.',
+  decrypt: 'cryptoserve decrypt "blob" [--password P]\ncryptoserve decrypt --file F --output O [--password P]\n\n  Decrypt text or a file.',
+  'hash-password': 'cryptoserve hash-password [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.',
+  context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
+  cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials.',
+  gate: 'cryptoserve gate [path] [--max-risk R] [--min-score N] [--fail-on-weak] [--format json]\n\n  CI/CD gate: exit 0 on pass, 1 on fail.',
+  vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset\n\n  Manage an encrypted secrets vault.',
+  login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
+  status: 'cryptoserve status\n\n  Show configuration and server connection status.',
+  census: 'cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]\n\n  Global crypto adoption census across 11 ecosystems + NVD.',
+};
+
+function showCommandHelp(command) {
+  const text = COMMAND_HELP[command];
+  if (text) {
+    console.log(`\nUsage:\n  ${text}\n`);
+  } else {
+    console.error(`No help available for "${command}".`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main router
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
 const command = args[0];
 const commandArgs = args.slice(1);
+
+// Intercept --help / -h for any subcommand
+if (command && !['help', '--help', '-h', 'version', '--version', '-v', undefined].includes(command)) {
+  if (commandArgs.includes('--help') || commandArgs.includes('-h')) {
+    showCommandHelp(command);
+    process.exit(0);
+  }
+}
 
 // Warn about unknown flags (skip for vault/context which have subcommands)
 if (command && !['vault', 'context', 'help', '--help', '-h', 'version', '--version', '-v'].includes(command)) {

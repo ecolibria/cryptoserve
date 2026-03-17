@@ -93,6 +93,10 @@ RUN chmod +x /app/docker-entrypoint.sh
 # Create data directory for SQLite persistence
 RUN mkdir -p /data
 
+# Create non-root user for running application processes
+RUN groupadd -r cryptoserve && useradd -r -g cryptoserve cryptoserve
+RUN chown -R cryptoserve:cryptoserve /app /data
+
 # Environment defaults for zero-config startup
 ENV DEV_MODE=true
 ENV STARTUP_VALIDATION_LEVEL=warn

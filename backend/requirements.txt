@@ -4,8 +4,8 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.22
 
 # Database
-sqlalchemy[asyncio]==2.0.25
-asyncpg==0.29.0
+sqlalchemy[asyncio]>=2.0.40,<3.0
+asyncpg>=0.30.0,<1.0
 alembic==1.16.4
 
 # Authentication
