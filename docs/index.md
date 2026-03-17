@@ -1,12 +1,23 @@
 # CryptoServe Documentation
 
-Cryptography-as-a-Service with Zero Configuration SDKs
+Cryptographic scanning, CBOM generation, post-quantum readiness assessment, and encryption-as-a-service
 
 Eliminate the complexity of implementing encryption correctly. Download a personalized SDK with your identity embedded, then encrypt and decrypt with a single line of code.
 
 - [Get Started](getting-started/quickstart.md)
 - [View on GitHub](https://github.com/ecolibria/cryptoserve)
 - [API Docs](api-reference/index.md)
+
+---
+
+## Quick Start (CLI -- no server required)
+
+```bash
+npx cryptoserve scan .          # Scan for crypto issues
+npx cryptoserve pqc             # Post-quantum readiness
+npx cryptoserve cbom .          # Generate CBOM
+npx cryptoserve gate .          # CI/CD quality gate
+```
 
 ---
 

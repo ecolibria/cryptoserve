@@ -5,6 +5,10 @@ CryptoServe ships a single `cryptoserve` CLI with scanning, encryption, certific
 ## Installation
 
 ```bash
+# Node.js (zero dependencies, Node 18+)
+npm install -g cryptoserve
+
+# Python
 pip install cryptoserve
 ```
 
@@ -12,7 +16,7 @@ pip install cryptoserve
 
 ## Scanning Tools (no server required)
 
-These commands delegate to Go binaries (CryptoScan, CryptoDeps) that are downloaded automatically on first use and cached in `~/.cryptoserve/bin/`.
+Scanner binaries are downloaded automatically on first use and cached in `~/.cryptoserve/bin/`.
 
 ### `scan` — Cryptographic Scanner
 
@@ -24,6 +28,30 @@ cryptoserve scan ./src --format sarif -o results.sarif # SARIF output
 cryptoserve scan . --push                              # Scan + upload to dashboard
 cryptoserve scan . --python-only                       # Built-in lightweight scanner
 cryptoserve scan . --update                            # Force binary re-download
+```
+
+Example output:
+
+```
+CRYPTOSERVE > scan
+
+  Directory            /path/to/project
+  Files scanned        55
+
+Crypto Libraries
+  Library                Version    Risk       Algorithms
+  node:crypto            builtin    high       AES, ChaCha20, SHA-256, RS256
+
+Hardcoded Secrets
+  x [CRIT] AWS Access Key
+         src/config.js
+         *  Use $AWS_ACCESS_KEY_ID instead
+
+Weak Crypto Patterns
+  !  MD5 is cryptographically broken
+    lib/hash.js
+  x DES has 56-bit keys (use AES)
+    lib/legacy.js
 ```
 
 | Flag | Description |
@@ -98,6 +126,30 @@ cryptoserve pqc --profile healthcare                   # HIPAA-focused
 cryptoserve pqc --profile financial                    # PCI-DSS-focused
 ```
 
+Example output:
+
+```
+CRYPTOSERVE > pqc
+
+Data Profile
+  Profile              Personal Data / General
+  Protection needed    10 years
+  Urgency              MEDIUM
+
+Quantum Readiness
+  40/100 (high confidence -- 14 algorithms found)
+  Migration urgency    IMMEDIATE
+  Risk breakdown       x 3 critical / !  7 high / 1 low / + 3 safe
+
+SNDL Risk Assessment
+  Risk level           critical
+  Risk window          3 years
+
+KEM Recommendations
+  Algorithm            FIPS         Level          Score
+  ML-KEM-768           FIPS 203     NIST Level 3   100%
+```
+
 | Flag | Description |
 |------|-------------|
 | `--profile <p>` / `-p` | Sensitivity profile: `general` (default), `healthcare`, `financial`, `national_security`, `short_lived` |
@@ -108,18 +160,44 @@ Enforces cryptographic policy compliance in CI/CD pipelines. Returns pass/fail w
 
 ```bash
 cryptoserve gate .                                    # Check current directory
-cryptoserve gate . --policy strict                     # Strict policy
-cryptoserve gate . --staged                            # Git staged files only
-cryptoserve gate . --format json --fail-on warnings    # JSON, fail on warnings
+cryptoserve gate . --fail-on-weak                      # Fail on weak algorithms (MD5, DES, RC4)
+cryptoserve gate . --min-score 70                      # Require minimum quantum readiness score
+cryptoserve gate . --max-risk medium                   # Fail on algorithms above medium risk
+cryptoserve gate . --format json                       # JSON output for CI parsing
+```
+
+Example output:
+
+```
+CRYPTOSERVE > gate
+
+  Status               x FAIL
+  Score                40/100 (min: 50)
+  Max risk             high
+
+  Violations:
+  x [CRITICAL] MD5 -- node:crypto@builtin
+  x [CRITICAL] DES -- node:crypto@builtin
+  x [CRITICAL] RC4 -- node:crypto@builtin
+
+  x Score 40 is below minimum 50
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--policy <p>` / `-p` | Policy level: `standard` (default), `strict`, `permissive` |
+| `--max-risk <level>` | Maximum allowed risk level: `none`, `low`, `medium`, `high` (default), `critical` |
+| `--min-score <n>` | Minimum quantum readiness score (default: `50`) |
+| `--fail-on-weak` | Fail on weak algorithms (MD5, DES, RC4, ECB) |
 | `--format <fmt>` / `-f` | Output format: `text` (default), `json`, `sarif` |
-| `--fail-on <level>` | Fail on: `violations` (default), `warnings`, `any` |
-| `--staged` | Scan only git staged files |
-| `--include-deps` | Include dependency analysis |
+
+### `census` -- Ecosystem Census
+
+Analyze cryptographic library adoption across package ecosystems.
+
+```bash
+cryptoserve census                            # Run ecosystem census
+cryptoserve census --ecosystems npm,pypi      # Specific ecosystems
+```
 
 ---
 
