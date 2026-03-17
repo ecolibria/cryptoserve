@@ -9,7 +9,7 @@ asyncpg>=0.30.0,<1.0
 alembic==1.16.4
 
 # Authentication
-pyjwt==2.10.1
+pyjwt>=2.12.0,<3.0
 cryptography==46.0.5
 httpx==0.28.1
 
