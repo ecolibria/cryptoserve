@@ -74,7 +74,7 @@ async def generate_key_exchange_keys(
     - ecdh-p384: NIST P-384 curve for higher security
     """
     try:
-        algorithm = KeyExchangeAlgorithm(data.algorithm)
+        algorithm = KeyExchangeAlgorithm(data.algorithm.lower())
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -144,7 +144,7 @@ async def derive_shared_secret(
         )
 
     try:
-        algorithm = KeyExchangeAlgorithm(data.algorithm)
+        algorithm = KeyExchangeAlgorithm(data.algorithm.lower())
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
