@@ -1,8 +1,8 @@
 """
 Password hashing and strength checking for CryptoServe Core.
 
-Uses stdlib hashlib.scrypt and hashlib.pbkdf2_hmac.
-No additional dependencies beyond Python stdlib.
+Uses stdlib hashlib.scrypt and hashlib.pbkdf2_hmac by default.
+Optional argon2 support via argon2-cffi: pip install cryptoserve-core[password]
 
 Hash format follows PHC (Password Hashing Competition) string format:
     $algorithm$params$salt_b64$hash_b64
@@ -16,6 +16,13 @@ import hmac
 import os
 import re
 from dataclasses import dataclass, field
+
+try:
+    from argon2 import PasswordHasher as _Argon2Hasher
+    from argon2.exceptions import VerifyMismatchError as _Argon2MismatchError
+    _HAS_ARGON2 = True
+except ImportError:
+    _HAS_ARGON2 = False
 
 
 class PasswordHashError(Exception):
@@ -56,21 +63,28 @@ def hash_password(password: str, algorithm: str = "scrypt") -> str:
 
     Args:
         password: Password to hash.
-        algorithm: Algorithm to use ("scrypt" or "pbkdf2").
+        algorithm: Algorithm to use ("scrypt", "pbkdf2", or "argon2").
+            "argon2" requires the optional argon2-cffi package:
+            pip install cryptoserve-core[password]
 
     Returns:
         PHC-format hash string (safe for database storage).
 
     Raises:
         PasswordHashError: If hashing fails.
-        ValueError: If algorithm is unsupported.
+        ValueError: If algorithm is unsupported or argon2-cffi is not installed.
     """
     if algorithm == "scrypt":
         return _hash_scrypt(password)
     elif algorithm == "pbkdf2":
         return _hash_pbkdf2(password)
+    elif algorithm in ("argon2", "argon2id"):
+        return _hash_argon2(password)
     else:
-        raise ValueError(f"Unsupported algorithm: {algorithm}. Use 'scrypt' or 'pbkdf2'.")
+        raise ValueError(
+            f"Unsupported algorithm: {algorithm}. "
+            "Use 'scrypt', 'pbkdf2', or 'argon2'."
+        )
 
 
 def verify_password(password: str, hash_string: str) -> bool:
@@ -93,9 +107,12 @@ def verify_password(password: str, hash_string: str) -> bool:
         return _verify_scrypt(password, hash_string)
     elif hash_string.startswith("$pbkdf2-sha256$"):
         return _verify_pbkdf2(password, hash_string)
+    elif hash_string.startswith("$argon2"):
+        return _verify_argon2(password, hash_string)
     else:
         raise PasswordHashError(
-            f"Unrecognized hash format. Expected $scrypt$ or $pbkdf2-sha256$ prefix."
+            "Unrecognized hash format. Expected $scrypt$, $pbkdf2-sha256$, "
+            "or $argon2 prefix."
         )
 
 
@@ -322,3 +339,34 @@ def _verify_pbkdf2(password: str, hash_string: str) -> bool:
         dklen=len(expected),
     )
     return hmac.compare_digest(dk, expected)
+
+
+def _require_argon2() -> None:
+    """Raise a clear error if argon2-cffi is not installed."""
+    if not _HAS_ARGON2:
+        raise ValueError(
+            "argon2-cffi is required for Argon2 password hashing. "
+            "Install it with: pip install cryptoserve-core[password]"
+        )
+
+
+def _hash_argon2(password: str) -> str:
+    """Hash with Argon2id via argon2-cffi, return PHC format string."""
+    _require_argon2()
+    hasher = _Argon2Hasher()
+    try:
+        return hasher.hash(password)
+    except Exception as e:
+        raise PasswordHashError(f"Argon2 hashing failed: {e}") from e
+
+
+def _verify_argon2(password: str, hash_string: str) -> bool:
+    """Verify password against an Argon2 PHC hash."""
+    _require_argon2()
+    hasher = _Argon2Hasher()
+    try:
+        return hasher.verify(hash_string, password)
+    except _Argon2MismatchError:
+        return False
+    except Exception as e:
+        raise PasswordHashError(f"Argon2 verification failed: {e}") from e
