@@ -27,7 +27,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-pqc.txt .
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-pqc.txt
 
 # ============================================================================
 # Stage 2: Runtime - minimal image with only runtime dependencies
@@ -52,7 +53,7 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Ensure liboqs is found at runtime
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib
 
 # Create non-root user
 RUN groupadd -r cryptoserve && useradd -r -g cryptoserve -d /app -s /sbin/nologin cryptoserve

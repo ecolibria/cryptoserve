@@ -30,7 +30,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements-pqc.txt .
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-pqc.txt
 
 # ============================================================================
 # Stage 2: Frontend builder - build Next.js standalone output
@@ -75,7 +76,7 @@ RUN ldconfig
 # Copy Python virtual environment
 COPY --from=backend-builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib
 
 # Copy backend application code
 COPY backend/ /app/backend/
