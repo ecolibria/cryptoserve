@@ -195,9 +195,20 @@ CRYPTOSERVE > gate
 Analyze cryptographic library adoption across package ecosystems.
 
 ```bash
-cryptoserve census                            # Run ecosystem census
-cryptoserve census --ecosystems npm,pypi      # Specific ecosystems
+cryptoserve census                            # Run ecosystem census (cached/offline data)
+cryptoserve census --live                     # Fetch real-time data from npm, PyPI, crates.io
+cryptoserve census --live --ecosystems npm    # Query only npm
+cryptoserve census --live --format json       # Machine-readable JSON output
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--live` | Fetch real-time download counts from package registries (npm, PyPI, crates.io) |
+| `--ecosystems <list>` | Comma-separated list of ecosystems to query: `npm`, `pypi`, `crates` (default: all three) |
+| `--format <fmt>` | Output format: `text` (default), `json`, `html` |
+| `--output <file>` | Write output to a file |
+| `--no-cache` | Skip cached data |
+| `--verbose` | Show detailed progress |
 
 ---
 
