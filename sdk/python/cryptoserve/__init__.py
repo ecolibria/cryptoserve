@@ -64,7 +64,7 @@ IN_USE = Usage.IN_USE
 STREAMING = Usage.STREAMING
 DISK = Usage.DISK
 
-__version__ = "1.4.2"
+__version__ = "1.4.3"
 __all__ = [
     # Main SDK class
     "CryptoServe",

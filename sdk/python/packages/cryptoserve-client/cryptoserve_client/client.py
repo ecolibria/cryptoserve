@@ -61,8 +61,8 @@ class CryptoClient:
 
     def __init__(
         self,
-        server_url: str,
-        token: str,
+        server_url: str | None = None,
+        token: str = "",
         refresh_token: Optional[str] = None,
         auto_refresh: bool = True,
         timeout: float = 30.0,
@@ -70,12 +70,14 @@ class CryptoClient:
         retry_config: RetryConfig | None = None,
         circuit_config: CircuitBreakerConfig | None = None,
         enable_resilience: bool = False,
+        *,
+        base_url: str | None = None,
     ):
         """
         Initialize the client.
 
         Args:
-            server_url: CryptoServe server URL
+            server_url: CryptoServe server URL (also accepts ``base_url`` as alias)
             token: Access token for API calls
             refresh_token: Optional refresh token for auto-refresh
             auto_refresh: Enable automatic token refresh (default: True)
@@ -84,8 +86,12 @@ class CryptoClient:
             retry_config: Retry configuration (None to use defaults when enabled)
             circuit_config: Circuit breaker configuration (None to use defaults when enabled)
             enable_resilience: Enable retry and circuit breaker with production defaults
+            base_url: Alias for ``server_url`` (keyword-only, for backwards compatibility)
         """
-        self.server_url = server_url.rstrip("/")
+        url = server_url or base_url
+        if url is None:
+            raise TypeError("CryptoClient requires 'server_url' (or 'base_url') argument")
+        self.server_url = url.rstrip("/")
         self._access_token = token
         self._refresh_token = refresh_token
         self._auto_refresh = auto_refresh and refresh_token is not None

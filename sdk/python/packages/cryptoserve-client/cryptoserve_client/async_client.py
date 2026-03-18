@@ -33,21 +33,27 @@ class AsyncCryptoClient:
 
     def __init__(
         self,
-        server_url: str,
-        token: str,
+        server_url: str | None = None,
+        token: str = "",
         timeout: float = 30.0,
         user_agent: str | None = None,
+        *,
+        base_url: str | None = None,
     ):
         """
         Initialize the async client.
 
         Args:
-            server_url: Base URL of the CryptoServe server
+            server_url: Base URL of the CryptoServe server (also accepts ``base_url`` as alias)
             token: Identity token for authentication
             timeout: Request timeout in seconds
             user_agent: Custom user agent string
+            base_url: Alias for ``server_url`` (keyword-only, for backwards compatibility)
         """
-        self.server_url = server_url.rstrip("/")
+        url = server_url or base_url
+        if url is None:
+            raise TypeError("AsyncCryptoClient requires 'server_url' (or 'base_url') argument")
+        self.server_url = url.rstrip("/")
         self.token = token
         self.timeout = timeout
 
