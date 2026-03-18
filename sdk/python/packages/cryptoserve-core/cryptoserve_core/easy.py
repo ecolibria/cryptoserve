@@ -38,7 +38,12 @@ _FILE_CHUNK_THRESHOLD = _CHUNK_SIZE  # Files larger than this use chunked format
 
 def encrypt(plaintext: Union[bytes, str], password: str) -> bytes:
     """
-    Encrypt data with a password.
+    Encrypt data with a password (offline, no server required).
+
+    This is a standalone password-based encryption function that runs entirely
+    locally. It does not use server-managed keys or crypto contexts. For
+    server-connected encryption with context-based key management, use
+    :meth:`CryptoClient.encrypt` from ``cryptoserve-client`` instead.
 
     Uses PBKDF2 key derivation (600K iterations) and AES-256-GCM.
     Each call generates a fresh random salt and nonce.
@@ -71,7 +76,12 @@ def encrypt(plaintext: Union[bytes, str], password: str) -> bytes:
 
 def decrypt(ciphertext: bytes, password: str) -> bytes:
     """
-    Decrypt data encrypted with encrypt().
+    Decrypt data encrypted with encrypt() (offline, no server required).
+
+    This is a standalone password-based decryption function that runs entirely
+    locally. It does not use server-managed keys or crypto contexts. For
+    server-connected decryption, use :meth:`CryptoClient.decrypt` from
+    ``cryptoserve-client`` instead.
 
     Args:
         ciphertext: Encrypted blob from encrypt().
