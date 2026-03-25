@@ -9,11 +9,31 @@
 </p>
 
 <p align="center">
+  <em>"Life is hard but cryptography doesn't have to be."</em>
+</p>
+
+<p align="center">
   <a href="https://github.com/ecolibria/cryptoserve/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ecolibria/cryptoserve/ci.yml?branch=main&style=flat-square&label=build" alt="Build Status"></a>
   <a href="https://github.com/ecolibria/cryptoserve/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://pypi.org/project/cryptoserve/"><img src="https://img.shields.io/pypi/v/cryptoserve.svg?style=flat-square" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/cryptoserve"><img src="https://img.shields.io/npm/v/cryptoserve.svg?style=flat-square" alt="npm"></a>
 </p>
+
+<p align="center">
+  <a href="https://cryptoserve.dev">Website</a> &middot;
+  <a href="https://census.cryptoserve.dev">Crypto Census</a> &middot;
+  <a href="https://cryptoserve.dev/docs/">Docs</a> &middot;
+  <a href="#sdk-usage">SDK</a> &middot;
+  <a href="#self-hosted-platform">Platform</a>
+</p>
+
+---
+
+CryptoServe is an open-source cryptographic platform with three layers:
+
+- **CLI** -- Scan codebases for weak crypto, generate CBOMs, enforce CI/CD gates, encrypt files. Zero dependencies, works offline.
+- **SDK** -- Python and Node.js libraries for encryption, hashing, signatures, JWT tokens, and key exchange. Context-aware algorithm selection with post-quantum support (ML-KEM, ML-DSA, SLH-DSA).
+- **Platform** -- Self-hosted server with centralized key management, automatic rotation, policy enforcement, FIPS 140-2/3 compliance, and audit logging.
 
 ---
 
