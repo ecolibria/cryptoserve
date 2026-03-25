@@ -53,7 +53,7 @@ pip install cryptoserve
 ## Common Commands
 
 ```bash
-cryptoserve scan .                          # Scan project (6 languages, 80+ algorithms)
+cryptoserve scan .                          # Scan project (6 languages, 130+ algorithms)
 cryptoserve scan . --binary                 # Include binary signature detection
 cryptoserve pqc                             # Post-quantum readiness assessment
 cryptoserve cbom --format cyclonedx         # Generate CBOM
@@ -131,7 +131,7 @@ import { encrypt, decrypt } from 'cryptoserve/lib/local-crypto.mjs';
 
 See the [Node.js SDK README](sdk/javascript/README.md).
 
-### Python SDK v1.4.2 (server-connected)
+### Python SDK v1.4.3 (server-connected)
 
 The Python SDK adds managed key management and context-aware algorithm selection when connected to a CryptoServe server:
 
