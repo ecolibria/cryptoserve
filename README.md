@@ -5,7 +5,7 @@
 <h1 align="center">CryptoServe</h1>
 
 <p align="center">
-  <strong>Scan codebases for cryptographic libraries, weak algorithms, and quantum-vulnerable patterns.</strong>
+  <strong>Cryptography as a service. Post-quantum ready, FIPS 140-2/3 compliant, context-driven encryption with zero-config SDKs.</strong>
 </p>
 
 <p align="center">
