@@ -6,10 +6,10 @@ CryptoServe provides client SDKs with embedded identity for zero-configuration e
 
 | SDK | Description | Link |
 |-----|-------------|------|
-| **Python SDK** | Full-featured SDK for Python 3.9+ — available on [PyPI](https://pypi.org/project/cryptoserve/) | [Python SDK](python.md) |
-| **TypeScript SDK** *(Coming Soon)* | Type-safe SDK for Node.js and browsers — in development | [TypeScript SDK](typescript.md) |
+| **Python SDK** | Full-featured SDK for Python 3.9+, available on [PyPI](https://pypi.org/project/cryptoserve/) | [Python SDK](python.md) |
+| **TypeScript SDK** *(Coming Soon)* | Type-safe SDK for Node.js and browsers, in development | [TypeScript SDK](typescript.md) |
 | **Examples** | Code examples for common use cases | [Examples](examples.md) |
-| **CLI Reference** | All CLI commands — scanning, offline crypto, certificates, server management | [CLI Reference](../cli.md) |
+| **CLI Reference** | All CLI commands: scanning, offline crypto, certificates, server management | [CLI Reference](../cli.md) |
 
 ## SDK Architecture
 

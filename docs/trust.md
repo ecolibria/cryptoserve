@@ -6,7 +6,7 @@ This document is for engineering leaders, security teams, and procurement office
 
 ## Open Source, Fully Auditable
 
-CryptoServe is Apache 2.0 licensed. Every line of cryptographic code is publicly available for inspection. There is no "enterprise edition" with hidden security logic — the open-source version is the production version.
+CryptoServe is Apache 2.0 licensed. Every line of cryptographic code is publicly available for inspection. There is no "enterprise edition" with hidden security logic; the open-source version is the production version.
 
 **Verify:** `git clone https://github.com/ecolibria/cryptoserve.git`
 
@@ -34,7 +34,7 @@ plaintext = crypto.decrypt(ciphertext, context="card-data")
 
 Keys are derived using HKDF-SHA256, not stored directly. Each tenant and context gets unique key material. Key rotation is zero-downtime: new data uses the new key, old data decrypts with the old key until re-encrypted.
 
-**Verify:** See `backend/app/core/key_manager.py` — key derivation uses HKDF per NIST SP 800-56C with per-tenant salt isolation.
+**Verify:** See `backend/app/core/key_manager.py`. Key derivation uses HKDF per NIST SP 800-56C with per-tenant salt isolation.
 
 ### Post-Quantum Cryptography
 
@@ -60,7 +60,7 @@ Define organizational rules for cryptographic usage. Enforce minimum key sizes, 
 
 Each tenant derives unique key material through tenant-scoped HKDF salt. Database queries are filtered by tenant ID. A tenant cannot access another tenant's keys, contexts, or audit logs through the API.
 
-**Verify:** See `backend/tests/test_multitenancy.py` — tests specifically verify cross-tenant access is blocked.
+**Verify:** See `backend/tests/test_multitenancy.py`. Tests specifically verify cross-tenant access is blocked.
 
 ### Audit Logging
 
@@ -120,7 +120,7 @@ These are the specific controls protecting the platform itself.
 
 ### Configuration Safety
 
-- No hardcoded secrets — production mode requires externally-provided secrets
+- No hardcoded secrets; production mode requires externally-provided secrets
 - Startup validation blocks launch if dev-mode defaults are detected in production
 - Dev login endpoint disabled when `DEV_MODE=false`
 - Cookie secure flag enforced when `ENVIRONMENT=production`
@@ -205,7 +205,7 @@ DEV_MODE=true STARTUP_VALIDATION_LEVEL=skip pytest -v
 
 **Accepted risks:**
 - AES-GCM 96-bit nonce birthday bound at 2^48 operations per key (NIST SP 800-38D standard recommendation; mitigated by key rotation)
-- Policy engine DotDict attribute access (safe by design — only dictionary keys exposed, no arbitrary object traversal)
+- Policy engine DotDict attribute access (safe by design; only dictionary keys exposed, no arbitrary object traversal)
 
 **Verify:** All remediation commits are public: `606466b`, `49f8734`, `8146a48`. Full finding details in [Security Transparency Report](security/transparency-report.md).
 

@@ -25,9 +25,9 @@ npx cryptoserve gate .          # CI/CD quality gate
 >
 > **Try the API instantly** with the OpenAPI-powered documentation available when the server is running:
 >
-> - **Swagger UI** (`/docs`) — Interactive API explorer with live request testing
-> - **ReDoc** (`/redoc`) — Three-panel documentation with search
-> - **OpenAPI Spec** (`/openapi.json`) — Import into Postman, Insomnia, or generate client SDKs
+> - **Swagger UI** (`/docs`): Interactive API explorer with live request testing
+> - **ReDoc** (`/redoc`): Three-panel documentation with search
+> - **OpenAPI Spec** (`/openapi.json`): Import into Postman, Insomnia, or generate client SDKs
 
 ---
 
@@ -162,24 +162,24 @@ See [Algorithm Reference](security/technical-reference.md#appendix-a-algorithm-r
 
 **Developers**
 
-- Zero configuration — works immediately after import
-- No key management — keys handled server-side
-- Type-safe SDKs — full IDE support
-- Self-documenting — ciphertext includes metadata
+- Zero configuration; works immediately after import
+- No key management; keys handled server-side
+- Type-safe SDKs; full IDE support
+- Self-documenting; ciphertext includes metadata
 
 **Security Teams**
 
-- Policy enforcement — runtime algorithm validation
-- Complete audit trail — every operation logged
-- Key rotation — no re-encryption needed
-- Compliance ready — HIPAA, PCI-DSS, GDPR
+- Policy enforcement; runtime algorithm validation
+- Complete audit trail; every operation logged
+- Key rotation; no re-encryption needed
+- Compliance ready; HIPAA, PCI-DSS, GDPR
 
 **Operations Teams**
 
-- Self-service — dashboard for identity management
-- Observable — metrics and analytics built-in
-- Scalable — stateless API design
-- Cloud-native — KMS integration support
+- Self-service; dashboard for identity management
+- Observable; metrics and analytics built-in
+- Scalable; stateless API design
+- Cloud-native; KMS integration support
 
 ---
 

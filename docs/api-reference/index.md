@@ -6,9 +6,9 @@ Complete reference documentation for the CryptoServe REST API.
 
 > **Tip:** CryptoServe provides **interactive API documentation** powered by OpenAPI 3.1, available when the server is running:
 >
-> - **Swagger UI** (`/docs`) — Interactive API explorer with live request testing
-> - **ReDoc** (`/redoc`) — Three-panel API documentation
-> - **OpenAPI Spec** (`/openapi.json`) — Import into Postman, Insomnia, or any OpenAPI-compatible tool
+> - **Swagger UI** (`/docs`): Interactive API explorer with live request testing
+> - **ReDoc** (`/redoc`): Three-panel API documentation
+> - **OpenAPI Spec** (`/openapi.json`): Import into Postman, Insomnia, or any OpenAPI-compatible tool
 
 ---
 
@@ -72,12 +72,12 @@ All responses use JSON with consistent structure:
 |------|-------------|
 | `200` | Success |
 | `201` | Created |
-| `400` | Bad Request — Invalid input |
-| `401` | Unauthorized — Invalid/missing token |
-| `403` | Forbidden — Insufficient permissions |
+| `400` | Bad Request; invalid input |
+| `401` | Unauthorized; invalid/missing token |
+| `403` | Forbidden; insufficient permissions |
 | `404` | Not Found |
-| `409` | Conflict — Resource already exists |
-| `429` | Too Many Requests — Rate limited |
+| `409` | Conflict; resource already exists |
+| `429` | Too Many Requests; rate limited |
 | `500` | Internal Server Error |
 
 ## Rate Limiting
@@ -124,5 +124,5 @@ Response includes pagination info:
 
 For type-safe API access, use the official SDKs:
 
-- [Python SDK](../sdk/python.md) — Full async support, Django/FastAPI integrations
-- [TypeScript SDK](../sdk/typescript.md) — Browser and Node.js compatible
+- [Python SDK](../sdk/python.md): full async support, Django/FastAPI integrations
+- [TypeScript SDK](../sdk/typescript.md): browser and Node.js compatible

@@ -16,7 +16,7 @@ pip install cryptoserve
 
 ## Scanning Tools
 
-### `scan` — Cryptographic Scanner
+### `scan`: Cryptographic Scanner
 
 Scans files and directories for 130+ cryptographic patterns across 6 languages.
 
@@ -33,7 +33,7 @@ cryptoserve scan . --verbose                # Detailed output
 | `--binary` | Include binary file scanning (ELF, PE, Mach-O, .class, .NET) |
 | `--verbose` | Show detailed progress and findings |
 
-### `cbom` — CBOM Generation
+### `cbom`: CBOM Generation
 
 Generates a Cryptographic Bill of Materials in multiple formats.
 
@@ -48,7 +48,7 @@ cryptoserve cbom --format spdx              # SPDX format
 | `--format <fmt>` | Output format: `json` (default), `cyclonedx`, `spdx` |
 | `--output <file>` / `-o` | Write output to file |
 
-### `pqc` — PQC Migration Recommendations
+### `pqc`: PQC Migration Recommendations
 
 Analyzes cryptographic exposure and provides post-quantum readiness assessment.
 
@@ -65,7 +65,7 @@ cryptoserve pqc --verbose                   # Detailed breakdown
 | `--format <fmt>` | Output format: `text` (default), `json` |
 | `--verbose` | Show detailed analysis |
 
-### `gate` — CI/CD Policy Gate
+### `gate`: CI/CD Policy Gate
 
 Enforces cryptographic policy compliance in CI/CD pipelines. Exits non-zero when violations are found.
 
@@ -85,7 +85,7 @@ cryptoserve gate . --format sarif           # SARIF output
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
 | `--verbose` | Show detailed violations |
 
-### `census` — Ecosystem Census
+### `census`: Ecosystem Census
 
 Analyze cryptographic library adoption across package ecosystems.
 
@@ -109,7 +109,7 @@ cryptoserve census --format json -o out.json  # JSON output
 
 ## Crypto Tools
 
-### `encrypt` — Encrypt String or File
+### `encrypt`: Encrypt String or File
 
 Password-based authenticated encryption (AES-256-GCM with PBKDF2 key derivation).
 
@@ -126,7 +126,7 @@ cryptoserve encrypt --file secret.txt -p secret -o secret.enc
 | `--file <path>` | File to encrypt |
 | `--output <path>` / `-o` | Output file path |
 
-### `decrypt` — Decrypt String or File
+### `decrypt`: Decrypt String or File
 
 ```bash
 cryptoserve decrypt "<base64>" --password secret
@@ -139,7 +139,7 @@ cryptoserve decrypt --file secret.enc -p secret -o decrypted.txt
 | `--file <path>` | Encrypted file to decrypt |
 | `--output <path>` / `-o` | Output file path |
 
-### `hash-password` — Password Hashing
+### `hash-password`: Password Hashing
 
 Generates password hashes using scrypt (default) or PBKDF2.
 
@@ -155,7 +155,7 @@ cryptoserve hash-password "mypassword" --algorithm pbkdf2
 | `--password <pw>` | Password to hash (prompted if omitted) |
 | `--algorithm <alg>` | Algorithm: `scrypt` (default), `pbkdf2` |
 
-### `vault` — Encrypted Secret Storage
+### `vault`: Encrypted Secret Storage
 
 Stores secrets in an encrypted vault at `~/.cryptoserve/vault.enc`. All vault commands accept `--password P` for non-interactive/CI usage.
 
@@ -180,7 +180,7 @@ cryptoserve vault reset                     # Delete vault
 
 ## Setup Commands
 
-### `init` — Initialize Project
+### `init`: Initialize Project
 
 Sets up CryptoServe in a project: generates a master key and configures AI tool protection.
 
@@ -189,7 +189,7 @@ cryptoserve init                            # Interactive setup
 cryptoserve init --insecure-storage         # Skip keychain (not recommended)
 ```
 
-### `login` — Authenticate with Server
+### `login`: Authenticate with Server
 
 ```bash
 cryptoserve login                           # Login to default server
@@ -200,7 +200,7 @@ cryptoserve login --server https://crypto.company.com  # Custom server
 |------|-------------|
 | `--server <url>` / `-s` | Server URL (default: `http://localhost:8003`) |
 
-### `context` — List Encryption Contexts
+### `context`: List Encryption Contexts
 
 ```bash
 cryptoserve context                         # List all contexts
@@ -213,7 +213,7 @@ cryptoserve context --format json           # JSON output
 | `--verbose` | Show key version details |
 | `--format <fmt>` | Output format: `text` (default), `json` |
 
-### `status` — Show Configuration
+### `status`: Show Configuration
 
 ```bash
 cryptoserve status
@@ -249,22 +249,22 @@ Every command supports `--help` for detailed usage.
 The following commands are available via `pip install cryptoserve` (`python -m cryptoserve`) but not yet in the Node.js CLI (`npx cryptoserve`):
 
 ### Scanning & Analysis
-- **`deps`** — Dedicated dependency analysis with binary downloaders
-- **`push`** — Upload scan results or CBOM to CryptoServe dashboard
+- **`deps`**: dedicated dependency analysis with binary downloaders
+- **`push`**: upload scan results or CBOM to CryptoServe dashboard
 
 ### Crypto Tools
-- **`token`** — JWT token creation/verification
-- **`certs`** — Certificate management (generate-csr, self-signed, parse, verify)
+- **`token`**: JWT token creation/verification
+- **`certs`**: certificate management (generate-csr, self-signed, parse, verify)
 
 ### Server Commands (requires login)
-- **`logout`** — Clear credentials
-- **`configure`** — Set SDK configuration (token, server URL)
-- **`verify`** — Server health check
-- **`info`** — Display identity information
-- **`contexts`** — List and search encryption contexts
-- **`promote`** — Promote application to production
-- **`wizard`** — Interactive context selection wizard
+- **`logout`**: clear credentials
+- **`configure`**: set SDK configuration (token, server URL)
+- **`verify`**: server health check
+- **`info`**: display identity information
+- **`contexts`**: list and search encryption contexts
+- **`promote`**: promote application to production
+- **`wizard`**: interactive context selection wizard
 
 ### Admin Commands
-- **`backup`** / **`restore`** / **`backups`** — Encrypted backup and restore
-- **`ceremony`** — Enterprise key ceremony (Shamir's Secret Sharing)
+- **`backup`** / **`restore`** / **`backups`**: encrypted backup and restore
+- **`ceremony`**: enterprise key ceremony (Shamir's Secret Sharing)

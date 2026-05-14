@@ -9,5 +9,5 @@ shaped to hit a specific path in `scan` / `pqc` / `cbom` / `gate`:
 | `weak/`   | MD5, DES, `jsonwebtoken@^9`, AWS example access key.        |
 | `pqc/`    | Source references `ml-kem-768` / `ml-dsa-65` (PQC).         |
 
-These are inputs to the smoke runner — do not import them at runtime, do not
+These are inputs to the smoke runner. Do not import them at runtime, do not
 publish them. The `files` field in `package.json` excludes `test/`.

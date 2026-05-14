@@ -94,7 +94,7 @@ crypto = CryptoServe(
 
 ## Local Mode (No Server Required)
 
-Local mode runs entirely offline — no server, no API keys, no network calls. Keys are derived from a master password using PBKDF2 (600K iterations) and per-context keys via HKDF-SHA256.
+Local mode runs entirely offline: no server, no API keys, no network calls. Keys are derived from a master password using PBKDF2 (600K iterations) and per-context keys via HKDF-SHA256.
 
 ```python
 from cryptoserve import CryptoServe
@@ -737,7 +737,7 @@ from cryptoserve import CryptoServe
 
 crypto = CryptoServe.local(password="test-password")
 
-# Real encryption — no mocks needed
+# Real encryption, no mocks needed
 ct = crypto.encrypt(b"test data", context="test")
 assert crypto.decrypt(ct, context="test") == b"test data"
 ```
