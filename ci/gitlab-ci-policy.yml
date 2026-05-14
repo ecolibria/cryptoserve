@@ -9,9 +9,9 @@
 #
 #   2. Or copy the relevant jobs to your pipeline
 #
-# Required Variables (set in CI/CD settings):
-#   - CRYPTOSERVE_API_URL: URL of your CryptoServe instance
-#   - CRYPTOSERVE_API_KEY: API key for authentication
+# Prerequisites: see ci/README.md for the list of GitLab CI/CD variables
+# this pipeline expects. Configure them under Settings -> CI/CD -> Variables,
+# mark each as masked and protected, and never commit values to this file.
 
 stages:
   - validate
@@ -114,30 +114,7 @@ check-policies-api:
   image: curlimages/curl:latest
   stage: validate
   script:
-    - |
-      echo "Evaluating policies via API..."
-
-      # Check PII context
-      response=$(curl -s -X POST \
-        "${CRYPTOSERVE_API_URL}/api/policies/evaluate" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer ${CRYPTOSERVE_API_KEY}" \
-        -d '{
-          "algorithm": "AES-256-GCM",
-          "context_name": "user-pii",
-          "pii": true,
-          "frameworks": ["GDPR", "CCPA"]
-        }')
-
-      allowed=$(echo "$response" | grep -o '"allowed":[^,]*' | cut -d: -f2)
-
-      if [ "$allowed" = "false" ]; then
-        echo "ERROR: Policy violation for PII context"
-        echo "$response"
-        exit 1
-      fi
-
-      echo "All policy checks passed!"
+    - sh ci/check-policies-api.sh
   rules:
     - if: '$CRYPTOSERVE_API_URL && $CRYPTOSERVE_API_KEY'
       when: manual

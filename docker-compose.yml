@@ -7,7 +7,8 @@ services:
       POSTGRES_USER: cryptoserve
       POSTGRES_PASSWORD: localdev
     ports:
-      - "5433:5432"  # Use 5433 to avoid conflicts with local PostgreSQL
+      # Bind to loopback only -- dev databases should not be reachable from LAN.
+      - "127.0.0.1:5433:5432"  # 5433 avoids conflicts with a local PostgreSQL
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +20,10 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8003:8003"
+      # Loopback bind: dev backend not reachable from LAN. Uvicorn still
+      # listens on 0.0.0.0 inside the container -- required for Docker
+      # network reachability via the port mapping.
+      - "127.0.0.1:8003:8003"
     environment:
       DATABASE_URL: postgresql+asyncpg://cryptoserve:localdev@postgres:5432/cryptoserve
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
@@ -30,17 +34,22 @@ services:
       BACKEND_URL: http://localhost:8003
       DEV_MODE: "true"
       STARTUP_VALIDATION_LEVEL: skip
+      # Listen on all container interfaces -- required for the host port
+      # mapping above to forward traffic. Host-side binding is restricted
+      # to 127.0.0.1, so the dev backend is NOT reachable from the LAN.
+      UVICORN_HOST: ${UVICORN_HOST:-0.0.0.0}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8003 --reload
+    command: sh -c "exec uvicorn app.main:app --host $$UVICORN_HOST --port 8003 --reload"
 
   frontend:
     build: ./frontend
     ports:
-      - "3003:3000"
+      # Loopback bind -- dev frontend not reachable from LAN.
+      - "127.0.0.1:3003:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8003
       # Server-side API URL for Next.js rewrites (container-to-container)
