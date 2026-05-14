@@ -16,7 +16,7 @@ npx cryptoserve help
 npm install -g cryptoserve
 ```
 
-Requires Node.js 18 or later. No dependencies — uses only Node.js built-in modules (`node:crypto`, `node:fs`, `node:https`).
+Requires Node.js 18 or later. No dependencies; uses only Node.js built-in modules (`node:crypto`, `node:fs`, `node:https`).
 
 ## Commands
 
@@ -67,10 +67,10 @@ cryptoserve scan . --binary          # Include binary crypto detection
 
 ### Additional Detection
 
-- **TLS/SSL versions** — nginx, Apache, Node.js, Go, Java configs
-- **Binary signatures** — AES S-box, DES tables, SHA constants, ChaCha20 sigma (with `--binary`)
+- **TLS/SSL versions**: nginx, Apache, Node.js, Go, Java configs
+- **Binary signatures**: AES S-box, DES tables, SHA constants, ChaCha20 sigma (with `--binary`)
 - **80+ algorithms** classified by quantum risk, weakness, and category
-- **Hardcoded secrets** — AWS, OpenAI, Anthropic, GitHub, Stripe, and more
+- **Hardcoded secrets**: AWS, OpenAI, Anthropic, GitHub, Stripe, and more
 
 ## PQC Analysis
 
@@ -193,7 +193,7 @@ cryptoserve encrypt "patient diagnosis" --context health-data --password mypassw
 | `payment-data` | Critical | AES-256-GCM | PCI-DSS |
 | `session-tokens` | Medium | AES-128-GCM | OWASP |
 | `health-data` | Critical | AES-256-GCM | HIPAA |
-| `general` | Medium | AES-128-GCM | — |
+| `general` | Medium | AES-128-GCM | n/a |
 
 ### Custom Contexts
 

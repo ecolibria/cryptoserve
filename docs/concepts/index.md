@@ -82,8 +82,8 @@ Every cryptographic operation is logged with:
 | **Identity** | A credential representing an application or service |
 | **Context** | A named encryption policy (e.g., "user-pii", "payment-data") |
 | **SDK** | The client library with embedded identity |
-| **DEK** | Data Encryption Key — encrypts actual data |
-| **KEK** | Key Encryption Key — protects DEKs |
+| **DEK** | Data Encryption Key; encrypts actual data |
+| **KEK** | Key Encryption Key; protects DEKs |
 | **Master Key** | Root key from which all others are derived |
 
 ## Data Flow

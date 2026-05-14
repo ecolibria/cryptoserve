@@ -135,10 +135,10 @@ print(f"Encrypted {len(original)} bytes successfully")
 
 Open the dashboard (default: `http://localhost:3003`) to see:
 
-- **Your Applications** — View auto-registered apps
-- **Usage Analytics** — Monitor encryption/decryption operations
-- **Contexts** — See which contexts you're using
-- **Audit Logs** — Complete audit trail of all operations
+- **Your Applications**: view auto-registered apps
+- **Usage Analytics**: monitor encryption/decryption operations
+- **Contexts**: see which contexts you're using
+- **Audit Logs**: complete audit trail of all operations
 
 | Timestamp | Operation | Context | App | Status |
 |-----------|-----------|---------|-----|--------|

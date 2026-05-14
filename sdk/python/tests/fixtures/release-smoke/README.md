@@ -10,10 +10,10 @@ projects, each shaped to hit a specific path in `scan` / `pqc` / `cbom` /
 | `weak/`   | MD5, DES, RSA-1024, AWS example access key.                     |
 | `pqc/`    | Source references `ml-kem-768` / `ml-dsa-65` (PQC).             |
 
-These are inputs to the smoke runner — they are not collected by `pytest`
+These are inputs to the smoke runner. They are not collected by `pytest`
 and are not packaged on `python -m build` (the `tool.setuptools.packages`
 configuration excludes `tests*`). Do not import them at runtime.
 
 The credential string `AKIAIOSFODNN7EXAMPLE` is AWS' own documented example
-access key — GitHub's push protection treats it as a placeholder, so the
+access key. GitHub's push protection treats it as a placeholder, so the
 fixture stays committable.

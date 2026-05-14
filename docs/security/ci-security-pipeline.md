@@ -67,7 +67,7 @@ Enforces consistent code style across the backend.
 | **Ruff** | `backend/app`, `backend/tests` | `backend/ruff.toml` |
 | **Black** | `backend/app`, `backend/tests` | Line length: 120 |
 
-Both checks must pass — formatting violations and lint errors block merge.
+Both checks must pass. Formatting violations and lint errors block merge.
 
 ### Frontend Build & Lint
 
@@ -93,7 +93,7 @@ Static analysis and dependency auditing for the backend.
 
 | Tool | What it does |
 |------|-------------|
-| **Bandit** | Static security analysis. Fails on high-severity + high-confidence findings (`-lll -iii`). Suppresses B413 (pycrypto import — false positive since the project uses `cryptography`). Results uploaded as artifact. |
+| **Bandit** | Static security analysis. Fails on high-severity + high-confidence findings (`-lll -iii`). Suppresses B413 (pycrypto import; false positive since the project uses `cryptography`). Results uploaded as artifact. |
 | **pip-audit** | Checks `backend/requirements.txt` against the PyPI advisory database for known CVEs. |
 
 A second Bandit pass with medium thresholds (`-ll -ii`) runs for informational review but does not block the pipeline.
@@ -144,7 +144,7 @@ Coverage is collected via `pytest-cov` across both `cryptoserve` and `cryptoserv
 Runs Bandit against SDK code (`sdk/python/cryptoserve` and `sdk/python/packages`) with `--severity-level high` in two passes:
 
 1. **SARIF generation**: Outputs results in SARIF format and uploads to the GitHub Security tab under the `bandit` category (does not fail the pipeline)
-2. **Gating check**: Runs the same scan without SARIF output — this pass fails the pipeline if high-severity findings exist
+2. **Gating check**: Runs the same scan without SARIF output. This pass fails the pipeline if high-severity findings exist.
 
 ### Ciphertext Format Regression
 
@@ -159,7 +159,7 @@ Four format assertions run:
 | **JWT tokens** | Token has 3 dot-separated parts, `verify_token` and `decode_token` produce correct claims |
 | **Local mode** | Binary format: `[ctx_len:2][context][nonce:12][ciphertext+tag]`, context and plaintext roundtrip correctly |
 
-If any of these assertions fail, the pipeline blocks the merge — a format change requires intentional migration, not an accidental regression.
+If any of these assertions fail, the pipeline blocks the merge. A format change requires intentional migration, not an accidental regression.
 
 ## 3. AI-Powered Code Review (`claude-review.yml`)
 
@@ -174,7 +174,7 @@ Claude reviews the PR diff against domain-specific criteria:
 **Cryptographic correctness (critical)**
 - Key material must never be logged, serialized to JSON, or returned in API responses
 - Algorithm identifiers must match IANA/NIST naming (e.g., `ML-KEM-768`, not `kyber768`)
-- Nonces/IVs must never be reused — deterministic generation patterns are flagged
+- Nonces/IVs must never be reused; deterministic generation patterns are flagged
 - Random values must use CSPRNG (`secrets` module, not `random`)
 - Key derivation must use appropriate KDFs (HKDF, Argon2) with proper salt handling
 
@@ -199,7 +199,7 @@ Claude reviews the PR diff against domain-specific criteria:
 **Code quality**
 - Functions over 50 lines examined for decomposition
 - Deep nesting (>3 levels) flagged with early return suggestions
-- No bare `except:` — error handling must be specific
+- No bare `except:`; error handling must be specific
 - Resource cleanup via context managers (`with` statements)
 
 The reviewer explicitly skips style/formatting issues (handled by Ruff and Black), import ordering, docstring style, and minor naming preferences.
@@ -264,7 +264,7 @@ v* tag pushed
      ▼
   Publish (ordered by dependency):
      │
-     ├──► core (first — no dependencies)
+     ├──► core (first, no dependencies)
      │       │
      │       ├──► client (depends on core)
      │       │       │
@@ -301,7 +301,7 @@ The `main` branch is protected with the following rules:
 
 | Rule | Setting |
 |------|---------|
-| Direct push | Blocked — all changes must come through a PR |
+| Direct push | Blocked; all changes must come through a PR |
 | Required reviews | At least 1 approving review |
 | Status checks | All CI checks must pass before merge |
 | Merge strategy | Squash merge enforced (linear history) |

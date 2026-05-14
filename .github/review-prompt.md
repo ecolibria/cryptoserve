@@ -5,7 +5,7 @@ You are reviewing a pull request for **CryptoServe**, an open-source cryptograph
 ## 1. Cryptographic Correctness (Critical)
 - Key material must never be logged, serialized to JSON, or returned in API responses
 - Algorithm identifiers must match IANA/NIST naming (e.g., `ML-KEM-768`, not `kyber768`)
-- Nonces/IVs must never be reused — check for deterministic generation patterns
+- Nonces/IVs must never be reused; check for deterministic generation patterns
 - Random values must use CSPRNG (`secrets` module, not `random`)
 - Key derivation must use appropriate KDFs (HKDF, Argon2) with proper salt handling
 - Certificate parsing must validate chain of trust, not just leaf cert
@@ -20,7 +20,7 @@ You are reviewing a pull request for **CryptoServe**, an open-source cryptograph
 
 ## 3. SDK API Stability
 - Public function signatures in `cryptoserve_core`, `cryptoserve_client`, `cryptoserve_auto` must not change without a deprecation path
-- New required parameters on existing public functions are breaking changes — flag them
+- New required parameters on existing public functions are breaking changes; flag them
 - Type hints on public APIs must be present and accurate
 - `__all__` exports must be updated when adding new public symbols
 
@@ -32,7 +32,7 @@ You are reviewing a pull request for **CryptoServe**, an open-source cryptograph
 
 ## 5. Code Quality
 - Functions over 50 lines should be examined for decomposition opportunities
-- Avoid deep nesting (>3 levels) — suggest early returns
+- Avoid deep nesting (>3 levels); suggest early returns
 - Error handling should be specific (no bare `except:`)
 - Resource cleanup should use context managers (`with` statements)
 
