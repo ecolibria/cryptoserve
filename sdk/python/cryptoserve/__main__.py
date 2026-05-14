@@ -2844,6 +2844,22 @@ def cmd_gate():
     if not paths and not staged_only:
         paths = ["."]
 
+    # Reject paths that don't exist so the gate distinguishes "policy failure"
+    # (exit 1) from "operator error" (exit 2). Without this, a typo in a CI
+    # path silently scans zero files and reports PASS — exactly the false-green
+    # the JS gate fix in PR #38 addressed.
+    if not staged_only:
+        missing = [p for p in paths if not os.path.exists(p)]
+        if missing:
+            msg = f"Path does not exist: {missing[0]}"
+            if output_format == "text":
+                print(compact_header("GATE"))
+                print(f"  {error(msg)}")
+                print()
+            else:
+                print(msg, file=sys.stderr)
+            return 2
+
     # Only show header for text format
     if output_format == "text":
         print(compact_header("GATE"))
@@ -3117,6 +3133,17 @@ def cmd_token():
     except Exception as e:
         print(error(str(e)))
         return 1
+
+
+def cmd_version():
+    """Print the installed CLI version.
+
+    Plain `cryptoserve <version>` so release-smoke can assert parity with
+    pyproject.toml. Mirrors the JS CLI's `cryptoserve version` output.
+    """
+    from cryptoserve import __version__
+    print(f"cryptoserve {__version__}")
+    return 0
 
 
 def cmd_help():
@@ -4178,6 +4205,8 @@ def main():
         "help": cmd_help,
         "--help": cmd_help,
         "-h": cmd_help,
+        "version": cmd_version,
+        "--version": cmd_version,
     }
 
     if command in commands:

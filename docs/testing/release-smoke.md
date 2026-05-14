@@ -1,11 +1,13 @@
-# Release smoke — JS SDK / CLI
+# Release smoke — JS + Python SDK / CLI
 
-Run before tagging a `js-v*` release. Two parts:
+Run before tagging a `js-v*` or `v*` (Python) release. Two parts per SDK:
 
-1. **Automated** — `npm run release-smoke` in `sdk/javascript/`.
-   Spawns the CLI as a subprocess and asserts 80+ behaviors across help,
-   scan, pqc, cbom, gate, encrypt/decrypt, hash, context, and the error
-   exit-code matrix. Takes ~5 seconds. Must end with `PASS N/N`.
+1. **Automated** — language-specific runner.
+   - JS: `npm run release-smoke` in `sdk/javascript/` (~5s, 80+ checks).
+   - Python: `python scripts/release_smoke.py` in `sdk/python/` (~10s, 60+ checks).
+   Each spawns its CLI as a subprocess and asserts behavior across help,
+   scan, pqc, cbom, gate, encrypt/decrypt, hash, and the error
+   exit-code matrix. Must end with `PASS N/N`.
 2. **Manual** — this checklist. Covers the surfaces the automated runner
    can't exercise without side effects (init, vault, login, census --live)
    and the UX/feel checks that a script can't make.
@@ -145,23 +147,41 @@ This is the part a runner can't do — look at the output as a new user.
 - [ ] No telemetry surprises. The CLI should not phone home. If you add a
       network call to a command that didn't have one, mention it here.
 
-## 8. Cross-SDK parity (manual)
+## 8. Cross-SDK parity (manual — known-broken today)
 
-Re-encrypt a string with the JS CLI, decrypt with the Python SDK. Required
-before any release that touches `lib/local-crypto.mjs` or the Python
-equivalent. Catches format drift between the two SDKs.
+Re-encrypt a string with one SDK, decrypt with the other:
 
 ```bash
-# JS encrypt
-node sdk/javascript/bin/cryptoserve.mjs encrypt "hello" --password p1 --algorithm AES-256-GCM
-# Python decrypt
-python -c "from cryptoserve import local_decrypt; print(local_decrypt('<blob>', 'p1'))"
+# JS encrypt -> Python decrypt
+BLOB=$(node sdk/javascript/bin/cryptoserve.mjs encrypt "hello" --password p1 --algorithm AES-256-GCM)
+python -m cryptoserve decrypt "$BLOB" --password p1
+
+# Python encrypt -> JS decrypt
+BLOB=$(python -m cryptoserve encrypt "hello" --password p1)
+node sdk/javascript/bin/cryptoserve.mjs decrypt "$BLOB" --password p1
 ```
 
-- [ ] Output matches `hello`.
+Today both directions fail because the SDKs use **structurally different
+blob layouts**, not just different version numbers:
 
-(Python smoke is not yet automated. Adding it is a follow-up — see the
-section below.)
+- JS (`sdk/javascript/lib/local-crypto.mjs:21`): `FORMAT_VERSION = 4`,
+  wire = `[uint16 header-len][JSON header (alg, nonce, kid, ...)][ciphertext][authTag]`,
+  then base64 of the whole thing (with a 16-byte salt prefix in the CLI
+  `encryptString` wrapper).
+- Python (`sdk/python/packages/cryptoserve-core/.../encoding.py:34`):
+  `version = 1`, wire = `[uint8 version][uint8 alg-id][uint8 nonce-len][nonce][ciphertext]`,
+  base64-encoded.
+
+Aligning the version bytes alone is not enough — the salt prefix and the
+JSON-vs-struct header design have to be reconciled too. Until they are:
+
+- [ ] Confirm the failure is the format-mismatch error message ("Unsupported
+      blob version: N" from Python or "Invalid ciphertext format" from JS),
+      not a new failure mode (crash, partial decrypt, wrong plaintext).
+      Wrong-plaintext or partial-decrypt is a release blocker; format
+      rejection is the expected stable failure today.
+- [ ] Each SDK's own encrypt/decrypt roundtrip still passes — both
+      runners cover this in their respective phase 6/7.
 
 ## 9. Cleanup
 
@@ -183,9 +203,104 @@ the manual step.
 
 ## Future work
 
-- **Python SDK smoke runner.** Mirror `scripts/release-smoke.mjs` for
-  `sdk/python/` so a single `make release-smoke` covers both SDKs.
 - **Backend smoke.** Stand up the FastAPI server against a temp Postgres
   and walk the auth + keys + crypto endpoints. Larger scope; needs its own
   fixture story.
-- **Cross-SDK encrypt/decrypt** automation once both runners exist.
+- **Cross-SDK encrypt/decrypt** parity. Section 8 documents the gap today.
+  JS uses `FORMAT_VERSION = 4` with a JSON-header wire format, Python uses
+  `version = 1` with a struct-header wire format — converging the layouts
+  unlocks an automated assertion in both runners.
+
+# Release smoke — Python SDK / CLI
+
+Run before tagging a `v*` PyPI release. Mirrors the JS structure above.
+
+## 0. Prerequisites (Python)
+
+- [ ] Working tree is clean (`git status`).
+- [ ] On a release branch (not main).
+- [ ] `sdk/python/pyproject.toml` `version =` matches the planned tag.
+- [ ] Sub-package versions in `sdk/python/packages/*/pyproject.toml` match
+      what `sdk/python/pyproject.toml` pins.
+
+## 1. Automated runner (Python)
+
+```bash
+cd sdk/python
+pip install -e packages/cryptoserve-core \
+            -e packages/cryptoserve-client \
+            -e packages/cryptoserve-auto \
+            -e .
+pytest tests/ -v --tb=short -x
+python scripts/release_smoke.py
+```
+
+- [ ] `pytest tests/` exits 0.
+- [ ] `python scripts/release_smoke.py` ends with `PASS N/N`.
+
+If anything fails, fix and re-run. Do not ship an "all but one" release.
+
+The runner downloads the `cryptoscan` Go binary the first time `scan` is
+invoked. If you see `Downloading cryptoscan vX.Y.Z (...)` in CI logs, that
+is expected, not a bug.
+
+## 2. Help & version (eyeball)
+
+```bash
+python -m cryptoserve help
+python -m cryptoserve version
+```
+
+- [ ] `version` matches `sdk/python/pyproject.toml` exactly. The automated
+      runner asserts this — eyeball it once anyway.
+- [ ] `help` lists every command the README mentions (scan, pqc, cbom, gate,
+      encrypt, decrypt, hash-password, contexts, login, status).
+- [ ] No stray ANSI escapes in non-TTY output
+      (`NO_COLOR=1 python -m cryptoserve help` is plain).
+
+## 3. Contexts (manual — needs login + server)
+
+The automated runner skips `contexts` because it queries the server. With
+a running CryptoServe API:
+
+```bash
+python -m cryptoserve login
+python -m cryptoserve contexts
+python -m cryptoserve contexts --example user-pii
+```
+
+- [ ] `contexts` lists at least the default seeded contexts (user-pii,
+      etc.) with algorithm + compliance fields.
+- [ ] `contexts --example user-pii` prints a runnable code snippet.
+- [ ] Unknown context name (`contexts --example __nope__`) exits non-zero
+      with a clear message — not a stack trace.
+
+## 4. Backup / restore / certs (manual — admin-scoped)
+
+These touch admin-only endpoints and the local filesystem. Smoke them once
+per release in a scratch dir:
+
+```bash
+python -m cryptoserve certs self-signed --cn smoke.example.com --out /tmp/cs-smoke
+python -m cryptoserve certs parse /tmp/cs-smoke/cert.pem
+```
+
+- [ ] `certs self-signed` writes `cert.pem` + `key.pem` and reports the
+      paths.
+- [ ] `certs parse` decodes the cert and surfaces CN, validity, key algo.
+
+## 5. UX sanity (Python)
+
+- [ ] Errors point to a fix.
+- [ ] No raw stack traces in normal output. Tracebacks only on truly
+      unexpected crashes.
+- [ ] Output fits 80 columns when possible.
+- [ ] No telemetry surprises. If you add a network call to a command that
+      didn't have one, mention it here.
+
+## 6. Cross-SDK parity
+
+Run the cross-SDK section above (§8 of the JS checklist). Today both
+directions fail with a blob-version mismatch — confirm the failure mode
+matches before tagging, and treat any other failure (crash, partial
+decrypt, wrong plaintext) as a release blocker.

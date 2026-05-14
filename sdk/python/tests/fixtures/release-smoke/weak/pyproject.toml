@@ -1,0 +1,9 @@
+[project]
+name = "smoke-weak"
+version = "0.0.0"
+description = "Weak fixture — RSA-1024, MD5, DES, AWS example access key."
+requires-python = ">=3.9"
+dependencies = [
+    "cryptography>=41.0.0",
+    "pycryptodome>=3.20.0",
+]

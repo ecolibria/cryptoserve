@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include FORMATS.md
+prune tests
+prune scripts
+prune packages
+prune dist
+prune .pytest_cache
+prune __pycache__
+global-exclude *.pyc
+global-exclude .DS_Store

@@ -1,0 +1,8 @@
+[project]
+name = "smoke-pqc"
+version = "0.0.0"
+description = "PQC fixture — references ML-KEM-768 and ML-DSA-65 in source."
+requires-python = ">=3.9"
+dependencies = [
+    "pqcrypto>=0.3.0",
+]
