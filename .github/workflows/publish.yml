@@ -43,6 +43,20 @@ jobs:
           pip install pytest
           cd sdk/python && pytest tests/ -v --tb=short -x
 
+      # Cache the cryptoscan Go binary across CI runs so release-smoke does
+      # not depend on GitHub Releases being reachable on every push. Cache
+      # key tracks the pinned version in _binary_manager.py — a version bump
+      # there invalidates the cache and forces a fresh download.
+      - name: Cache cryptoscan binary
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.cryptoserve/bin
+          key: ${{ runner.os }}-cryptoscan-${{ hashFiles('sdk/python/cryptoserve/_binary_manager.py') }}
+
+      - name: Release smoke
+        run: |
+          cd sdk/python && python scripts/release_smoke.py
+
   build:
     needs: test
     runs-on: ubuntu-latest
