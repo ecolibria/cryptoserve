@@ -2,7 +2,14 @@
 set -e
 
 # CryptoServe Quickstart
-# Usage: curl -fsSL https://raw.githubusercontent.com/ecolibria/crypto-serve/main/scripts/quickstart.sh | sh
+#
+# Recommended install (download, inspect, then execute):
+#   curl -fsSL -o quickstart.sh https://raw.githubusercontent.com/ecolibria/crypto-serve/main/scripts/quickstart.sh
+#   shasum -a 256 quickstart.sh   # compare against the SHA256 published in the release notes
+#   sh quickstart.sh
+#
+# Piping curl directly to sh is discouraged: a compromised or MITM-ed
+# response would execute on your machine without you ever seeing the code.
 
 REPO="ecolibria/crypto-serve"
 BRANCH="main"

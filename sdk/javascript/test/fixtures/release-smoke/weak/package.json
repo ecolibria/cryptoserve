@@ -1,0 +1,10 @@
+{
+  "name": "smoke-weak",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Weak fixture — RSA-1024 JWT, MD5, hardcoded key.",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.0",
+    "md5": "^2.3.0"
+  }
+}

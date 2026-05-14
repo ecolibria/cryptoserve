@@ -190,7 +190,10 @@ API: `http://localhost:8003` | Dashboard: `http://localhost:3000`
 ### Multi-container (production)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ecolibria/crypto-serve/main/scripts/quickstart.sh | sh
+# Download, inspect, then execute -- don't pipe curl into sh.
+curl -fsSL -o quickstart.sh https://raw.githubusercontent.com/ecolibria/crypto-serve/main/scripts/quickstart.sh
+shasum -a 256 quickstart.sh   # compare against the SHA256 in the release notes
+sh quickstart.sh
 ```
 
 Downloads the compose file, generates secrets, and starts PostgreSQL + backend + frontend. See the [production deployment guide](docs/guides/production-deployment.md).

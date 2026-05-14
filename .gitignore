@@ -62,6 +62,13 @@ tsconfig.tsbuildinfo
 # Credentials and secrets
 *.pem
 *.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+.secrets/
+secrets/
+.cryptoserve/
 !.env.example
 
 # Internal docs
