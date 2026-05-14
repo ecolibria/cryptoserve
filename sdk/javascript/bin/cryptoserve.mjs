@@ -836,6 +836,7 @@ async function cmdGate(args) {
   const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
   const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
   const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
+  const { existsSync } = await import('node:fs');
 
   const positional = getPositional(args);
   const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
@@ -845,6 +846,19 @@ async function cmdGate(args) {
   const format = getOption(args, '--format', 'text');
 
   const riskOrder = ['none', 'low', 'medium', 'high', 'critical'];
+
+  // A missing path is an error class (exit 2), not a clean pass. Without this
+  // a typo in CI (`cryptoserve gate ./srcc`) silently scores 100 and lets the
+  // build through.
+  if (!existsSync(scanDir)) {
+    const msg = `Path does not exist: ${scanDir}`;
+    if (format === 'json') {
+      console.log(JSON.stringify({ status: 'error', error: msg }, null, 2));
+    } else {
+      console.error(`Error: ${msg}`);
+    }
+    process.exit(2);
+  }
 
   try {
     const scanResults = scanProject(scanDir);

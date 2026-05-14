@@ -36,6 +36,7 @@
     "url": "https://github.com/ecolibria/cryptoserve"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "release-smoke": "node scripts/release-smoke.mjs"
   }
 }

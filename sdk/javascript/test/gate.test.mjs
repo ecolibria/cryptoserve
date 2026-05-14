@@ -77,4 +77,24 @@ describe('gate command', () => {
       assert.equal(result.status, 'fail');
     }
   });
+
+  it('exits 2 with status=error when path does not exist', () => {
+    // A typo in CI (`cryptoserve gate ./srcc`) must not silently pass.
+    const missing = join(tmpdir(), 'cryptoserve-gate-missing-' + Date.now());
+    let exitCode = 0;
+    let output = '';
+    try {
+      output = execSync(
+        `${process.execPath} ${CLI} gate ${missing} --format json`,
+        { encoding: 'utf-8', timeout: 10000 },
+      );
+    } catch (e) {
+      exitCode = e.status;
+      output = e.stdout || '';
+    }
+    assert.equal(exitCode, 2);
+    const result = JSON.parse(output);
+    assert.equal(result.status, 'error');
+    assert.ok(/does not exist/i.test(result.error));
+  });
 });

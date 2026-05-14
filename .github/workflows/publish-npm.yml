@@ -22,6 +22,10 @@ jobs:
         working-directory: sdk/javascript
         run: node --test test/*.test.mjs
 
+      - name: Release smoke
+        working-directory: sdk/javascript
+        run: npm run release-smoke
+
   publish:
     needs: test
     runs-on: ubuntu-latest

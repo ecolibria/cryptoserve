@@ -1,0 +1,9 @@
+{
+  "name": "smoke-benign",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Clean fixture — no crypto libraries, no secrets.",
+  "dependencies": {
+    "express": "^4.19.0"
+  }
+}

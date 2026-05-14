@@ -1,0 +1,9 @@
+{
+  "name": "smoke-pqc",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PQC fixture — references ML-KEM and ML-DSA in source.",
+  "dependencies": {
+    "@noble/post-quantum": "^0.2.0"
+  }
+}
