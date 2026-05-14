@@ -1,6 +1,6 @@
 # ADR-0001: Cross-SDK Blob Format Convergence
 
-- **Status:** Proposed — open for review.
+- **Status:** Proposed. Open for review.
 - **Date:** 2026-05-14
 - **Last verified against:** `main` at commit 729d2e7.
 
@@ -40,9 +40,9 @@ high byte is `0`.
 1. Both formats are in production; a forklift replacement is not
    acceptable without a decrypt-only compatibility path.
 2. Self-describing blobs (carrying context, key-id, optional AAD length
-   inline) are a useful UX property — the JS managed-mode experience
+   inline) are a useful UX property. The JS managed-mode experience
    depends on them.
-3. Compact binary encoding is also useful — Python's three-byte header
+3. Compact binary encoding is also useful. Python's three-byte header
    costs almost nothing compared to JS's JSON overhead.
 4. The post-quantum roadmap reserves `0x10` for hybrid algorithms and
    must remain reachable from every SDK.
@@ -154,14 +154,14 @@ reviewers below.
 
 - **If C is accepted:** plan a two-release rollout (dual-decode
   patches, then a coordinated encrypt switch). Treat the wire-format
-  sketch above as a starting point, not a contract — review must
+  sketch above as a starting point, not a contract. Review must
   confirm field order, sizes, and the magic.
 - **If A or B is accepted:** the chosen side keeps its current
   shipped behavior; the other side gets a decrypt-only compat path
   scoped to one major.
-- **If D is accepted:** document the asymmetry explicitly — managed-
-  mode metadata stays JS-only round-trip until a future format-bump
-  ADR supersedes this one.
+- **If D is accepted:** document the asymmetry explicitly. Managed-mode
+  metadata stays JS-only round-trip until a future format-bump ADR
+  supersedes this one.
 - **If E is accepted:** close this ADR with "rejected" status and
   carry the §8 caveat forward.
 
