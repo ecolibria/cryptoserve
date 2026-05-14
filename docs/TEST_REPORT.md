@@ -3,6 +3,21 @@
 **Date:** 2025-12-31
 **Tested by:** Claude (automated)
 
+> **Status as of 2026-05-14:** Both gaps in this report have been closed.
+>
+> - **SQLite ARRAY incompat** — resolved by introducing the `StringList` and
+>   `JSONType` TypeDecorators in `backend/app/database.py:34-79` (replace
+>   `ARRAY(String)` and `JSONB`). Verified: 1264 backend tests pass against
+>   `sqlite+aiosqlite:///:memory:`.
+> - **Go module parent-path detection** — resolved by the Go-specific
+>   `lookupPackage()` branch in `sdk/javascript/lib/crypto-registry.mjs`
+>   that walks the registry and returns the parent's entry on subpath
+>   match. Verified: subpackages like `golang.org/x/crypto/newpkg` resolve
+>   to the parent entry; 18 `test/scanner-manifests.test.mjs` tests pass.
+>
+> This report is now historical. Current behavior lives in the linked test
+> suites — don't rely on the gap analysis below for the May 2026 state.
+
 ## Summary
 
 Comprehensive testing of the new P0-P3 features: Code Scanner, Dependency Scanner, and Certificate Management.
