@@ -69,6 +69,7 @@ credentials.json
 .secrets/
 secrets/
 .cryptoserve/
+sdk/*/.cryptoserve.json
 !.env.example
 
 # Internal docs
