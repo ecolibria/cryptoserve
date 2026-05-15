@@ -133,7 +133,6 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           skip_existing: true
 
   publish-client:
@@ -153,7 +152,6 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           skip_existing: true
 
   publish-auto:
@@ -173,7 +171,6 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           skip_existing: true
 
   publish-main:
@@ -193,7 +190,6 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           skip_existing: true
 
   provenance:
@@ -218,16 +214,23 @@ jobs:
           done > ../SHA256SUMS.txt
           cat ../SHA256SUMS.txt
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          gh release create "$TAG" \
-            --title "CryptoServe SDK $TAG" \
-            --generate-notes \
-            SHA256SUMS.txt \
-            all-dist/dist-cryptoserve-core/*.whl \
-            all-dist/dist-cryptoserve-client/*.whl \
-            all-dist/dist-cryptoserve-auto/*.whl \
+          ASSETS=(
+            SHA256SUMS.txt
+            all-dist/dist-cryptoserve-core/*.whl
+            all-dist/dist-cryptoserve-client/*.whl
+            all-dist/dist-cryptoserve-auto/*.whl
             all-dist/dist-cryptoserve/*.whl
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" \
+              --title "CryptoServe SDK $TAG" \
+              --generate-notes \
+              "${ASSETS[@]}"
+          fi
