@@ -5,10 +5,12 @@ on:
     paths:
       - 'sdk/python/**'
       - 'backend/**'
+      - '.github/workflows/security.yml'
   pull_request:
     paths:
       - 'sdk/python/**'
       - 'backend/**'
+      - '.github/workflows/security.yml'
 
 permissions:
   contents: read
@@ -61,6 +63,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # pip 26.0.1 (default in setup-python images as of 2026-05) is itself
+      # subject to CVE-2026-3219 and CVE-2026-6357. These fire on every
+      # pip-audit run regardless of project dependencies. 26.1 fixes both.
+      - name: Pin pip to non-vulnerable version
+        run: python -m pip install --upgrade "pip>=26.1"
 
       - name: Install dependencies
         run: |
