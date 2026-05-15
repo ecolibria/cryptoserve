@@ -1,0 +1,30 @@
+name: Style Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-em-dashes:
+    name: No em dashes in prose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan tracked markdown for em dashes
+        run: |
+          # Em dash (U+2014) is banned in committed prose. Use periods,
+          # semicolons, colons, parentheses, or commas as fits.
+          # En dash (U+2013) is allowed for numeric ranges (e.g., 80-120).
+          MATCHES=$(git ls-files '*.md' | xargs grep -nP $'—' 2>/dev/null || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Em dash (U+2014) found in tracked markdown files."
+            echo "$MATCHES"
+            echo ""
+            echo "Replace each em dash with a period, semicolon, colon, parentheses, or comma."
+            exit 1
+          fi
+          echo "No em dashes found in tracked markdown."

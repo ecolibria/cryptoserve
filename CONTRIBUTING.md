@@ -62,6 +62,11 @@ pip install -e .
 - Format with Prettier
 - Lint with ESLint
 
+### Prose
+
+- No em dashes (Unicode U+2014) in any tracked markdown file. Use a period, semicolon, colon, parentheses, or comma instead. The `Style Check` CI job enforces this.
+- En dashes (U+2013) are fine for numeric ranges (e.g., `80` to `120`).
+
 ## Testing
 
 ### Backend Tests
