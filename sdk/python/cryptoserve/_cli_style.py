@@ -275,8 +275,29 @@ def brand_header() -> str:
 """
 
 
+def _banner_suppressed() -> bool:
+    """Whether the brand/compact banner should be suppressed.
+
+    Suppressed when stdout is not a TTY (e.g. piped/captured, as when another
+    CLI spawns cryptoserve) or when ``--ci`` is passed. This keeps the banner
+    from leaking into machine-readable / embedded output while preserving it
+    for interactive terminals.
+    """
+    if "--ci" in sys.argv:
+        return True
+    isatty = getattr(sys.stdout, "isatty", None)
+    if isatty is None:
+        return True
+    try:
+        return not isatty()
+    except Exception:
+        return True
+
+
 def compact_header(command: str = "") -> str:
     """Create a compact header for commands."""
+    if _banner_suppressed():
+        return ""
     if command:
         return f"\n{Style.HEADER}CRYPTOSERVE{Style.RESET} {Style.DIM}›{Style.RESET} {Style.LABEL}{command}{Style.RESET}\n"
     return f"\n{Style.HEADER}CRYPTOSERVE{Style.RESET}\n"

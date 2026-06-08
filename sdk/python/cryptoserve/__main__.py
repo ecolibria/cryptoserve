@@ -49,6 +49,13 @@ import os
 import sys
 import json
 
+# CLI binary name shown in usage/help citations. When CryptoServe is embedded
+# in another CLI (e.g. opena2a wraps it as `opena2a crypto`), that wrapper sets
+# CRYPTOSERVE_CLI_PREFIX so every "Usage: ... <verb>" / "<verb> ..." citation
+# renders the host command instead of the bare `cryptoserve` binary name.
+# Unset, this is exactly the historical value: "cryptoserve".
+CLI = os.environ.get("CRYPTOSERVE_CLI_PREFIX", "cryptoserve")
+
 # Import CLI styling
 try:
     from cryptoserve._cli_style import (
@@ -71,7 +78,13 @@ except ImportError:
     def dim(t): return t
     def bold(t): return t
     def divider(w=60): return "-" * w
-    def compact_header(c=""): return f"\nCRYPTOSERVE > {c}\n" if c else "\nCRYPTOSERVE\n"
+
+    def compact_header(c=""):
+        # Suppress the banner under non-TTY / --ci so embedding CLIs (which
+        # spawn cryptoserve over a pipe) don't leak the CRYPTOSERVE banner.
+        if not sys.stdout.isatty() or "--ci" in sys.argv:
+            return ""
+        return f"\nCRYPTOSERVE > {c}\n" if c else "\nCRYPTOSERVE\n"
 
 
 def print_header():
@@ -245,7 +258,7 @@ def cmd_login():
         print(dim("  Options:"))
         print(dim("    1. Start server with DEV_MODE=true for development login"))
         print(dim("    2. Configure OAuth (OAUTH_GITHUB_CLIENT_ID, etc.)"))
-        print(dim("    3. Set session manually: cryptoserve login --cookie <token>"))
+        print(dim(f"    3. Set session manually: {CLI} login --cookie <token>"))
         print()
         return 1
 
@@ -328,8 +341,8 @@ def cmd_login():
         print(success(f"Authenticated as {bold(auth_result['user'])}"))
         print()
         print(dim("  You can now use CLI commands:"))
-        print(dim("    cryptoserve promote my-app"))
-        print(dim("    cryptoserve promote my-app --confirm"))
+        print(dim(f"    {CLI} promote my-app"))
+        print(dim(f"    {CLI} promote my-app --confirm"))
         print()
         return 0
     else:
@@ -338,7 +351,7 @@ def cmd_login():
         print()
         print(dim("  Alternatives:"))
         print(dim(f"    1. Visit the URL manually: {login_url}"))
-        print(dim("    2. Set session manually: cryptoserve login --cookie <token>"))
+        print(dim(f"    2. Set session manually: {CLI} login --cookie <token>"))
         print()
         return 1
 
@@ -415,7 +428,7 @@ def cmd_info():
     session_cookie = _get_session_cookie()
 
     if not session_cookie:
-        print(f"  {error('Not logged in. Run: cryptoserve login')}")
+        print(f"  {error(f'Not logged in. Run: {CLI} login')}")
         print()
         return 1
 
@@ -426,7 +439,7 @@ def cmd_info():
             timeout=10,
         )
         if resp.status_code == 401:
-            print(f"  {error('Session expired. Run: cryptoserve login')}")
+            print(f"  {error(f'Session expired. Run: {CLI} login')}")
             print()
             return 1
         resp.raise_for_status()
@@ -509,8 +522,8 @@ def cmd_configure():
         print()
         print(dim("  Or provide token directly:"))
         print()
-        print(f"    cryptoserve configure --token <token>")
-        print(f"    cryptoserve configure --server <url>")
+        print(f"    {CLI} configure --token <token>")
+        print(f"    {CLI} configure --server <url>")
         print()
         return 0
 
@@ -701,7 +714,7 @@ def cmd_status():
     else:
         print(f"  {warning('SDK Not Configured')}")
         print()
-        print(dim("  Run 'cryptoserve configure' for setup instructions"))
+        print(dim(f"  Run '{CLI} configure' for setup instructions"))
 
     print()
     return 0
@@ -714,7 +727,7 @@ def cmd_certs():
         print(divider())
         print()
         print(f"  {bold('GENERATE-CSR')}  Create a Certificate Signing Request")
-        print(dim("    cryptoserve certs generate-csr --cn <common-name> [options]"))
+        print(dim(f"    {CLI} certs generate-csr --cn <common-name> [options]"))
         print()
         print(f"    {dim('--org <org>')}         Organization name")
         print(f"    {dim('--country <code>')}    Country code (2 letters)")
@@ -724,7 +737,7 @@ def cmd_certs():
         print(f"    {dim('--output <prefix>')}   Output file prefix")
         print()
         print(f"  {bold('SELF-SIGNED')}   Generate a self-signed certificate")
-        print(dim("    cryptoserve certs self-signed --cn <common-name> [options]"))
+        print(dim(f"    {CLI} certs self-signed --cn <common-name> [options]"))
         print()
         print(f"    {dim('--org <org>')}         Organization name")
         print(f"    {dim('--days <number>')}     Validity period (default: 365)")
@@ -733,10 +746,10 @@ def cmd_certs():
         print(f"    {dim('--output <prefix>')}   Output file prefix")
         print()
         print(f"  {bold('PARSE')}         Parse and display certificate information")
-        print(dim("    cryptoserve certs parse <cert.pem>"))
+        print(dim(f"    {CLI} certs parse <cert.pem>"))
         print()
         print(f"  {bold('VERIFY')}        Verify a certificate")
-        print(dim("    cryptoserve certs verify <cert.pem> [--issuer <ca.pem>]"))
+        print(dim(f"    {CLI} certs verify <cert.pem> [--issuer <ca.pem>]"))
         print()
         return 0
 
@@ -975,7 +988,7 @@ def _cmd_certs_parse():
     if len(sys.argv) < 4:
         print(f"  {error('Missing argument: certificate file')}")
         print()
-        print(dim("  Usage: cryptoserve certs parse <cert.pem>"))
+        print(dim(f"  Usage: {CLI} certs parse <cert.pem>"))
         print()
         return 1
 
@@ -1055,7 +1068,7 @@ def _cmd_certs_verify():
     if len(sys.argv) < 4:
         print(f"  {error('Missing argument: certificate file')}")
         print()
-        print(dim("  Usage: cryptoserve certs verify <cert.pem> [--issuer <ca.pem>]"))
+        print(dim(f"  Usage: {CLI} certs verify <cert.pem> [--issuer <ca.pem>]"))
         print()
         return 1
 
@@ -1176,15 +1189,15 @@ def cmd_promote():
     if not app_name:
         print(compact_header("PROMOTE"))
         print()
-        print(f"  {bold('Usage:')} cryptoserve promote <app-name> [options]")
+        print(f"  {bold('Usage:')} {CLI} promote <app-name> [options]")
         print()
         print(f"  {bold('Examples:')}")
-        print(dim("    cryptoserve promote my-backend-app              # Check readiness"))
-        print(dim("    cryptoserve promote my-backend-app --confirm    # Promote if ready"))
-        print(dim("    cryptoserve promote my-backend-app --expedite   # Request expedited"))
-        print(dim("    cryptoserve promote my-backend-app --to staging # Target environment"))
+        print(dim(f"    {CLI} promote my-backend-app              # Check readiness"))
+        print(dim(f"    {CLI} promote my-backend-app --confirm    # Promote if ready"))
+        print(dim(f"    {CLI} promote my-backend-app --expedite   # Request expedited"))
+        print(dim(f"    {CLI} promote my-backend-app --to staging # Target environment"))
         print()
-        print(warning("Requires login first: cryptoserve login"))
+        print(warning(f"Requires login first: {CLI} login"))
         print()
         return 1
 
@@ -1198,7 +1211,7 @@ def cmd_promote():
         print(error("Not authenticated"))
         print()
         print(dim("  Please login first:"))
-        print(dim("    cryptoserve login"))
+        print(dim(f"    {CLI} login"))
         print()
         return 1
 
@@ -1226,7 +1239,7 @@ def cmd_promote():
         if response.status_code == 401:
             print()
             print(error("Session expired"))
-            print(dim("  Please login again: cryptoserve login"))
+            print(dim(f"  Please login again: {CLI} login"))
             return 1
 
         response.raise_for_status()
@@ -1351,7 +1364,7 @@ def cmd_promote():
         if check_only:
             print()
             print(dim("  To promote, run:"))
-            print(f"    cryptoserve promote {app_name} --confirm")
+            print(f"    {CLI} promote {app_name} --confirm")
         else:
             # Proceed with promotion
             return _do_promotion(server_url, cookies, app_id, target_env)
@@ -1770,7 +1783,7 @@ def cmd_contexts():
         print(error("SDK not configured"))
         print()
         print(dim("  Configure with:"))
-        print(dim("    cryptoserve configure --token <your-token>"))
+        print(dim(f"    {CLI} configure --token <your-token>"))
         print()
         return 1
 
@@ -1871,7 +1884,7 @@ def cmd_contexts():
 
         if response.status_code == 401:
             print(error("Token expired or invalid"))
-            print(dim("  Run 'cryptoserve configure' to update your token"))
+            print(dim(f"  Run '{CLI} configure' to update your token"))
             return 1
 
         response.raise_for_status()
@@ -1889,7 +1902,7 @@ def cmd_contexts():
                 print(f"  {warning(msg)}")
                 print()
                 print(dim("  Try a different search term, or run without a query:"))
-                print(dim("    cryptoserve contexts"))
+                print(dim(f"    {CLI} contexts"))
             else:
                 print(f"  {warning('No contexts available')}")
                 print()
@@ -1937,7 +1950,7 @@ def cmd_contexts():
         print(f"    encrypted = crypto.encrypt(data, context=\"{first_ctx}\")")
         print()
         print(dim("  For details on a specific context:"))
-        print(dim(f"    cryptoserve contexts --example {first_ctx}"))
+        print(dim(f"    {CLI} contexts --example {first_ctx}"))
         print()
 
         return 0
@@ -2136,8 +2149,8 @@ def cmd_scan():
     if exit_code == 0 and not any(a in ("--help", "-h") for a in filtered_args):
         print()
         print(dim("  Tip: Upload results to CryptoServe dashboard:"))
-        print(dim("    cryptoserve scan . --push"))
-        print(dim("    cryptoserve push scan-results.json"))
+        print(dim(f"    {CLI} scan . --push"))
+        print(dim(f"    {CLI} push scan-results.json"))
         print()
 
     return exit_code
@@ -2214,8 +2227,8 @@ def cmd_deps():
     if exit_code == 0 and not any(a in ("--help", "-h") for a in filtered_args):
         print()
         print(dim("  Tip: Upload results to CryptoServe dashboard:"))
-        print(dim("    cryptoserve deps . --push"))
-        print(dim("    cryptoserve push deps-results.json"))
+        print(dim(f"    {CLI} deps . --push"))
+        print(dim(f"    {CLI} push deps-results.json"))
         print()
 
     return exit_code
@@ -2274,7 +2287,7 @@ def _push_results_file(file_path: str, cleanup: bool = False) -> int:
             session_cookie = _get_session_cookie()
             cli_server_url = _get_cli_server_url()
             if not session_cookie:
-                print(f"  {error('Not logged in. Run: cryptoserve login')}")
+                print(f"  {error(f'Not logged in. Run: {CLI} login')}")
                 return 1
             server_url = cli_server_url
             response = requests.post(
@@ -2339,9 +2352,9 @@ def cmd_push():
         print(compact_header("PUSH"))
         print(f"  {error('No file specified')}")
         print()
-        print(dim("  Usage: cryptoserve push <file>"))
-        print(dim("         cryptoserve push scan-results.json"))
-        print(dim("         cryptoserve push cbom.json"))
+        print(dim(f"  Usage: {CLI} push <file>"))
+        print(dim(f"         {CLI} push scan-results.json"))
+        print(dim(f"         {CLI} push cbom.json"))
         print()
         return 1
 
@@ -2469,7 +2482,7 @@ def cmd_cbom():
                 print(dim("    View in dashboard: Tools > CBOM Reports"))
             else:
                 print(f"  {warning('Upload skipped (not authenticated or server unavailable)')}")
-                print(dim("    Run 'cryptoserve login' to enable platform sync"))
+                print(dim(f"    Run '{CLI} login' to enable platform sync"))
 
         print()
         return 0
@@ -2949,8 +2962,8 @@ def cmd_encrypt():
 
     if not password:
         print(error("Missing required option: --password"))
-        print(dim("  Usage: cryptoserve encrypt \"text\" --password <password>"))
-        print(dim("         cryptoserve encrypt --file <path> --output <path> --password <password>"))
+        print(dim(f"  Usage: {CLI} encrypt \"text\" --password <password>"))
+        print(dim(f"         {CLI} encrypt --file <path> --output <path> --password <password>"))
         return 1
 
     if file_path:
@@ -2975,7 +2988,7 @@ def cmd_encrypt():
             return 1
     else:
         print(error("Provide text to encrypt or use --file"))
-        print(dim("  Usage: cryptoserve encrypt \"text\" --password <password>"))
+        print(dim(f"  Usage: {CLI} encrypt \"text\" --password <password>"))
         return 1
 
 
@@ -3009,8 +3022,8 @@ def cmd_decrypt():
 
     if not password:
         print(error("Missing required option: --password"))
-        print(dim("  Usage: cryptoserve decrypt \"<base64>\" --password <password>"))
-        print(dim("         cryptoserve decrypt --file <path> --output <path> --password <password>"))
+        print(dim(f"  Usage: {CLI} decrypt \"<base64>\" --password <password>"))
+        print(dim(f"         {CLI} decrypt --file <path> --output <path> --password <password>"))
         return 1
 
     if file_path:
@@ -3036,7 +3049,7 @@ def cmd_decrypt():
             return 1
     else:
         print(error("Provide base64 ciphertext to decrypt or use --file"))
-        print(dim("  Usage: cryptoserve decrypt \"<base64>\" --password <password>"))
+        print(dim(f"  Usage: {CLI} decrypt \"<base64>\" --password <password>"))
         return 1
 
 
@@ -3110,7 +3123,7 @@ def cmd_token():
 
     if not key:
         print(error("Missing required option: --key"))
-        print(dim("  Usage: cryptoserve token --key <secret> [--payload '{...}'] [--expires N]"))
+        print(dim(f"  Usage: {CLI} token --key <secret> [--payload '{{...}}'] [--expires N]"))
         return 1
 
     key_bytes = key.encode("utf-8")
@@ -3142,21 +3155,21 @@ def cmd_version():
     pyproject.toml. Mirrors the JS CLI's `cryptoserve version` output.
     """
     from cryptoserve import __version__
-    print(f"cryptoserve {__version__}")
+    print(f"{CLI} {__version__}")
     return 0
 
 
 def cmd_help():
     """Show help."""
     print(compact_header("HELP"))
-    print(dim("  Usage: cryptoserve <command> [options]"))
+    print(dim(f"  Usage: {CLI} <command> [options]"))
     print()
     print(divider())
     print()
     print(f"  {bold('QUICK START')}")
     print()
     print(dim("    1. Login once:"))
-    print(f"       cryptoserve login")
+    print(f"       {CLI} login")
     print()
     print(dim("    2. Use in your code:"))
     print(dim('       from cryptoserve import CryptoServe'))
@@ -3177,7 +3190,7 @@ def cmd_help():
     print(f"  {bold('APP MANAGEMENT')} {dim('(requires login)')}")
     print()
     print(f"    {bold('promote')}    Check promotion readiness or request promotion")
-    print(dim("               cryptoserve promote <app-name> [options]"))
+    print(dim(f"               {CLI} promote <app-name> [options]"))
     print(dim("               --to <env>     Target environment"))
     print(dim("               --confirm      Proceed with promotion"))
     print(dim("               --expedite     Request expedited approval"))
@@ -3188,26 +3201,26 @@ def cmd_help():
     print(f"    {bold('verify')}     Verify SDK is working correctly")
     print(f"    {bold('info')}       Show current identity information")
     print(f"    {bold('contexts')}   List and search encryption contexts")
-    print(dim("               cryptoserve contexts             # List all"))
-    print(dim("               cryptoserve contexts \"email\"     # Search"))
-    print(dim("               cryptoserve contexts -e user-pii # Example"))
+    print(dim(f"               {CLI} contexts             # List all"))
+    print(dim(f"               {CLI} contexts \"email\"     # Search"))
+    print(dim(f"               {CLI} contexts -e user-pii # Example"))
     print()
     print(f"  {bold('SCANNING TOOLS')} {dim('(no server required)')}")
     print()
     print(f"    {bold('scan')}       Deep cryptographic scan (CryptoScan binary)")
-    print(dim("               cryptoserve scan .                # Scan directory"))
-    print(dim("               cryptoserve scan . --push         # Scan + upload"))
-    print(dim("               cryptoserve scan . --format sarif # SARIF output"))
+    print(dim(f"               {CLI} scan .                # Scan directory"))
+    print(dim(f"               {CLI} scan . --push         # Scan + upload"))
+    print(dim(f"               {CLI} scan . --format sarif # SARIF output"))
     print(dim("               --python-only  Use built-in Python scanner"))
     print(dim("               --update       Force re-download of binary"))
     print()
     print(f"    {bold('deps')}       Cryptographic dependency analysis (CryptoDeps binary)")
-    print(dim("               cryptoserve deps .                # Analyze deps"))
-    print(dim("               cryptoserve deps . --push         # Analyze + upload"))
+    print(dim(f"               {CLI} deps .                # Analyze deps"))
+    print(dim(f"               {CLI} deps . --push         # Analyze + upload"))
     print(dim("               --update       Force re-download of binary"))
     print()
     print(f"    {bold('push')}       Upload scan results to CryptoServe dashboard")
-    print(dim("               cryptoserve push scan-results.json"))
+    print(dim(f"               {CLI} push scan-results.json"))
     print(dim("               Accepts: CryptoScan JSON, CryptoDeps JSON, CycloneDX CBOM"))
     print()
     print(f"  {bold('SECURITY TOOLS')}")
@@ -3252,18 +3265,18 @@ def cmd_help():
     print(f"  {bold('OFFLINE TOOLS')} {dim('(no server required)')}")
     print()
     print(f"    {bold('encrypt')}    Encrypt a string or file with a password")
-    print(dim("               cryptoserve encrypt \"text\" --password <pw>"))
-    print(dim("               cryptoserve encrypt --file <in> --output <out> --password <pw>"))
+    print(dim(f"               {CLI} encrypt \"text\" --password <pw>"))
+    print(dim(f"               {CLI} encrypt --file <in> --output <out> --password <pw>"))
     print()
     print(f"    {bold('decrypt')}    Decrypt a string or file with a password")
-    print(dim("               cryptoserve decrypt \"<base64>\" --password <pw>"))
-    print(dim("               cryptoserve decrypt --file <in> --output <out> --password <pw>"))
+    print(dim(f"               {CLI} decrypt \"<base64>\" --password <pw>"))
+    print(dim(f"               {CLI} decrypt --file <in> --output <out> --password <pw>"))
     print()
     print(f"    {bold('hash-password')} Hash a password (scrypt or PBKDF2)")
-    print(dim("               cryptoserve hash-password [password] [--algo scrypt|pbkdf2]"))
+    print(dim(f"               {CLI} hash-password [password] [--algo scrypt|pbkdf2]"))
     print()
     print(f"    {bold('token')}      Create a JWT token (HS256)")
-    print(dim("               cryptoserve token --key <secret> [--payload '{{...}}'] [--expires N]"))
+    print(dim(f"               {CLI} token --key <secret> [--payload '{{...}}'] [--expires N]"))
     print()
     print(f"  {bold('OTHER')}")
     print()
@@ -3308,7 +3321,7 @@ def cmd_backup():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     # Get backup password
@@ -3386,7 +3399,7 @@ def cmd_backup():
             else:
                 print(warning(f"Failed to download: {download_resp.status_code}"))
         else:
-            print(info(f"To download: cryptoserve backup --output backup.tar.gz.enc"))
+            print(info(f"To download: {CLI} backup --output backup.tar.gz.enc"))
             print(info(f"Or use: GET /api/admin/backups/{data['backup_id']}/download"))
 
         return 0
@@ -3425,15 +3438,15 @@ def cmd_restore():
     if not backup_path:
         print(error("Backup path required. Use --backup <file>"))
         print()
-        print(info("Usage: cryptoserve restore --backup backup.tar.gz.enc"))
-        print(info("       cryptoserve restore --backup backup.tar.gz.enc --execute"))
+        print(info(f"Usage: {CLI} restore --backup backup.tar.gz.enc"))
+        print(info(f"       {CLI} restore --backup backup.tar.gz.enc --execute"))
         return 1
 
     # Check login
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     # For now, local file restore is not supported via API
@@ -3554,7 +3567,7 @@ def cmd_backups():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     try:
@@ -3578,7 +3591,7 @@ def cmd_backups():
             print()
             print(info("No backups found."))
             print()
-            print(info("Create a backup with: cryptoserve backup"))
+            print(info(f"Create a backup with: {CLI} backup"))
             return 0
 
         print()
@@ -3664,9 +3677,9 @@ def _ceremony_help():
     print(f"    {bold('audit')}       View ceremony audit log")
     print()
     print("  Examples:")
-    print("    cryptoserve ceremony status")
-    print("    cryptoserve ceremony initialize --threshold 3 --shares 5")
-    print("    cryptoserve ceremony unseal --share <hex-share>")
+    print(f"    {CLI} ceremony status")
+    print(f"    {CLI} ceremony initialize --threshold 3 --shares 5")
+    print(f"    {CLI} ceremony unseal --share <hex-share>")
     print()
 
 
@@ -3679,7 +3692,7 @@ def _ceremony_status():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     try:
@@ -3774,7 +3787,7 @@ def _ceremony_initialize():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     print()
@@ -3865,7 +3878,7 @@ def _ceremony_seal():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     print()
@@ -3905,7 +3918,7 @@ def _ceremony_seal():
         print()
         print(success("Service sealed. Master key cleared from memory."))
         print()
-        print(info("Use 'cryptoserve ceremony unseal --share <share>' to unseal."))
+        print(info(f"Use '{CLI} ceremony unseal --share <share>' to unseal."))
         print()
 
         return 0
@@ -3936,7 +3949,7 @@ def _ceremony_unseal():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     # Prompt for share if not provided
@@ -4024,7 +4037,7 @@ def _ceremony_verify():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     # Prompt for share if not provided
@@ -4102,7 +4115,7 @@ def _ceremony_audit():
     server = _get_server_url()
     cookie = _get_session_cookie()
     if not cookie:
-        print(error("Not logged in. Run 'cryptoserve login' first."))
+        print(error(f"Not logged in. Run '{CLI} login' first."))
         return 1
 
     try:
