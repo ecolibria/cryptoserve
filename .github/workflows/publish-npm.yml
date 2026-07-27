@@ -1,23 +1,152 @@
 name: Publish to npm
 
+# Tag push IS the publish event. Under npm Trusted Publishing there is no
+# manual `npm publish` step and no long-lived token anywhere in this workflow:
+# GitHub Actions exchanges its OIDC token with the registry directly.
+#
+# ONE-TIME SETUP on npmjs.com (required before the next release):
+#   Package settings -> Publishing access -> Trusted Publisher -> GitHub Actions
+#     Organization/User: ecolibria
+#     Repository:        cryptoserve
+#     Workflow filename: publish-npm.yml
+#     Environment:       (blank)
+#     Allowed actions:   must include "npm publish"
+#   Verify with: npm trust list cryptoserve
+# Without this the publish step fails with an OIDC verification error rather
+# than silently falling back to a token.
+
 on:
   push:
     tags: ['js-v*']
+  # Manual OIDC check. Confirms the trusted publisher AND the "Allowed actions"
+  # setting, which `npm trust list` does not expose and which only shows up at
+  # publish time. Must live in THIS file: npm keys the publisher to the
+  # workflow filename.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # npm refuses to republish an existing version, and it refuses AFTER
+  # authenticating. So attempting to publish a version that is already on the
+  # registry exercises the whole OIDC path and cannot overwrite anything: the
+  # registry itself is the backstop, not a flag we could get wrong.
+  verify-trusted-publishing:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4.3.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Same safety property as the PyPI verifier: this only fails to publish
+      # because the version already exists. If it has been bumped and not yet
+      # released, the run would publish it for real.
+      - name: Refuse to verify unless this version is already published
+        working-directory: sdk/javascript
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "local version: $VERSION"
+          if ! npm view "cryptoserve@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::cryptoserve@$VERSION is NOT on the registry yet."
+            echo "::error::A verify run would publish it for real. Refusing."
+            echo "::error::Release through a js-v tag push instead."
+            exit 1
+          fi
+          echo "Already on the registry. This run cannot publish."
+
+      # Deliberately without --provenance: a real release signs to the public
+      # Sigstore transparency log, and a verification run should not leave
+      # entries there for an artifact it never publishes.
+      - name: Attempt publish and classify the failure
+        working-directory: sdk/javascript
+        run: |
+          set +e
+          OUTPUT="$(npm publish --access public 2>&1)"
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+
+          if [ $STATUS -eq 0 ]; then
+            echo "::error::Publish SUCCEEDED. The guard above should have made this impossible."
+            exit 1
+          fi
+
+          # Rejected for being a duplicate: the registry accepted our identity
+          # first, so the trusted publisher and its allowed actions are good.
+          if echo "$OUTPUT" | grep -qiE "cannot publish over|previously published|EPUBLISHCONFLICT|403 Forbidden - PUT.*over"; then
+            echo "OIDC Trusted Publishing verified: authenticated, then refused as a duplicate."
+            exit 0
+          fi
+
+          # Anything else is an auth or configuration failure.
+          if echo "$OUTPUT" | grep -qiE "ENEEDAUTH|E401|Unauthorized|OIDC|id-token|not allowed to publish|trusted publish"; then
+            echo "::error::Authentication or trusted-publisher failure, not a duplicate rejection."
+            echo "::error::Check https://www.npmjs.com/package/cryptoserve/access:"
+            echo "::error::  repository ecolibria/cryptoserve, workflow publish-npm.yml, environment blank,"
+            echo "::error::  and Allowed actions must include \"npm publish\"."
+            exit 1
+          fi
+
+          echo "::error::Publish failed for an unrecognized reason; read the output above."
+          exit 1
+
+  # The tag must agree with package.json. Tags v1.5.0 and v1.8.0 in this repo
+  # point at trees whose versions are 0.8.0 and 1.3.0 respectively: the tag has
+  # never been evidence of what actually shipped. This job makes it evidence.
+  verify-tag:
+    if: startsWith(github.ref, 'refs/tags/js-v')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      already-published: ${{ steps.check.outputs.already-published }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Tag matches package.json, and is not already on the registry
+        id: check
+        working-directory: sdk/javascript
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          TAG_VERSION="${TAG#js-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG implies version $TAG_VERSION but sdk/javascript/package.json says $PKG_VERSION."
+            echo "::error::Fix the version, retag, and push again. Refusing to publish a mislabelled release."
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Idempotence: re-running a partially failed workflow must not fail
+          # the whole run on an already-published version.
+          if npm view "cryptoserve@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "cryptoserve@$PKG_VERSION is already on the registry; publish will be skipped."
+            echo "already-published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already-published=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: verify-tag
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: ['18', '20', '22']
+        node-version: ['18', '20', '22', '24']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4.3.0
         with:
           node-version: ${{ matrix.node-version }}
+
       - name: Run tests
         working-directory: sdk/javascript
         run: node --test test/*.test.mjs
@@ -27,19 +156,146 @@ jobs:
         run: npm run release-smoke
 
   publish:
-    needs: test
+    needs: [verify-tag, test]
+    if: needs.verify-tag.outputs.already-published != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write   # OIDC exchange with the npm registry
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      # Node 24 ships npm >= 11, which is the floor for Trusted Publishing.
+      # On Node 20 the OIDC exchange is not attempted at all.
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4.3.0
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Confirm npm supports Trusted Publishing
+        run: |
+          set -euo pipefail
+          echo "npm $(npm --version) on node $(node --version)"
+          MAJOR="$(npm --version | cut -d. -f1)"
+          if [ "$MAJOR" -lt 11 ]; then
+            echo "::error::npm $MAJOR is below the npm 11 floor for Trusted Publishing."
+            exit 1
+          fi
+
+      # No NODE_AUTH_TOKEN and no NPM_TOKEN. setup-node plus npm >= 11 detect
+      # the OIDC flow from id-token: write. --provenance is implicit under
+      # Trusted Publishing; it stays for explicitness.
       - name: Publish
         working-directory: sdk/javascript
         run: npm publish --provenance --access public
+
+  verify-provenance:
+    needs: [verify-tag, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4.3.0
+        with:
+          node-version: '24'
+
+      # A publish that produces no attestation cannot be verified by consumers.
+      # cryptoserve@0.3.4 shipped with --provenance and has no attestations at
+      # all, which went unnoticed. Fail the release instead.
+      # npm audit signatures cryptographically verifies the registry signature
+      # and the provenance attestation against npm's public keys. Grepping the
+      # metadata blob for the string "slsa" would only prove a word appears in
+      # some JSON: a descriptor is not a signature, and a check that cannot
+      # fail on a forged input is not a check.
+      - name: Verify provenance cryptographically
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify-tag.outputs.version }}"
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null 2>&1
+
+          for attempt in 1 2 3 4 5; do
+            if npm install --no-audit --no-fund "cryptoserve@$VERSION" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Version not installable yet (attempt $attempt); waiting for registry propagation..."
+            sleep 20
+          done
+
+          # Fails on a missing, malformed, or untrusted attestation.
+          if ! npm audit signatures; then
+            echo "::error::cryptoserve@$VERSION failed signature/provenance verification."
+            echo "::error::Check Trusted Publishing: npm trust list cryptoserve"
+            exit 1
+          fi
+
+          # audit signatures also passes for a package that is merely signed,
+          # so assert the provenance attestation exists and carries a SLSA
+          # predicate type in the field that defines it, not anywhere in the
+          # document.
+          npm view "cryptoserve@$VERSION" dist.attestations --json > att.json || true
+          node -e '
+            const fs = require("fs");
+            let a = null;
+            try { a = JSON.parse(fs.readFileSync("att.json", "utf8") || "null"); } catch {}
+            if (!a) {
+              console.error("::error::no dist.attestations on the published version");
+              process.exit(1);
+            }
+            const pt = a && a.provenance && a.provenance.predicateType;
+            if (typeof pt !== "string" || !pt.startsWith("https://slsa.dev/provenance/")) {
+              console.error("::error::provenance.predicateType is not a SLSA provenance type: " + JSON.stringify(pt));
+              process.exit(1);
+            }
+            console.log("Provenance verified: " + pt);
+          '
+          echo "cryptoserve@$VERSION: signature and SLSA provenance verified."
+
+  release:
+    needs: [verify-tag, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4.3.0
+        with:
+          node-version: '24'
+
+      # Checksums are written with bare filenames so `sha256sum -c` works in the
+      # directory a user downloads into. A checksum file carrying a build-layout
+      # path prefix can only be verified by the machine that built it.
+      - name: Pack tarball and record checksum
+        run: |
+          set -euo pipefail
+          cd sdk/javascript
+          TARBALL="$(npm pack --silent)"
+          mv "$TARBALL" "$GITHUB_WORKSPACE/"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "$TARBALL" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Create GitHub Release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${{ needs.verify-tag.outputs.version }}"
+          cat > notes.md <<EOF
+          CryptoServe CLI $VERSION (npm).
+
+          Published from this tag via npm Trusted Publishing (OIDC). No long-lived
+          registry token is used at any point in this release.
+
+          Verify:
+
+              npm view cryptoserve@$VERSION dist.attestations --json
+              gh release download $TAG -p SHA256SUMS.txt -p '*.tgz' -R ecolibria/cryptoserve
+              sha256sum -c SHA256SUMS.txt
+          EOF
+          gh release create "$TAG" \
+            --title "CryptoServe CLI $VERSION" \
+            --notes-file notes.md \
+            SHA256SUMS.txt \
+            ./*.tgz

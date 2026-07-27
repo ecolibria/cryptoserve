@@ -4,13 +4,116 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual OIDC check. Proves PyPI Trusted Publishing works for all four
+  # projects without releasing anything. It has to live in THIS file: PyPI keys
+  # a trusted publisher to the workflow filename, so the same steps in a
+  # separate workflow would fail the exchange for the wrong reason and prove
+  # nothing.
+  workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write  # Required for OIDC Trusted Publishers
 
 jobs:
+  # Exercises the full OIDC exchange against versions that are already on
+  # PyPI, so twine authenticates and then skips every file as a duplicate.
+  # One matrix leg per project, fail-fast off, because the risk this exists to
+  # catch is exactly one of the four being configured wrong.
+  verify-trusted-publishing:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: pypi          # must match the Environment name on PyPI
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cryptoserve
+            dir: sdk/python
+          - name: cryptoserve-core
+            dir: sdk/python/packages/cryptoserve-core
+          - name: cryptoserve-client
+            dir: sdk/python/packages/cryptoserve-client
+          - name: cryptoserve-auto
+            dir: sdk/python/packages/cryptoserve-auto
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # THE SAFETY PROPERTY. This job uploads real artifacts to real PyPI and
+      # relies on the version already existing for nothing to happen. If a
+      # version has been bumped and not yet released, the same run would
+      # publish it for real. Refuse rather than depend on the two staying in
+      # sync by luck.
+      - name: Refuse to verify unless this version is already published
+        run: |
+          set -euo pipefail
+          VERSION="$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('${{ matrix.dir }}/pyproject.toml').read_text())['project']['version'])")"
+          echo "${{ matrix.name }} local version: $VERSION"
+
+          PUBLISHED="$(curl -sf "https://pypi.org/pypi/${{ matrix.name }}/json" \
+            | python -c "import json,sys; print('yes' if '$VERSION' in json.load(sys.stdin)['releases'] else 'no')")"
+
+          if [ "$PUBLISHED" != "yes" ]; then
+            echo "::error::${{ matrix.name }} $VERSION is NOT on PyPI yet."
+            echo "::error::A verify run would publish it for real. Refusing."
+            echo "::error::Release through a tag push instead, or run verify from a commit whose version is already published."
+            exit 1
+          fi
+          echo "Already on PyPI. Nothing can be published by this run."
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          pip install build
+          cd ${{ matrix.dir }} && python -m build
+
+      # No password: this is the exchange under test. A misconfigured trusted
+      # publisher fails here with an OIDC error. A correct one authenticates
+      # and then skips the duplicate file.
+      - name: Exchange OIDC token with PyPI and attempt upload
+        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
+        with:
+          packages-dir: ${{ matrix.dir }}/dist/
+          skip-existing: true
+
+      - name: Result
+        run: echo "OIDC Trusted Publishing verified for ${{ matrix.name }}; nothing was published."
+
+  # The tag must agree with the version being built. Tag v1.5.0 in this repo
+  # points at a tree whose pyproject.toml says 0.8.0, and v1.8.0 at 1.3.0: the
+  # workflow publishes whatever is in the tree, so the tag has never been
+  # evidence of what shipped. This job makes it evidence.
+  verify-tag:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Tag matches sdk/python/pyproject.toml
+        id: check
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          TAG_VERSION="${TAG#v}"
+          PKG_VERSION="$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('sdk/python/pyproject.toml').read_text())['project']['version'])")"
+
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG implies version $TAG_VERSION but sdk/python/pyproject.toml says $PKG_VERSION."
+            echo "::error::Fix the version, retag, and push again. Refusing to publish a mislabelled release."
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: verify-tag
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -133,7 +236,9 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          # No password. With id-token: write and a PyPI Trusted Publisher
+          # configured, the action exchanges the OIDC token directly. Passing
+          # a token here would take precedence and silently defeat that.
           skip_existing: true
 
   publish-client:
@@ -153,7 +258,9 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          # No password. With id-token: write and a PyPI Trusted Publisher
+          # configured, the action exchanges the OIDC token directly. Passing
+          # a token here would take precedence and silently defeat that.
           skip_existing: true
 
   publish-auto:
@@ -173,7 +280,9 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          # No password. With id-token: write and a PyPI Trusted Publisher
+          # configured, the action exchanges the OIDC token directly. Passing
+          # a token here would take precedence and silently defeat that.
           skip_existing: true
 
   publish-main:
@@ -193,11 +302,13 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          # No password. With id-token: write and a PyPI Trusted Publisher
+          # configured, the action exchanges the OIDC token directly. Passing
+          # a token here would take precedence and silently defeat that.
           skip_existing: true
 
   provenance:
-    needs: [publish-core, publish-client, publish-auto, publish-main]
+    needs: [verify-tag, publish-core, publish-client, publish-auto, publish-main]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -210,24 +321,47 @@ jobs:
         with:
           path: all-dist/
 
-      - name: Generate checksums
+      # Flatten first. `find .` from all-dist/ produced entries like
+      # ./dist-cryptoserve/foo.whl, so the documented verification path
+      # (gh release download, then sha256sum -c) looked for build directories
+      # that no downloader has. Checksums must use bare filenames, and must
+      # cover exactly the files attached to the release.
+      - name: Collect artifacts and generate checksums
         run: |
-          cd all-dist
-          find . -name "*.whl" -o -name "*.tar.gz" | sort | while read f; do
-            sha256sum "$f"
-          done > ../SHA256SUMS.txt
-          cat ../SHA256SUMS.txt
+          set -euo pipefail
+          mkdir -p release
+          find all-dist -type f \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} release/ \;
+          cd release
+          # Enumerate by extension rather than `ls`: the redirection creates an
+          # empty SHA256SUMS.txt before the pipeline runs, so a bare listing can
+          # race and checksum the checksum file itself.
+          find . -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) -printf '%P\n' \
+            | sort | xargs sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # Prove the file verifies here so a user is never the first to try.
+          sha256sum -c SHA256SUMS.txt
 
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG=${GITHUB_REF#refs/tags/}
+          VERSION="${{ needs.verify-tag.outputs.version }}"
+          cat > notes.md <<EOF
+          CryptoServe Python SDK $VERSION.
+
+          Published from this tag via PyPI Trusted Publishing (OIDC). No API
+          token is used at any point in this release.
+
+          Verify every wheel and sdist attached here:
+
+              gh release download $TAG -R ecolibria/cryptoserve
+              sha256sum -c SHA256SUMS.txt
+          EOF
           gh release create "$TAG" \
-            --title "CryptoServe SDK $TAG" \
-            --generate-notes \
-            SHA256SUMS.txt \
-            all-dist/dist-cryptoserve-core/*.whl \
-            all-dist/dist-cryptoserve-client/*.whl \
-            all-dist/dist-cryptoserve-auto/*.whl \
-            all-dist/dist-cryptoserve/*.whl
+            --title "CryptoServe SDK $VERSION" \
+            --notes-file notes.md \
+            release/SHA256SUMS.txt \
+            release/*.whl \
+            release/*.tar.gz
