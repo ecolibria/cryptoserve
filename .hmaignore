@@ -1,0 +1,18 @@
+# HackMyAgent suppressions. Each entry must state why the finding is not real.
+# A suppression with no justification is indistinguishable from hiding a bug.
+
+# ci/gitlab-ci-policy.yml:119 is a GitLab `rules:if` expression:
+#     - if: '$CRYPTOSERVE_API_URL && $CRYPTOSERVE_API_KEY'
+# It references two variables by NAME and contains no value. The credentials
+# detector matches on the identifier rather than on an assigned secret, so it
+# reports the opposite of what the line does: this is the recommended pattern
+# for keeping keys out of source.
+#
+# Verified 2026-07-27 by independent grep for real credential formats across
+# the whole tree (sk-ant-api, sk-proj-, AKIA, ghp_, npm_, PEM private keys).
+# Only hits are PEM header assertions in tests and AWS's own published example
+# key AKIAIOSFODNN7EXAMPLE in a documented release-smoke fixture.
+#
+# This is a false positive in our own scanner and is tracked for a fix in
+# hackmyagent rather than left as a permanent suppression.
+ci/gitlab-ci-policy.yml
