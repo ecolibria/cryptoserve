@@ -161,8 +161,7 @@ def normalize_database_url(url: str) -> str:
     driver = _ASYNC_DRIVERS.get(scheme)
     if driver is None:
         raise ValueError(
-            f"Unsupported database dialect {scheme!r}. "
-            f"Supported: {', '.join(sorted(_ASYNC_DRIVERS))}."
+            f"Unsupported database dialect {scheme!r}. " f"Supported: {', '.join(sorted(_ASYNC_DRIVERS))}."
         )
 
     return f"{scheme}+{driver}://{rest}"
