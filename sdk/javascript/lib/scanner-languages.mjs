@@ -1,18 +1,103 @@
 /**
  * Multi-language crypto pattern detection.
  *
- * Detects crypto usage in Go, Python, Java/Kotlin, Rust, and C/C++ source files.
- * Ported from backend/app/core/code_scanner.py LIBRARY_PATTERNS.
- * Zero dependencies.
+ * Detects crypto usage in JavaScript/TypeScript, Go, Python, Java/Kotlin, Rust,
+ * and C/C++ source files. Ported from backend/app/core/code_scanner.py
+ * LIBRARY_PATTERNS. Zero dependencies.
+ *
+ * A pattern entry is either:
+ *   { regex, algorithm, category }   - fixed algorithm label
+ *   { regex, capture: n, category }  - algorithm read from capture group n and
+ *                                      canonicalized via algorithm-db. Used for
+ *                                      APIs that name the algorithm in an
+ *                                      argument ("des-ede3-cbc", "SHA-1"), where
+ *                                      a fixed label would collapse distinct
+ *                                      algorithms onto one name.
+ *
+ * Every match carries the 1-based source line so findings are addressable.
  */
 
 import { extname } from 'node:path';
+import { canonicalizeAlgorithmToken, lookupAlgorithm } from './algorithm-db.mjs';
 
 // ---------------------------------------------------------------------------
 // Per-language regex patterns
 // ---------------------------------------------------------------------------
 
 export const LANGUAGE_PATTERNS = {
+  javascript: {
+    extensions: ['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx'],
+    patterns: [
+      // node:crypto — the algorithm is an argument, so read it from the source.
+      { regex: /create(?:Hash|Hmac)\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'hashing' },
+      { regex: /create(?:Cipher|Decipher)iv\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'encryption' },
+      { regex: /create(?:Cipher|Decipher)\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'encryption' },
+      { regex: /createSign\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'signing' },
+      { regex: /createVerify\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'signing' },
+      { regex: /generateKeyPair(?:Sync)?\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'signing' },
+      { regex: /createECDH\s*\(\s*['"`]([\w./-]+)['"`]/g, capture: 1, category: 'key_exchange' },
+      { regex: /createDiffieHellman(?:Group)?\s*\(/g, algorithm: 'dh', category: 'key_exchange' },
+      { regex: /\bscrypt(?:Sync)?\s*\(/g, algorithm: 'scrypt', category: 'kdf' },
+      { regex: /\bpbkdf2(?:Sync)?\s*\(/g, algorithm: 'pbkdf2', category: 'kdf' },
+      { regex: /\bhkdf(?:Sync)?\s*\(/g, algorithm: 'hkdf', category: 'kdf' },
+      { regex: /\brandomBytes\s*\(|\brandomUUID\s*\(|\bgetRandomValues\s*\(/g, algorithm: 'csprng', category: 'random' },
+
+      // WebCrypto — algorithm names live in a `name:` property or a digest arg.
+      // The capture is restricted to the WebCrypto registry so an unrelated
+      // `name: "..."` in a config object cannot be read as an algorithm.
+      { regex: /name\s*:\s*['"`](RSASSA-PKCS1-v1_5|RSA-PSS|RSA-OAEP|ECDSA|ECDH|Ed25519|Ed448|X25519|X448|AES-CTR|AES-CBC|AES-GCM|AES-KW|HMAC|PBKDF2|HKDF|SHA-1|SHA-256|SHA-384|SHA-512)['"`]/gi, capture: 1, category: 'encryption' },
+      { regex: /subtle\s*\.\s*digest\s*\(\s*(?:\{\s*name\s*:\s*)?['"`]([\w-]+)['"`]/g, capture: 1, category: 'hashing' },
+
+      // JWT / JOSE algorithm identifiers.
+      { regex: /algorithms?\s*:\s*\[?\s*['"`]((?:HS|RS|ES|PS)(?:256|384|512)|EdDSA|none)['"`]/g, capture: 1, category: 'signing' },
+
+      // Bare algorithm string literals, e.g. `const alg = 'ed25519'` or an
+      // algorithm passed through a variable. Call-site patterns alone miss
+      // these, and among them are weak algorithms ('dsa', 'des', 'rc4') whose
+      // detection must not depend on the call being inline. The token list is
+      // an explicit allowlist rather than "any quoted string", and the
+      // category comes from the algorithm database rather than being fixed
+      // per pattern, which is what previously collapsed sha1 onto SHA-256.
+      { regex: /['"`](ed25519|ed448|x25519|x448|curve25519|secp256k1|secp384r1|secp256r1|prime256v1|chacha20-poly1305|xchacha20-poly1305|chacha20|rsa-pss|rsa-oaep|ecdsa|ecdh|rsa|dsa|md5|md4|sha1|sha224|sha256|sha384|sha512|sha3-256|sha3-512|blake2b|blake2s|3des|des-ede3|des|rc4|rc2|blowfish|idea|cast5|argon2id|argon2|bcrypt|scrypt|pbkdf2|hkdf|ml-kem|ml-dsa|kyber|dilithium)['"`]/gi, capture: 1, category: null },
+
+      // crypto-js
+      { regex: /CryptoJS\s*\.\s*(MD5|SHA1|SHA224|SHA256|SHA384|SHA512|SHA3|RIPEMD160|AES|DES|TripleDES|RC4|Rabbit|HmacMD5|HmacSHA1|HmacSHA256)\b/g, capture: 1, category: 'encryption' },
+
+      // node-forge
+      { regex: /forge\s*\.\s*md\s*\.\s*(md5|sha1|sha256|sha384|sha512)\b/g, capture: 1, category: 'hashing' },
+      { regex: /forge\s*\.\s*cipher\s*\.\s*create(?:Cipher|Decipher)\s*\(\s*['"`]([\w-]+)['"`]/g, capture: 1, category: 'encryption' },
+      { regex: /forge\s*\.\s*pki\s*\.\s*rsa\b/g, algorithm: 'rsa', category: 'encryption' },
+
+      // tweetnacl / libsodium bindings
+      { regex: /nacl\s*\.\s*(?:secretbox|box)\b/g, algorithm: 'xsalsa20', category: 'encryption' },
+      { regex: /nacl\s*\.\s*sign\b/g, algorithm: 'ed25519', category: 'signing' },
+      { regex: /crypto_(?:secretbox|aead_xchacha20poly1305)\w*/g, algorithm: 'xchacha20-poly1305', category: 'encryption' },
+
+      // bcrypt / argon2 npm packages used as functions
+      { regex: /\bbcrypt\s*\.\s*(?:hash|hashSync|compare|compareSync|genSalt)\s*\(/g, algorithm: 'bcrypt', category: 'kdf' },
+      { regex: /\bargon2\s*\.\s*(?:hash|verify)\s*\(/g, algorithm: 'argon2', category: 'kdf' },
+
+      // PQC bindings
+      { regex: /\b(?:ml_kem|mlkem|MlKem|ML_KEM)\d*\b/g, algorithm: 'ml-kem', category: 'key_exchange' },
+      { regex: /\b(?:ml_dsa|mldsa|MlDsa|ML_DSA)\d*\b/g, algorithm: 'ml-dsa', category: 'signing' },
+    ],
+    // `require('x')` and `from 'x'` both reduce to an optional paren followed by
+    // a quoted specifier. The older form used a single character class, which
+    // could match the paren OR the quote but never both, so no require() call
+    // was ever recognized.
+    importPatterns: [
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]node:crypto['"`]/g, library: 'node:crypto' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]crypto['"`]/g, library: 'node:crypto' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]crypto-js['"`]|CryptoJS\s*\./g, library: 'crypto-js' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]node-forge['"`]|\bforge\s*\.\s*\w+/g, library: 'node-forge' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]tweetnacl['"`]|\bnacl\s*\.\s*\w+/g, library: 'tweetnacl' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]jsonwebtoken['"`]/g, library: 'jsonwebtoken' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]jose['"`]/g, library: 'jose' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]bcryptjs?['"`]/g, library: 'bcrypt' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]argon2['"`]/g, library: 'argon2' },
+      { regex: /(?:require|from|import)\s*\(?\s*['"`]@noble\/[\w-]+['"`]/g, library: '@noble' },
+    ],
+  },
   go: {
     extensions: ['.go'],
     patterns: [
@@ -73,6 +158,24 @@ export const LANGUAGE_PATTERNS = {
       { regex: /Ed25519PrivateKey|Ed25519PublicKey/g, algorithm: 'ed25519', category: 'signing' },
       { regex: /X25519PrivateKey|X25519PublicKey/g, algorithm: 'x25519', category: 'key_exchange' },
       { regex: /ECDSA|ec\.SECP256R1|ec\.SECP384R1/g, algorithm: 'ecdsa', category: 'signing' },
+
+      // pyca/cryptography — the dominant Python crypto library. Its key
+      // constructors and legacy ciphers were previously unmatched, so a project
+      // built on it scanned as having almost no cryptography at all.
+      { regex: /\brsa\s*\.\s*generate_private_key\s*\(|\brsa\s*\.\s*RSAPrivateKey\b|load_pem_private_key\s*\(/g, algorithm: 'rsa', category: 'encryption' },
+      { regex: /\bec\s*\.\s*generate_private_key\s*\(|\bec\s*\.\s*ECDSA\s*\(/g, algorithm: 'ecdsa', category: 'signing' },
+      { regex: /\bdsa\s*\.\s*generate_private_key\s*\(/g, algorithm: 'dsa', category: 'signing' },
+      { regex: /\bdh\s*\.\s*generate_parameters\s*\(/g, algorithm: 'dh', category: 'key_exchange' },
+      { regex: /\bpadding\s*\.\s*OAEP\s*\(/g, algorithm: 'rsa-oaep', category: 'encryption' },
+      { regex: /\bpadding\s*\.\s*PSS\s*\(/g, algorithm: 'rsa-pss', category: 'signing' },
+      { regex: /\bpadding\s*\.\s*PKCS1v15\s*\(/g, algorithm: 'rsa', category: 'signing' },
+      { regex: /\bhashes\s*\.\s*(MD5|SHA1|SHA224|SHA256|SHA384|SHA512|SHA3_256|SHA3_512|BLAKE2b|BLAKE2s)\s*\(/g, capture: 1, category: 'hashing' },
+      { regex: /\balgorithms\s*\.\s*(TripleDES|Blowfish|ARC4|CAST5|IDEA|SEED|Camellia|ChaCha20)\b/g, capture: 1, category: 'encryption' },
+      { regex: /\bmodes\s*\.\s*ECB\s*\(/g, algorithm: 'aes-ecb', category: 'encryption' },
+      { regex: /\bChaCha20Poly1305\s*\(|\bAESCCM\s*\(|\bAESOCB3\s*\(|\bAESSIV\s*\(/g, algorithm: 'chacha20-poly1305', category: 'encryption' },
+      { regex: /\bEd448PrivateKey\b/g, algorithm: 'ed448', category: 'signing' },
+      { regex: /\bX448PrivateKey\b/g, algorithm: 'x448', category: 'key_exchange' },
+      { regex: /\bHKDF(?:Expand)?\s*\(/g, algorithm: 'hkdf', category: 'kdf' },
       { regex: /bcrypt\.hashpw|bcrypt\.gensalt/g, algorithm: 'bcrypt', category: 'kdf' },
       { regex: /argon2\.PasswordHasher|argon2\.hash_password/g, algorithm: 'argon2', category: 'kdf' },
       { regex: /PBKDF2HMAC/g, algorithm: 'pbkdf2', category: 'kdf' },
@@ -197,39 +300,151 @@ for (const [lang, def] of Object.entries(LANGUAGE_PATTERNS)) {
 
 /**
  * Detect programming language from file extension.
- * Returns language key (go, python, java, rust, c) or null.
+ * Returns language key (javascript, go, python, java, rust, c) or null.
  */
 export function detectLanguage(filePath) {
   const ext = extname(filePath).toLowerCase();
   return EXT_MAP[ext] || null;
 }
 
+// ---------------------------------------------------------------------------
+// Line resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the sorted list of newline offsets so a match index can be resolved to
+ * a 1-based line number in O(log n) instead of re-splitting the file per match.
+ */
+function newlineOffsets(content) {
+  const offsets = [];
+  let i = content.indexOf('\n');
+  while (i !== -1) {
+    offsets.push(i);
+    i = content.indexOf('\n', i + 1);
+  }
+  return offsets;
+}
+
+function lineAt(offsets, index) {
+  let lo = 0;
+  let hi = offsets.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid] < index) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo + 1;
+}
+
+// ---------------------------------------------------------------------------
+// Weak key sizes
+// ---------------------------------------------------------------------------
+
+// Finite-field and RSA moduli below 2048 bits are below every current floor
+// (NIST SP 800-57 Rev.5, BSI TR-02102-1). Only forms where the algorithm and
+// the bit length are unambiguous in a single expression are matched, so a bare
+// `1024` elsewhere in the file can never be read as a key size.
+const WEAK_KEY_SIZE_PATTERNS = [
+  { regex: /modulusLength\s*:\s*(\d{3,6})/g, algorithm: 'rsa' },              // node:crypto
+  { regex: /key_size\s*=\s*(\d{3,6})/g, algorithm: 'rsa' },                   // pyca/cryptography
+  { regex: /RSA\.generate\s*\(\s*(\d{3,6})/g, algorithm: 'rsa' },             // pycryptodome
+  { regex: /rsa\.GenerateKey\s*\([^,)]*,\s*(\d{3,6})/g, algorithm: 'rsa' },   // Go
+  { regex: /RSA_generate_key(?:_ex)?\s*\(\s*(\d{3,6})/g, algorithm: 'rsa' },  // OpenSSL C
+  { regex: /RsaPrivateKey::new\s*\([^,)]*,\s*(\d{3,6})/g, algorithm: 'rsa' }, // Rust rsa crate
+  { regex: /\bgenrsa\b[^\n]*?\b(\d{3,6})\b/g, algorithm: 'rsa' },             // openssl CLI in scripts
+];
+
+const MIN_SAFE_RSA_BITS = 2048;
+
+/**
+ * Find asymmetric keys generated below the current minimum size.
+ * Language-independent: the patterns are keyed on the API, not the file type.
+ *
+ * @returns {Array<{algorithm: string, bits: number, line: number, category: string, isWeak: true, weaknessReason: string, cwe: string}>}
+ */
+export function scanWeakKeySizes(content) {
+  const offsets = newlineOffsets(content);
+  const findings = [];
+  const seen = new Set();
+
+  for (const { regex, algorithm } of WEAK_KEY_SIZE_PATTERNS) {
+    regex.lastIndex = 0;
+    let m;
+    while ((m = regex.exec(content)) !== null) {
+      const bits = Number(m[1]);
+      if (!Number.isFinite(bits) || bits >= MIN_SAFE_RSA_BITS) continue;
+      // Below 512 the number is far more likely to be a buffer length or a
+      // port than a modulus, so stay out of guessing territory.
+      if (bits < 512) continue;
+      const line = lineAt(offsets, m.index);
+      const key = `${algorithm}:${bits}:${line}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push({
+        algorithm: `${algorithm}-${bits}`,
+        bits,
+        line,
+        category: 'encryption',
+        isWeak: true,
+        weaknessReason: `${bits}-bit key is below the 2048-bit minimum`,
+        cwe: 'CWE-326',
+      });
+    }
+  }
+
+  return findings;
+}
+
 /**
  * Scan a source file for crypto patterns in the specified language.
- * Returns { algorithms: [{ algorithm, category, line? }], imports: [{ library }] }.
+ *
+ * @returns {{algorithms: Array<{algorithm: string, category: string, line: number, evidence: string}>,
+ *            imports: Array<{library: string, line: number}>}}
  */
 export function scanSourceFile(filePath, content, language) {
   const langDef = LANGUAGE_PATTERNS[language];
   if (!langDef) return { algorithms: [], imports: [] };
 
+  const offsets = newlineOffsets(content);
   const algorithms = [];
   const imports = [];
   const seenAlgos = new Set();
   const seenImports = new Set();
 
-  for (const { regex, algorithm, category } of langDef.patterns) {
+  for (const { regex, algorithm, capture, category } of langDef.patterns) {
     regex.lastIndex = 0;
-    if (regex.test(content) && !seenAlgos.has(algorithm)) {
-      seenAlgos.add(algorithm);
-      algorithms.push({ algorithm, category });
+    let m;
+    while ((m = regex.exec(content)) !== null) {
+      // A capture-based pattern reads the algorithm out of the source token so
+      // that "des-ede3-cbc" stays 3DES and "sha1" never lands under SHA-256.
+      const name = capture ? canonicalizeAlgorithmToken(m[capture]) : algorithm;
+      if (!name) {
+        if (m[0].length === 0) regex.lastIndex++; // never spin on a zero-width match
+        continue;
+      }
+      // A null category on a pattern means the algorithm identity alone
+      // determines it, so read it from the database instead of hardcoding one
+      // label across a set of unrelated algorithms.
+      const resolvedCategory = category || lookupAlgorithm(name)?.category || 'general';
+      if (!seenAlgos.has(name)) {
+        seenAlgos.add(name);
+        algorithms.push({
+          algorithm: name,
+          category: resolvedCategory,
+          line: lineAt(offsets, m.index),
+          evidence: m[0].slice(0, 80),
+        });
+      }
+      if (m[0].length === 0) regex.lastIndex++;
     }
   }
 
   for (const { regex, library } of langDef.importPatterns) {
     regex.lastIndex = 0;
-    if (regex.test(content) && !seenImports.has(library)) {
+    const m = regex.exec(content);
+    if (m && !seenImports.has(library)) {
       seenImports.add(library);
-      imports.push({ library });
+      imports.push({ library, line: lineAt(offsets, m.index) });
     }
   }
 
@@ -237,6 +452,6 @@ export function scanSourceFile(filePath, content, language) {
 }
 
 /**
- * All supported non-JS source extensions for the file walker.
+ * Source extensions handled by the language pattern tables.
  */
 export const MULTI_LANG_EXTENSIONS = new Set(Object.values(LANGUAGE_PATTERNS).flatMap(l => l.extensions));

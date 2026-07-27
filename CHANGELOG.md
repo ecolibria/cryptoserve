@@ -5,6 +5,77 @@ All notable changes to CryptoServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [CLI 0.4.0] - 2026-07-27
+
+### Fixed
+- SHA-1 was reported as SHA-256. The JS literal matcher mapped every
+  `sha256|sha384|sha512|sha1` hit to the single label `SHA-256`, so
+  `createHash('sha1')` appeared in the inventory as a strong hash. HS/ES/PS
+  token algorithms collapsed onto `RS256` the same way.
+- 3DES, Blowfish and RC2 were undetectable in JavaScript. The weak-cipher
+  patterns required a closing quote immediately after the family name, so
+  `createCipheriv('des-ede3-cbc', ...)`, `'bf-cbc'` and `'rc2-40-cbc'` matched
+  nothing at all.
+- JavaScript and TypeScript source algorithms never reached `sourceAlgorithms`,
+  so `cbom`, `gate` and `pqc` saw no crypto from JS source at all.
+- `require('node:crypto')` was never recognized as an import. The pattern used a
+  character class that could match the opening paren or the quote but not both.
+- pyca/cryptography idioms were unmatched: `rsa.generate_private_key`,
+  `ec.generate_private_key`, `padding.*`, `hashes.*`, and the legacy ciphers
+  exposed through `algorithms.TripleDES`, `algorithms.Blowfish`,
+  `algorithms.ARC4`.
+- CBOM documents named the wrong producer. `cbom.mjs` hardcoded version `0.2.0`,
+  so every CycloneDX `metadata.tools[].version` and SPDX `Tool: CryptoServe-`
+  string emitted across the 0.3.x line was wrong.
+- `gate --format sarif` and `scan --format sarif` were documented but not
+  implemented; both fell through to the terminal renderer, so a CI job piping
+  the output into `upload-sarif` was handing it a text report.
+- `gate` emitted each algorithm twice when `--fail-on-weak` was set, inflating
+  the violation count.
+- Truncated table cells gave no indication they had been cut, so
+  `chacha20-poly1305, argon2, bcr` read as a package named `bcr`.
+- A wrong vault password surfaced the raw OpenSSL string "Unsupported state or
+  unable to authenticate data".
+- `vault init` reported the path `~/.cryptoserve/vault.enc` regardless of where
+  it had actually written.
+
+### Added
+- Every finding carries `file:line`, and every weak algorithm carries a CWE and
+  a named replacement.
+- SARIF 2.1.0 output for `scan` and `gate`, with a physical location on every
+  result. `--output <file>` writes the document to disk.
+- Weak asymmetric key-size detection across languages: `modulusLength`,
+  `key_size=`, `rsa.GenerateKey`, `RSA_generate_key`, `RsaPrivateKey::new` and
+  `openssl genrsa`, restricted to forms where algorithm and bit length are
+  unambiguous in a single expression.
+- Weak-algorithm findings are derived from the algorithm database rather than
+  per-language regexes, so Go, Python, Java, Rust and C now get the coverage
+  that previously existed only for JavaScript.
+- API misuse detection distinct from weak algorithms: `createCipher` without an
+  IV, non-CSPRNG randomness used for secrets, and disabled TLS verification.
+- `CRYPTOSERVE_HOME` and `XDG_CONFIG_HOME` relocate the state directory. Five
+  modules previously hardcoded `~/.cryptoserve`, so no test, CI job or container
+  could avoid writing into the invoking user's home.
+- WebCrypto algorithm names, crypto-js, node-forge, tweetnacl and JOSE
+  algorithm identifiers are recognized in JS/TS.
+- `aria` and `sm4` added to the algorithm database (133 entries, 22 weak).
+
+### Changed
+- JavaScript and TypeScript are scanned by the same table-driven engine as every
+  other language instead of a separate code path.
+- Algorithm names that appear as call arguments are read from the source and
+  canonicalized rather than matched to a fixed label.
+- A source-detected library is given an algorithm list only when its file
+  imports exactly one crypto library. With two or more, attribution is not
+  decidable without dataflow analysis.
+- `scan` reports "Source files" (analyzed) and "Files examined" (walked)
+  separately. The single "Files scanned" number counted only the former.
+- Census collectors have a 15 second per-request deadline and report progress
+  without `--verbose`.
+- An unrecognized `--format` is an error instead of a silent fall back to text.
+
+---
+
 ## [SDK 1.4.3] - 2026-03-18
 
 ### Fixed

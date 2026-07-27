@@ -5,9 +5,8 @@
  * RubyGems, Hex (Elixir), pub.dev (Dart), and CocoaPods (Swift/ObjC).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { configPath, ensureConfigDir } from '../paths.mjs';
 
 import {
   NPM_PACKAGES, PYPI_PACKAGES, GO_PACKAGES,
@@ -29,9 +28,36 @@ import { collectNvdCves } from './collectors/nvd-cves.mjs';
 import { collectGithubAdvisories } from './collectors/github-advisories.mjs';
 import { aggregate } from './aggregator.mjs';
 
-const CACHE_DIR = join(homedir(), '.cryptoserve');
-const CACHE_FILE = join(CACHE_DIR, 'census-cache.json');
+const cacheFile = () => configPath('census-cache.json');
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// A census run fans out to thirteen third-party services. Without a per-request
+// deadline one unresponsive registry blocks the whole command indefinitely,
+// which is exactly what `cryptoserve census` used to do: no output, no timeout,
+// no way to tell a slow run from a hung one.
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * fetch with a hard per-request deadline. Returned as a non-ok response shape
+ * on timeout so collectors take their existing "registry did not answer" path
+ * instead of aborting the run.
+ */
+export function fetchWithTimeout(timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, baseFetch = globalThis.fetch) {
+  return async (url, options = {}) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await baseFetch(url, { ...options, signal: controller.signal });
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        return { ok: false, status: 408, statusText: `timeout after ${timeoutMs}ms`, json: async () => ({}), text: async () => '' };
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
 
 /**
  * Load cached data if valid.
@@ -39,8 +65,9 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
  */
 function loadCache() {
   try {
-    if (!existsSync(CACHE_FILE)) return null;
-    const raw = readFileSync(CACHE_FILE, 'utf-8');
+    const file = cacheFile();
+    if (!existsSync(file)) return null;
+    const raw = readFileSync(file, 'utf-8');
     const cached = JSON.parse(raw);
     const age = Date.now() - new Date(cached.collectedAt).getTime();
     if (age < CACHE_TTL_MS) return cached;
@@ -55,8 +82,8 @@ function loadCache() {
  */
 function saveCache(data) {
   try {
-    mkdirSync(CACHE_DIR, { recursive: true });
-    writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
+    ensureConfigDir();
+    writeFileSync(cacheFile(), JSON.stringify(data, null, 2));
   } catch {
     // Cache write failure is non-fatal
   }
@@ -73,7 +100,14 @@ function saveCache(data) {
  * @returns {Promise<Object>} Aggregated census data
  */
 export async function runCensus(options = {}) {
-  const { verbose = false, noCache = false, sources, fetchFn } = options;
+  const {
+    verbose = false,
+    noCache = false,
+    sources,
+    fetchFn,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    onProgress,
+  } = options;
 
   // Check cache first
   if (!noCache) {
@@ -89,45 +123,50 @@ export async function runCensus(options = {}) {
     'rubygems', 'hex', 'pub', 'cocoapods',
     'nvd', 'github',
   ];
-  const collectorOpts = { verbose, fetchFn };
+  // An explicitly injected fetch (tests) is used as-is; otherwise every
+  // collector gets the deadline-bounded fetch rather than a bare global.
+  const collectorOpts = { verbose, fetchFn: fetchFn || fetchWithTimeout(timeoutMs) };
   const empty = { packages: [], period: 'last_month', collectedAt: new Date().toISOString() };
 
-  if (verbose) process.stderr.write('Collecting census data across 11 ecosystems...\n');
+  // Progress is reported unconditionally, not only under --verbose. A command
+  // that reaches out to thirteen services must never look like it has hung.
+  const report = onProgress || (msg => process.stderr.write(msg + '\n'));
+  report(`Collecting census data from ${enabledSources.length} sources (timeout ${Math.round(timeoutMs / 1000)}s per request)...`);
 
   // Phase 1: Package downloads (all 11 ecosystems in parallel)
   const downloadPromises = [
     enabledSources.includes('npm')
-      ? (verbose && process.stderr.write('\nFetching npm download counts...\n'), collectNpmDownloads(NPM_PACKAGES, collectorOpts))
+      ? (report('  Fetching npm download counts...'), collectNpmDownloads(NPM_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('pypi')
-      ? (verbose && process.stderr.write('\nFetching PyPI download counts...\n'), collectPypiDownloads(PYPI_PACKAGES, collectorOpts))
+      ? (report('  Fetching PyPI download counts...'), collectPypiDownloads(PYPI_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('go')
-      ? (verbose && process.stderr.write('\nFetching Go module stats...\n'), collectGoDownloads(GO_PACKAGES, collectorOpts))
+      ? (report('  Fetching Go module stats...'), collectGoDownloads(GO_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('maven')
-      ? (verbose && process.stderr.write('\nFetching Maven Central stats...\n'), collectMavenDownloads(MAVEN_PACKAGES, collectorOpts))
+      ? (report('  Fetching Maven Central stats...'), collectMavenDownloads(MAVEN_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('crates')
-      ? (verbose && process.stderr.write('\nFetching crates.io download counts...\n'), collectCratesDownloads(CRATES_PACKAGES, collectorOpts))
+      ? (report('  Fetching crates.io download counts...'), collectCratesDownloads(CRATES_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('packagist')
-      ? (verbose && process.stderr.write('\nFetching Packagist download counts...\n'), collectPackagistDownloads(PACKAGIST_PACKAGES, collectorOpts))
+      ? (report('  Fetching Packagist download counts...'), collectPackagistDownloads(PACKAGIST_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('nuget')
-      ? (verbose && process.stderr.write('\nFetching NuGet download counts...\n'), collectNugetDownloads(NUGET_PACKAGES, collectorOpts))
+      ? (report('  Fetching NuGet download counts...'), collectNugetDownloads(NUGET_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('rubygems')
-      ? (verbose && process.stderr.write('\nFetching RubyGems download counts...\n'), collectRubygemsDownloads(RUBYGEMS_PACKAGES, collectorOpts))
+      ? (report('  Fetching RubyGems download counts...'), collectRubygemsDownloads(RUBYGEMS_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('hex')
-      ? (verbose && process.stderr.write('\nFetching Hex.pm download counts...\n'), collectHexDownloads(HEX_PACKAGES, collectorOpts))
+      ? (report('  Fetching Hex.pm download counts...'), collectHexDownloads(HEX_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('pub')
-      ? (verbose && process.stderr.write('\nFetching pub.dev download counts...\n'), collectPubDownloads(PUB_PACKAGES, collectorOpts))
+      ? (report('  Fetching pub.dev download counts...'), collectPubDownloads(PUB_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
     enabledSources.includes('cocoapods')
-      ? (verbose && process.stderr.write('\nFetching CocoaPods pod counts...\n'), collectCocoapodsDownloads(COCOAPODS_PACKAGES, collectorOpts))
+      ? (report('  Fetching CocoaPods pod counts...'), collectCocoapodsDownloads(COCOAPODS_PACKAGES, collectorOpts))
       : Promise.resolve(empty),
   ];
 
@@ -138,10 +177,10 @@ export async function runCensus(options = {}) {
   // Phase 2: Vulnerability data (NVD + GitHub in parallel)
   const vulnPromises = [
     enabledSources.includes('nvd')
-      ? (verbose && process.stderr.write('\nFetching NVD CVE data...\n'), collectNvdCves(collectorOpts))
+      ? (report('  Fetching NVD CVE data...'), collectNvdCves(collectorOpts))
       : Promise.resolve({ cves: [], collectedAt: new Date().toISOString() }),
     enabledSources.includes('github')
-      ? (verbose && process.stderr.write('\nFetching GitHub advisories...\n'), collectGithubAdvisories(collectorOpts))
+      ? (report('  Fetching GitHub advisories...'), collectGithubAdvisories(collectorOpts))
       : Promise.resolve({ advisories: [], collectedAt: new Date().toISOString() }),
   ];
 

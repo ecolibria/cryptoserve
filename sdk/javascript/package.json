@@ -1,6 +1,6 @@
 {
   "name": "cryptoserve",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "CryptoServe CLI - Cryptographic scanning, PQC analysis, encryption, and local key management",
   "type": "module",
   "bin": {

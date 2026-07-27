@@ -157,9 +157,14 @@ export function labelValue(label, value, labelWidth = 20) {
 }
 
 export function tableRow(columns, widths) {
-  const parts = columns.map((col, i) =>
-    String(col).padEnd(widths[i]).slice(0, widths[i])
-  );
+  const parts = columns.map((col, i) => {
+    const text = String(col);
+    const width = widths[i];
+    // Mark truncation so a clipped value is never mistaken for the whole one
+    // ("chacha20-poly1305, argon2, bcr" read as a package named "bcr").
+    if (text.length > width) return text.slice(0, Math.max(width - 1, 0)) + '…';
+    return text.padEnd(width);
+  });
   return `  ${parts.join(' ')}`;
 }
 

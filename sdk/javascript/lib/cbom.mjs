@@ -12,8 +12,7 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
-
-const VERSION = '0.2.0';
+import { VERSION } from './version.mjs';
 
 // ---------------------------------------------------------------------------
 // Package URL generation

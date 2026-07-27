@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { configPath, ensureConfigDir } from './paths.mjs';
 import {
   generateMasterKey,
   storeMasterKey,
@@ -21,7 +22,9 @@ import {
 } from './keychain.mjs';
 
 const MARKER = '<!-- cryptoserve:managed -->';
-const CONFIG_DIR = join(homedir(), '.cryptoserve');
+// State directory comes from lib/paths.mjs so CRYPTOSERVE_HOME relocates it.
+// AI-tool integration paths below stay anchored to the real home, because they
+// write into those tools' own config directories, not CryptoServe's.
 
 // ---------------------------------------------------------------------------
 // AI tool detection (borrowed from secretless-ai)
@@ -180,9 +183,7 @@ export async function initProject(projectDir, options = {}) {
   };
 
   // 1. Ensure config directory
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
+  ensureConfigDir();
 
   // 2. Generate or load master key
   let existingKey = null;
@@ -196,12 +197,9 @@ export async function initProject(projectDir, options = {}) {
       result.keyStorage = await storeMasterKey(keyBase64, { useKeychain: true });
     } else if (options.insecureStorage) {
       // Plaintext fallback (requires explicit opt-in)
-      writeFileSync(
-        join(CONFIG_DIR, 'master.key'),
-        keyBase64,
-        { mode: 0o600 }
-      );
-      result.keyStorage = { storage: 'plaintext-file', path: join(CONFIG_DIR, 'master.key') };
+      const masterKeyPath = configPath('master.key');
+      writeFileSync(masterKeyPath, keyBase64, { mode: 0o600 });
+      result.keyStorage = { storage: 'plaintext-file', path: masterKeyPath };
     } else {
       // Encrypted file with password
       const pw = await promptPassword('Set vault password (for encrypted key storage): ');

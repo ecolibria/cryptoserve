@@ -223,12 +223,27 @@ Displays SDK configuration, identity, and server connection status.
 
 ---
 
+## Environment
+
+| Variable | Effect |
+|---|---|
+| `CRYPTOSERVE_HOME` | Absolute path to the state directory holding the master key, vault, credentials and census cache. Overrides everything else. |
+| `XDG_CONFIG_HOME` | Used as `$XDG_CONFIG_HOME/cryptoserve` when `CRYPTOSERVE_HOME` is unset. |
+
+Default is `~/.cryptoserve`. Set `CRYPTOSERVE_HOME` in CI and in containers so
+runs do not write into the invoking user's home directory:
+
+```bash
+CRYPTOSERVE_HOME=/run/cryptoserve cryptoserve vault init --password "$VAULT_PW"
+```
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success (scan clean, gate passed) |
 | `1` | Failure (gate failed, crypto issues found, invalid input) |
+| `2` | The gate could not run (path missing or unreadable). Distinct from `1` so a mistyped path in CI cannot be mistaken for a clean pass. |
 
 ---
 

@@ -10,16 +10,19 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir, platform } from 'node:os';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { platform } from 'node:os';
+import { configPath, ensureConfigDir } from './paths.mjs';
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv, hkdfSync } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
 const SERVICE_NAME = 'cryptoserve';
 const ACCOUNT_NAME = 'master-key';
-const CONFIG_DIR = join(homedir(), '.cryptoserve');
-const KEYSTORE_PATH = join(CONFIG_DIR, 'keystore.enc');
+// Resolved per call (CRYPTOSERVE_HOME aware), never frozen at import time.
+// See lib/paths.mjs.
+function keystorePath() {
+  return configPath('keystore.enc');
+}
 
 // ---------------------------------------------------------------------------
 // Platform-specific keychain backends
@@ -126,12 +129,6 @@ const backends = {
 const FALLBACK_SALT_SIZE = 32;
 const FALLBACK_IV_SIZE = 12;
 const FALLBACK_TAG_SIZE = 16;
-
-function ensureConfigDir() {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
-}
 
 function encryptForStorage(data, password) {
   const salt = randomBytes(FALLBACK_SALT_SIZE);
@@ -247,8 +244,9 @@ export async function storeMasterKey(keyBase64, { useKeychain = true, fallbackPa
   }
 
   const encrypted = encryptForStorage(keyBase64, fallbackPassword);
-  writeFileSync(KEYSTORE_PATH, encrypted, { mode: 0o600 });
-  return { storage: 'encrypted-file', path: KEYSTORE_PATH };
+  const path = keystorePath();
+  writeFileSync(path, encrypted, { mode: 0o600 });
+  return { storage: 'encrypted-file', path };
 }
 
 export async function loadMasterKey({ fallbackPassword = null } = {}) {
@@ -263,13 +261,13 @@ export async function loadMasterKey({ fallbackPassword = null } = {}) {
   }
 
   // Try encrypted file
-  if (existsSync(KEYSTORE_PATH)) {
+  if (existsSync(keystorePath())) {
     if (!fallbackPassword) {
       throw new Error(
         'Master key is stored in encrypted file. Provide password or use OS keychain.'
       );
     }
-    return decryptFromStorage(readFileSync(KEYSTORE_PATH), fallbackPassword);
+    return decryptFromStorage(readFileSync(keystorePath()), fallbackPassword);
   }
 
   return null;
@@ -281,9 +279,9 @@ export async function deleteMasterKey() {
     try { await backend.delete(); } catch { /* OK */ }
   }
   // Also remove file fallback if exists
-  if (existsSync(KEYSTORE_PATH)) {
+  if (existsSync(keystorePath())) {
     const { unlinkSync } = await import('node:fs');
-    unlinkSync(KEYSTORE_PATH);
+    unlinkSync(keystorePath());
   }
 }
 

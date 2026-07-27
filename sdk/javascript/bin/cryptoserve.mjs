@@ -38,13 +38,22 @@ const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-
 const OPTIONS_WITH_VALUES = new Set([
   '--password', '--algorithm', '--profile', '--format', '--file',
   '--output', '--server', '--context', '--max-risk', '--min-score',
-  '--ecosystems',
+  '--ecosystems', '--emit-findings',
 ]);
 
 const KNOWN_FLAGS = new Set([
   '--insecure-storage', '--verbose', '--binary', '--fail-on-weak',
   '--help', '--version', '--no-cache', '--live',
 ]);
+
+/**
+ * Render a finding's location as `file:line`, so every finding can be opened
+ * directly. Falls back to the file alone when a finding has no line.
+ */
+function location(finding) {
+  if (!finding?.file) return 'unknown location';
+  return finding.line ? `${finding.file}:${finding.line}` : finding.file;
+}
 
 function getFlag(args, name) {
   const idx = args.indexOf(name);
@@ -348,27 +357,60 @@ async function cmdScan(args) {
     results.binaryFindings = scanBinaries(scanDir);
   }
 
-  if (format === 'json') {
-    console.log(JSON.stringify(results, null, 2));
+  // Corpus contribution. Explicit path, local write, no network path.
+  const emitFindings = getOption(args, '--emit-findings');
+  if (emitFindings) {
+    const { buildFindingRecords, toJsonl } = await import('../lib/finding-records.mjs');
+    const records = buildFindingRecords(results, scanDir);
+    writeFileSync(emitFindings, records.length > 0 ? toJsonl(records) + '\n' : '');
+    console.error(`Wrote ${records.length} finding record(s) to ${emitFindings}`);
+    console.error('Records contain source context from this tree and are unlabeled. Review before sharing.');
+  }
+
+  const outputPath = getOption(args, '--output');
+
+  function emit(document) {
+    if (outputPath) {
+      writeFileSync(outputPath, document + '\n');
+      console.error(`Written to ${outputPath}`);
+    } else {
+      console.log(document);
+    }
+  }
+
+  if (format === 'sarif') {
+    const { collectFindings, toSarif } = await import('../lib/sarif.mjs');
+    emit(JSON.stringify(toSarif(collectFindings(results)), null, 2));
     return;
+  }
+
+  if (format === 'json') {
+    emit(JSON.stringify(results, null, 2));
+    return;
+  }
+
+  if (format !== 'text') {
+    console.error(`Unknown --format "${format}". Expected one of: text, json, sarif.`);
+    process.exit(1);
   }
 
   console.log(compactHeader('scan'));
   console.log(labelValue('Directory', scanDir));
-  console.log(labelValue('Files scanned', String(results.filesScanned)));
+  console.log(labelValue('Source files', String(results.filesScanned)));
+  if (results.filesWalked > results.filesScanned) {
+    console.log(labelValue('Files examined', String(results.filesWalked)));
+  }
 
-  // Crypto libraries
+  // Crypto libraries. A source-detected library with no attributable algorithm
+  // list is shown as such rather than with a blank column.
   if (results.libraries.length > 0) {
     console.log(section('Crypto Libraries'));
     console.log(tableHeader(['Library', 'Version', 'Risk', 'Algorithms'], [22, 10, 10, 30]));
     for (const lib of results.libraries) {
-      const riskColor = lib.quantumRisk === 'high' ? `\x1b[91m${lib.quantumRisk}\x1b[0m`
-        : lib.quantumRisk === 'none' ? `\x1b[92m${lib.quantumRisk}\x1b[0m`
-        : lib.quantumRisk;
-      console.log(tableRow(
-        [lib.name, lib.version, lib.quantumRisk, lib.algorithms.join(', ')],
-        [22, 10, 10, 30]
-      ));
+      const algos = lib.algorithms.length > 0
+        ? lib.algorithms.join(', ')
+        : 'see source algorithms';
+      console.log(tableRow([lib.name, lib.version, lib.quantumRisk, algos], [22, 10, 10, 30]));
     }
   } else {
     console.log(`\n  ${dim('No crypto libraries detected')}`);
@@ -379,8 +421,8 @@ async function cmdScan(args) {
     console.log(section('Hardcoded Secrets'));
     for (const s of results.secrets) {
       console.log(`  ${error(`[CRIT] ${s.name}`)}`);
-      console.log(`         ${dim(s.file)}`);
-      if (s.envVar) console.log(`         ${info(`Use $${s.envVar} instead`)}`);
+      console.log(`         ${dim(location(s))}`);
+      if (s.envVar) console.log(`         ${info(`Fix: read from $${s.envVar}`)}`);
     }
   }
 
@@ -388,20 +430,21 @@ async function cmdScan(args) {
   if (results.weakPatterns.length > 0) {
     console.log(section('Weak Crypto Patterns'));
     for (const w of results.weakPatterns) {
-      const icon = w.severity === 'critical' ? error(w.issue) : warning(w.issue);
-      console.log(`  ${icon}`);
-      console.log(`    ${dim(w.file)}`);
+      const headline = w.cwe ? `${w.issue} (${w.cwe})` : w.issue;
+      console.log(`  ${w.severity === 'critical' ? error(headline) : warning(headline)}`);
+      console.log(`    ${dim(location(w))}`);
+      if (w.fix) console.log(`    ${info(`Fix: ${w.fix}`)}`);
     }
   }
 
-  // Multi-language source algorithms
+  // Source algorithms, with the location that produced each one
   if (results.sourceAlgorithms && results.sourceAlgorithms.length > 0) {
-    console.log(section('Source Code Crypto (Multi-Language)'));
-    console.log(tableHeader(['Algorithm', 'Category', 'Language', 'Risk'], [20, 14, 12, 10]));
+    console.log(section('Source Code Crypto'));
+    console.log(tableHeader(['Algorithm', 'Category', 'Language', 'Risk', 'Location'], [18, 13, 11, 9, 30]));
     for (const algo of results.sourceAlgorithms) {
       console.log(tableRow(
-        [algo.algorithm, algo.category, algo.language, algo.quantumRisk],
-        [20, 14, 12, 10]
+        [algo.algorithm, algo.category, algo.language, algo.quantumRisk, location(algo)],
+        [18, 13, 11, 9, 30]
       ));
     }
   }
@@ -591,7 +634,8 @@ async function cmdVault(args) {
       if (pw !== pw2) { console.error('Passwords do not match.'); process.exit(1); }
     }
     vault.initVault(pw);
-    console.log(success('Vault created at ~/.cryptoserve/vault.enc'));
+    const { displayPath } = await import('../lib/paths.mjs');
+    console.log(success(`Vault created at ${displayPath(vault.defaultVaultPath())}`));
     return;
   }
 
@@ -677,7 +721,13 @@ async function cmdVault(args) {
         process.exit(1);
     }
   } catch (e) {
-    console.error(error(e.message));
+    // node:crypto surfaces a failed GCM tag check as "Unsupported state or
+    // unable to authenticate data", which tells a user nothing. For a vault
+    // read there is exactly one ordinary cause.
+    const message = /unable to authenticate data|Unsupported state/i.test(e.message)
+      ? 'Wrong vault password (or the vault file has been modified).'
+      : e.message;
+    console.error(error(message));
     process.exit(1);
   }
 }
@@ -866,8 +916,19 @@ async function cmdGate(args) {
     const pqcResult = analyzeOffline(libraries);
     const score = pqcResult.quantumReadinessScore;
 
-    // Collect violations
-    const violations = [];
+    // Where each algorithm was actually seen, so a violation points at code
+    // rather than at an inventory row.
+    const locations = new Map();
+    for (const algo of scanResults.sourceAlgorithms || []) {
+      if (!algo.file) continue;
+      const key = algo.algorithm.toLowerCase();
+      if (!locations.has(key)) locations.set(key, { file: algo.file, line: algo.line });
+    }
+
+    // Collect violations, one per algorithm. The previous pass emitted a
+    // separate row for the risk breach and the weakness, so a single MD5 call
+    // printed twice and inflated the violation count.
+    const byAlgorithm = new Map();
     const maxRiskIdx = riskOrder.indexOf(maxRisk);
 
     for (const lib of libraries) {
@@ -875,26 +936,30 @@ async function cmdGate(args) {
         const entry = lookupAlgorithm(algoName);
         if (!entry) continue;
 
-        const algoRiskIdx = riskOrder.indexOf(entry.quantumRisk);
-        if (algoRiskIdx > maxRiskIdx) {
-          violations.push({
-            algorithm: algoName,
-            risk: entry.quantumRisk,
-            source: lib.name + (lib.version !== 'source-code' ? `@${lib.version}` : ` (${lib.version})`),
-          });
-        }
+        const riskBreach = riskOrder.indexOf(entry.quantumRisk) > maxRiskIdx;
+        const weakBreach = failOnWeak && entry.isWeak;
+        if (!riskBreach && !weakBreach) continue;
 
-        if (failOnWeak && entry.isWeak) {
-          violations.push({
-            algorithm: algoName,
-            risk: entry.quantumRisk,
-            source: lib.name,
-            weak: true,
-            reason: entry.weaknessReason,
-          });
+        const key = algoName.toLowerCase();
+        const existing = byAlgorithm.get(key);
+        const where = locations.get(key);
+        const violation = existing || {
+          algorithm: algoName,
+          risk: entry.quantumRisk,
+          source: lib.name + (lib.version && lib.version !== 'source-code' ? `@${lib.version}` : ''),
+          ...(where ? { file: where.file, line: where.line } : {}),
+        };
+        if (riskBreach) violation.riskBreach = true;
+        if (weakBreach) {
+          violation.weak = true;
+          violation.reason = entry.weaknessReason;
+          if (entry.cwe) violation.cwe = entry.cwe;
         }
+        byAlgorithm.set(key, violation);
       }
     }
+
+    const violations = [...byAlgorithm.values()];
 
     const scoreFail = score < minScore;
     const pass = violations.length === 0 && !scoreFail;
@@ -909,13 +974,35 @@ async function cmdGate(args) {
       weak: violations.filter(v => v.weak).length,
     };
 
+    const outputPath = getOption(args, '--output');
+
+    if (format === 'sarif') {
+      const { collectFindings, toSarif } = await import('../lib/sarif.mjs');
+      const document = JSON.stringify(toSarif(collectFindings(scanResults)), null, 2);
+      if (outputPath) {
+        const { writeFileSync } = await import('node:fs');
+        writeFileSync(outputPath, document + '\n');
+        console.error(`SARIF written to ${outputPath}`);
+      } else {
+        console.log(document);
+      }
+      process.exit(pass ? 0 : 1);
+    }
+
     if (format === 'json') {
-      console.log(JSON.stringify({
+      const document = JSON.stringify({
         status: pass ? 'pass' : 'fail',
         score,
         violations,
         summary,
-      }, null, 2));
+      }, null, 2);
+      if (outputPath) {
+        const { writeFileSync } = await import('node:fs');
+        writeFileSync(outputPath, document + '\n');
+        console.error(`JSON written to ${outputPath}`);
+      } else {
+        console.log(document);
+      }
     } else {
       const { compactHeader, success, error, warning, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
       console.log(compactHeader('gate'));
@@ -927,7 +1014,8 @@ async function cmdGate(args) {
         console.log(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
           const label = v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
-          console.log(`  ${label} — ${dim(v.source)}${v.reason ? ` (${v.reason})` : ''}`);
+          const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
+          console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
         }
       }
 
@@ -1337,7 +1425,7 @@ async function cmdCensus(args) {
 const COMMAND_HELP = {
   init: 'cryptoserve init [--insecure-storage]\n\n  Set up master key and AI tool protection for the current project.',
   pqc: 'cryptoserve pqc [--profile P] [--format json] [--verbose]\n\n  Analyze post-quantum cryptography readiness.',
-  scan: 'cryptoserve scan [path] [--format json] [--binary]\n\n  Scan a project directory for crypto libraries, hardcoded secrets, weak patterns, and certificates.',
+  scan: 'cryptoserve scan [path] [--format text|json|sarif] [--output file] [--binary] [--emit-findings file]\n\n  Scan a project directory for crypto libraries, hardcoded secrets, weak patterns, and certificates.\n  --emit-findings writes unlabeled corpus records (JSONL) for the CryptoServe triage model.\n  Records include source context from the scanned tree and are written locally only.',
   encrypt: 'cryptoserve encrypt "text" [--context C | --algorithm A] [--password P]\ncryptoserve encrypt --file F --output O [--context C | --algorithm A] [--password P]\n\n  Encrypt text or a file with context-aware algorithm selection.',
   decrypt: 'cryptoserve decrypt "blob" [--password P]\ncryptoserve decrypt --file F --output O [--password P]\n\n  Decrypt text or a file.',
   'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',

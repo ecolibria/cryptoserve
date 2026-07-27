@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
-import { LANGUAGE_PATTERNS, scanSourceFile, detectLanguage, MULTI_LANG_EXTENSIONS } from './scanner-languages.mjs';
+import { LANGUAGE_PATTERNS, scanSourceFile, scanWeakKeySizes, detectLanguage, MULTI_LANG_EXTENSIONS } from './scanner-languages.mjs';
 import { scanManifests } from './scanner-manifests.mjs';
 import { scanTlsConfigs } from './scanner-tls.mjs';
 import { lookupAlgorithm } from './algorithm-db.mjs';
@@ -24,65 +24,58 @@ import { walkProject } from './walker.mjs';
 import { loadScannerConfig } from './config.mjs';
 
 // ---------------------------------------------------------------------------
-// Import/require patterns to detect in JS/TS source code
+// API misuse patterns
+//
+// These are distinct from weak *algorithms* (which come from the algorithm
+// database via the language pattern tables). A misuse is a correct algorithm
+// used incorrectly, so it cannot be derived from an algorithm name.
 // ---------------------------------------------------------------------------
 
-const IMPORT_PATTERNS = [
-  { pattern: /(?:require|from)\s*[('"`]node:crypto[)'"`]/g, lib: 'node:crypto' },
-  { pattern: /(?:require|from)\s*[('"`]crypto[)'"`]/g, lib: 'node:crypto' },
-  { pattern: /createCipheriv\s*\(/g, lib: 'node:crypto', detail: 'cipher' },
-  { pattern: /createDecipheriv\s*\(/g, lib: 'node:crypto', detail: 'cipher' },
-  { pattern: /createSign\s*\(/g, lib: 'node:crypto', detail: 'signature' },
-  { pattern: /createVerify\s*\(/g, lib: 'node:crypto', detail: 'signature' },
-  { pattern: /createHash\s*\(/g, lib: 'node:crypto', detail: 'hash' },
-  { pattern: /createHmac\s*\(/g, lib: 'node:crypto', detail: 'hmac' },
-  { pattern: /generateKeyPair(?:Sync)?\s*\(/g, lib: 'node:crypto', detail: 'keygen' },
-  { pattern: /createDiffieHellman(?:Group)?\s*\(/g, lib: 'node:crypto', detail: 'keyagreement' },
-  { pattern: /createECDH\s*\(/g, lib: 'node:crypto', detail: 'keyagreement' },
-  { pattern: /scrypt(?:Sync)?\s*\(/g, lib: 'node:crypto', detail: 'kdf' },
-  { pattern: /pbkdf2(?:Sync)?\s*\(/g, lib: 'node:crypto', detail: 'kdf' },
-  { pattern: /randomBytes\s*\(/g, lib: 'node:crypto', detail: 'random' },
-  { pattern: /randomUUID\s*\(/g, lib: 'node:crypto', detail: 'random' },
-  { pattern: /createCipher\s*\(/g, lib: 'node:crypto', detail: 'DEPRECATED-no-iv' },
-  { pattern: /CryptoJS\./g, lib: 'crypto-js' },
-  { pattern: /forge\.\w+/g, lib: 'node-forge' },
-  { pattern: /nacl\.\w+/g, lib: 'tweetnacl' },
-  { pattern: /jwt\.(?:sign|verify|decode)\s*\(/g, lib: 'jsonwebtoken' },
+const MISUSE_PATTERNS = [
+  {
+    languages: ['javascript'],
+    pattern: /createCipher\s*\(\s*['"`]/g,
+    issue: 'createCipher derives an IV from the key (use createCipheriv)',
+    severity: 'critical',
+    fix: 'crypto.createCipheriv(algorithm, key, crypto.randomBytes(16))',
+  },
+  {
+    languages: ['javascript'],
+    pattern: /Math\.random\s*\(\s*\)[^\n]{0,40}(?:token|secret|key|nonce|salt|iv|password)/gi,
+    issue: 'Math.random() is not a CSPRNG',
+    severity: 'high',
+    fix: 'crypto.randomBytes(n) or crypto.getRandomValues(...)',
+  },
+  {
+    languages: ['python'],
+    pattern: /\brandom\s*\.\s*(?:random|randint|choice)\s*\([^\n]{0,40}(?:token|secret|key|nonce|salt|password)/gi,
+    issue: 'random module is not a CSPRNG',
+    severity: 'high',
+    fix: 'secrets.token_bytes(n)',
+  },
+  {
+    languages: ['javascript', 'python', 'go', 'java'],
+    pattern: /(?:rejectUnauthorized\s*:\s*false|verify\s*=\s*False|InsecureSkipVerify\s*:\s*true)/g,
+    issue: 'TLS certificate verification disabled',
+    severity: 'critical',
+    fix: 'Remove the override and trust the system CA store',
+  },
 ];
 
-// Algorithm string literals to detect
-const ALGO_LITERALS = [
-  { pattern: /['"`]aes-(?:256|128|192)-(?:gcm|cbc|ctr|ecb)['"`]/gi, algo: 'AES' },
-  { pattern: /['"`]chacha20-poly1305['"`]/gi, algo: 'ChaCha20' },
-  { pattern: /['"`]rsa-sha(?:256|384|512)['"`]/gi, algo: 'RSA' },
-  { pattern: /['"`]sha(?:256|384|512|1)['"`]/gi, algo: 'SHA-256' },
-  { pattern: /['"`](?:HS|RS|ES|PS)(?:256|384|512)['"`]/gi, algo: 'RS256' },
-  { pattern: /['"`]ed25519['"`]/gi, algo: 'Ed25519' },
-  { pattern: /['"`]x25519['"`]/gi, algo: 'X25519' },
-  { pattern: /['"`](?:ecdsa|ecdh|ec|secp256k1|secp384r1|prime256v1)['"`]/gi, algo: 'ECDSA' },
-  { pattern: /['"`](?:rsa|rsa-pss)['"`]/gi, algo: 'RSA' },
-  { pattern: /['"`](?:dsa)['"`]/gi, algo: 'DSA' },
-  { pattern: /minVersion:\s*['"`]TLSv1\.[0-3]['"`]/g, algo: 'TLS' },
-  { pattern: /['"`](?:md5|MD5)['"`]/g, algo: 'MD5' },
-  { pattern: /['"`](?:des|DES|3des|3DES|des-ede3)['"`]/gi, algo: 'DES' },
-  { pattern: /['"`](?:rc4|RC4)['"`]/gi, algo: 'RC4' },
-];
-
-// Deprecated/weak patterns
-const WEAK_PATTERNS = [
-  { pattern: /createCipher\s*\(\s*['"`]/g, issue: 'createCipher without IV (use createCipheriv)', severity: 'critical' },
-  { pattern: /['"`](?:md5|MD5)['"`]/g, issue: 'MD5 is cryptographically broken', severity: 'high' },
-  { pattern: /['"`](?:des|DES)['"`]/g, issue: 'DES has 56-bit keys (use AES)', severity: 'critical' },
-  { pattern: /['"`](?:rc4|RC4)['"`]/g, issue: 'RC4 is broken (use AES-GCM or ChaCha20)', severity: 'critical' },
-  { pattern: /['"`]aes-\d+-ecb['"`]/gi, issue: 'ECB mode leaks patterns (use GCM or CTR)', severity: 'high' },
-  { pattern: /['"`]aes-\d+-cbc['"`]/gi, issue: 'CBC mode is vulnerable to padding oracles (use GCM)', severity: 'medium' },
-];
+// Modes that are not weak on their own but carry a caveat worth surfacing.
+const MODE_ADVISORIES = {
+  'aes-cbc': {
+    issue: 'CBC mode needs an authenticated construction (prefer GCM)',
+    severity: 'medium',
+    fix: 'Use aes-256-gcm, or pair CBC with a separate MAC',
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Hardcoded secret detection (borrowed from secretless-ai patterns)
 // ---------------------------------------------------------------------------
 
-const SECRET_PATTERNS = [
+export const SECRET_PATTERNS = [
   { id: 'anthropic',     regex: /sk-ant-api\d{2}-[a-zA-Z0-9_-]{20,}/g,                      name: 'Anthropic API Key',     envVar: 'ANTHROPIC_API_KEY' },
   { id: 'openai-proj',   regex: /sk-proj-[a-zA-Z0-9]{20,}/g,                                 name: 'OpenAI Project Key',    envVar: 'OPENAI_API_KEY' },
   { id: 'openai-legacy', regex: /sk-[a-zA-Z0-9]{48,}/g,                                       name: 'OpenAI Legacy Key',     envVar: 'OPENAI_API_KEY' },
@@ -100,7 +93,12 @@ const SECRET_PATTERNS = [
 // File patterns for cert/key discovery
 const CERT_EXTENSIONS = new Set(['.pem', '.key', '.crt', '.p12', '.pfx', '.jks', '.keystore']);
 
-const JS_EXTENSIONS = new Set(['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx']);
+/** 1-based line number for a byte offset. */
+function lineNumberAt(content, index) {
+  let line = 1;
+  for (let i = content.indexOf('\n'); i !== -1 && i < index; i = content.indexOf('\n', i + 1)) line++;
+  return line;
+}
 
 // ---------------------------------------------------------------------------
 // Scanner
@@ -112,7 +110,8 @@ export function scanProject(projectDir, options = {}) {
     secrets: [],
     weakPatterns: [],
     certFiles: [],
-    filesScanned: 0,
+    filesScanned: 0,   // source files matched to a language and analyzed
+    filesWalked: 0,    // every file the walker examined, analyzed or not
     // New in v0.2.0
     sourceAlgorithms: [],
     tlsFindings: [],
@@ -189,9 +188,9 @@ export function scanProject(projectDir, options = {}) {
     maxBinaryFiles: scannerConfig.binary.maxFiles,
     maxBinaryFileSize: scannerConfig.binary.maxFileSize,
   });
-  const seenImports = new Set();
-  const seenAlgos = new Set();
+  results.filesWalked = walked.totalFiles;
   const seenSourceAlgos = new Set();
+  const sourceLibraries = new Map(); // library name -> algorithm set
 
   // Cert files from walker
   for (const certPath of walked.certFiles) {
@@ -199,83 +198,132 @@ export function scanProject(projectDir, options = {}) {
   }
 
   for (const filePath of walked.sourceFiles) {
-    const ext = extname(filePath);
     const relPath = relative(projectDir, filePath);
 
-    // Multi-language scanning (Go, Python, Java, Rust, C/C++)
+    // Every supported language, JS/TS included, goes through one detection
+    // path. Keeping JS on a separate path is what previously let 3DES and
+    // Blowfish through and collapsed SHA-1 onto the SHA-256 label.
     const language = detectLanguage(filePath);
-    if (language && !JS_EXTENSIONS.has(ext)) {
-      results.filesScanned++;
-      results.languagesDetected.add(language);
-
-      let content;
-      try { content = readFileSync(filePath, 'utf-8'); }
-      catch { continue; }
-
-      const langResult = scanSourceFile(filePath, content, language);
-      for (const algo of langResult.algorithms) {
-        const sourceAlgoKey = `${algo.algorithm}:${language}`;
-        if (!seenSourceAlgos.has(sourceAlgoKey)) {
-          seenSourceAlgos.add(sourceAlgoKey);
-          const dbEntry = lookupAlgorithm(algo.algorithm);
-          results.sourceAlgorithms.push({
-            algorithm: algo.algorithm,
-            category: algo.category,
-            language,
-            quantumRisk: dbEntry?.quantumRisk || 'unknown',
-            isWeak: dbEntry?.isWeak || false,
-          });
-        }
-      }
-      continue;
-    }
-
-    // Only scan JS/TS source files for JS-specific code patterns
-    if (!JS_EXTENSIONS.has(ext)) continue;
+    if (!language) continue;
 
     results.filesScanned++;
-    results.languagesDetected.add('javascript');
+    results.languagesDetected.add(language);
 
     let content;
     try { content = readFileSync(filePath, 'utf-8'); }
     catch { continue; }
 
-    // Detect imports/requires
-    for (const { pattern, lib, detail } of IMPORT_PATTERNS) {
-      pattern.lastIndex = 0;
-      if (pattern.test(content)) {
-        const key = `${lib}:${detail || ''}`;
-        if (!seenImports.has(key)) {
-          seenImports.add(key);
-          if (detail === 'DEPRECATED-no-iv') {
-            results.weakPatterns.push({
-              file: relPath,
-              issue: 'createCipher without IV (use createCipheriv)',
-              severity: 'critical',
-            });
-          }
-        }
+    const langResult = scanSourceFile(filePath, content, language);
+
+    // Same unambiguity rule as the library table: attribute only when the file
+    // imports exactly one crypto library.
+    const attributedLibrary = langResult.imports.length === 1 ? langResult.imports[0].library : '';
+
+    for (const algo of langResult.algorithms) {
+      const dbEntry = lookupAlgorithm(algo.algorithm);
+      const sourceAlgoKey = `${algo.algorithm}:${language}`;
+      if (!seenSourceAlgos.has(sourceAlgoKey)) {
+        seenSourceAlgos.add(sourceAlgoKey);
+        results.sourceAlgorithms.push({
+          algorithm: algo.algorithm,
+          category: algo.category,
+          language,
+          file: relPath,
+          line: algo.line,
+          evidence: algo.evidence,
+          library: attributedLibrary,
+          quantumRisk: dbEntry?.quantumRisk || 'unknown',
+          isWeak: dbEntry?.isWeak || false,
+        });
+      }
+
+      // A weak algorithm is a weak algorithm in every language. Deriving the
+      // finding from the database instead of per-language regexes is what
+      // gives Go, Python, Java, Rust and C the same coverage JS used to have.
+      if (dbEntry?.isWeak) {
+        results.weakPatterns.push({
+          file: relPath,
+          line: algo.line,
+          algorithm: algo.algorithm,
+          issue: `${algo.algorithm.toUpperCase()}: ${dbEntry.weaknessReason}`,
+          severity: dbEntry.quantumRisk === 'critical' ? 'critical' : 'high',
+          cwe: dbEntry.cwe,
+          fix: dbEntry.replacement ? `Replace with ${dbEntry.replacement}` : undefined,
+          evidence: algo.evidence,
+        });
+      } else if (MODE_ADVISORIES[algo.algorithm]) {
+        const advisory = MODE_ADVISORIES[algo.algorithm];
+        results.weakPatterns.push({
+          file: relPath,
+          line: algo.line,
+          algorithm: algo.algorithm,
+          issue: advisory.issue,
+          severity: advisory.severity,
+          fix: advisory.fix,
+          evidence: algo.evidence,
+        });
       }
     }
 
-    // Detect algorithm string literals
-    for (const { pattern, algo } of ALGO_LITERALS) {
+    // Attribute algorithms to an imported library only when the file imports
+    // exactly one crypto library. With two or more, which call belongs to which
+    // import is not decidable without dataflow analysis, and a guess here would
+    // print a wrong algorithm list next to a real package name.
+    for (const imp of langResult.imports) {
+      if (!sourceLibraries.has(imp.library)) sourceLibraries.set(imp.library, new Set());
+    }
+    if (langResult.imports.length === 1) {
+      const only = sourceLibraries.get(langResult.imports[0].library);
+      for (const algo of langResult.algorithms) only.add(algo.algorithm);
+    }
+
+    // Keys generated below the current minimum size.
+    for (const weakKey of scanWeakKeySizes(content)) {
+      const key = `${weakKey.algorithm}:${language}`;
+      if (!seenSourceAlgos.has(key)) {
+        seenSourceAlgos.add(key);
+        results.sourceAlgorithms.push({
+          algorithm: weakKey.algorithm,
+          category: weakKey.category,
+          language,
+          file: relPath,
+          line: weakKey.line,
+          quantumRisk: 'critical',
+          isWeak: true,
+        });
+      }
+      results.weakPatterns.push({
+        file: relPath,
+        line: weakKey.line,
+        algorithm: weakKey.algorithm,
+        issue: `${weakKey.algorithm.toUpperCase()}: ${weakKey.weaknessReason}`,
+        severity: 'critical',
+        cwe: weakKey.cwe,
+        fix: 'Generate keys at 3072 bits or move to ML-KEM / ML-DSA',
+      });
+    }
+
+    // API misuse (correct algorithm, incorrect usage).
+    for (const { languages, pattern, issue, severity, fix } of MISUSE_PATTERNS) {
+      if (!languages.includes(language)) continue;
       pattern.lastIndex = 0;
-      if (pattern.test(content) && !seenAlgos.has(algo)) {
-        seenAlgos.add(algo);
+      const m = pattern.exec(content);
+      if (m) {
+        results.weakPatterns.push({
+          file: relPath,
+          line: lineNumberAt(content, m.index),
+          issue,
+          severity,
+          fix,
+          evidence: m[0].slice(0, 80),
+        });
       }
     }
 
-    // Detect weak/deprecated patterns
-    for (const { pattern, issue, severity } of WEAK_PATTERNS) {
-      pattern.lastIndex = 0;
-      if (pattern.test(content)) {
-        results.weakPatterns.push({ file: relPath, issue, severity });
-      }
-    }
-
-    // Detect hardcoded secrets
-    for (const line of content.split('\n')) {
+    // Hardcoded secrets
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       if (line.length > 4096) continue; // ReDoS protection
       // Skip env var references
       if (/\$\{[A-Z_]+\}/.test(line) || /process\.env\.[A-Z_]+/.test(line)) continue;
@@ -287,6 +335,7 @@ export function scanProject(projectDir, options = {}) {
             type: id,
             name,
             file: relPath,
+            line: i + 1,
             envVar,
             severity: 'critical',
           });
@@ -295,39 +344,30 @@ export function scanProject(projectDir, options = {}) {
     }
   }
 
-  // Add node:crypto as a library if imports were detected
-  if (seenImports.size > 0 || seenAlgos.size > 0) {
-    const nodeCryptoAlgos = [...seenAlgos];
-    if (seenImports.has('node:crypto:') || seenImports.has('node:crypto:cipher')) {
-      if (!nodeCryptoAlgos.includes('AES')) nodeCryptoAlgos.push('AES');
-    }
-    if (seenImports.has('node:crypto:') || seenImports.has('node:crypto:hash') || seenImports.has('node:crypto:hmac')) {
-      if (!nodeCryptoAlgos.includes('SHA-256')) nodeCryptoAlgos.push('SHA-256');
-    }
-    if (seenImports.has('node:crypto:signature')) {
-      if (!nodeCryptoAlgos.includes('RSA')) nodeCryptoAlgos.push('RSA');
-    }
-    if (seenImports.has('node:crypto:keygen') || seenImports.has('node:crypto:keyagreement')) {
-      if (!nodeCryptoAlgos.includes('ECDSA')) nodeCryptoAlgos.push('ECDSA');
-    }
-    if (seenImports.has('node:crypto:kdf')) {
-      if (!nodeCryptoAlgos.includes('scrypt')) nodeCryptoAlgos.push('scrypt');
-    }
-
-    if (nodeCryptoAlgos.length > 0) {
-      const hasAsymmetric = nodeCryptoAlgos.some(a =>
-        ['RSA', 'ECDSA', 'Ed25519', 'RS256', 'ES256', 'DH'].includes(a)
-      );
-      results.libraries.push({
-        name: 'node:crypto',
-        version: 'builtin',
-        algorithms: nodeCryptoAlgos,
-        quantumRisk: hasAsymmetric ? 'high' : 'low',
-        category: hasAsymmetric ? 'asymmetric' : 'symmetric',
-        source: 'source-code',
-        ecosystem: 'npm',
-      });
-    }
+  // Source-detected libraries (node:crypto, hashlib, openssl, ...) become
+  // inventory entries carrying the algorithms actually observed in that file
+  // set, rather than a hardcoded guess derived from which helper was imported.
+  for (const [name, algoSet] of sourceLibraries) {
+    if (seenPkgs.has(name)) continue; // already inventoried from a manifest
+    const algorithms = [...algoSet];
+    const risks = algorithms.map(a => lookupAlgorithm(a)?.quantumRisk).filter(Boolean);
+    const quantumRisk = risks.includes('critical') ? 'critical'
+      : risks.includes('high') ? 'high'
+      : risks.includes('low') ? 'low'
+      : 'none';
+    const hasAsymmetric = algorithms.some(a => {
+      const c = lookupAlgorithm(a)?.category;
+      return c === 'signing' || c === 'key_exchange' || a.startsWith('rsa');
+    });
+    results.libraries.push({
+      name,
+      version: 'builtin',
+      algorithms,
+      quantumRisk,
+      category: hasAsymmetric ? 'asymmetric' : 'symmetric',
+      source: 'source-code',
+      ecosystem: 'source',
+    });
   }
 
   // 4. TLS scanning — pass pre-walked source+config files
