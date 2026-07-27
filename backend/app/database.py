@@ -1,5 +1,6 @@
 """Database connection and session management."""
 
+import re
 import json
 from typing import Any
 
@@ -90,6 +91,82 @@ _engine = None
 _async_session_maker = None
 
 
+# Async drivers each dialect is expected to use. The engine is created with
+# create_async_engine, so a sync driver URL fails at startup with an opaque
+# SQLAlchemy error rather than anything a reader can act on.
+_ASYNC_DRIVERS = {
+    "postgresql": "asyncpg",
+    "mysql": "aiomysql",
+    "sqlite": "aiosqlite",
+}
+
+
+def _redact_dsn(url: str) -> str:
+    """Mask credentials in a DSN so it can appear in an error or a log line.
+
+    These messages are raised at startup and land in tracebacks, container
+    logs and crash reporters. `postgres://app:hunter2@db/prod` echoed verbatim
+    puts the database password in all three.
+    """
+    if not isinstance(url, str):
+        return "<not-a-string>"
+    # Match any userinfo segment, not just one following "//". The message
+    # that echoes the whole URL is the MALFORMED case, which by definition may
+    # not have a well-formed "//" authority: `postgres:/app:pw@db` must redact
+    # too. Anchoring on "//" left the password visible in exactly the branch
+    # that prints it.
+    return re.sub(r"[^/@\s]+@", "***@", url)
+
+
+def normalize_database_url(url: str) -> str:
+    """Normalize a database URL to an async-capable SQLAlchemy URL.
+
+    Every managed Postgres provider (Heroku, Render, Railway, Supabase's
+    pooler) hands out ``postgres://``. SQLAlchemy dropped that alias in 1.4, so
+    passing it through produced::
+
+        NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:postgres
+
+    which says nothing about what to change. Two rewrites are applied, and
+    anything still unusable is rejected with an actionable message:
+
+    1. ``postgres://`` becomes ``postgresql://``.
+    2. A dialect with no ``+driver`` gains its async driver.
+
+    Raises:
+        ValueError: if the URL names a driver that cannot work with asyncio.
+    """
+    if not url or "://" not in url:
+        raise ValueError(
+            f"DATABASE_URL is not a connection string: {_redact_dsn(url)!r}. "
+            "Expected something like postgresql+asyncpg://user:pass@host/db"
+        )
+
+    scheme, rest = url.split("://", 1)
+    scheme = scheme.lower()
+
+    if scheme == "postgres":
+        scheme = "postgresql"
+
+    if "+" in scheme:
+        dialect, driver = scheme.split("+", 1)
+        expected = _ASYNC_DRIVERS.get(dialect)
+        if expected and driver != expected:
+            raise ValueError(
+                f"DATABASE_URL uses the synchronous driver {driver!r}. "
+                f"CryptoServe runs on asyncio; use {dialect}+{expected}:// instead."
+            )
+        return f"{scheme}://{rest}"
+
+    driver = _ASYNC_DRIVERS.get(scheme)
+    if driver is None:
+        raise ValueError(
+            f"Unsupported database dialect {scheme!r}. " f"Supported: {', '.join(sorted(_ASYNC_DRIVERS))}."
+        )
+
+    return f"{scheme}+{driver}://{rest}"
+
+
 def get_engine():
     """Get or create the database engine.
 
@@ -103,8 +180,10 @@ def get_engine():
     if _engine is None:
         settings = get_settings()
 
+        database_url = normalize_database_url(settings.database_url)
+
         # SQLite doesn't support connection pooling the same way
-        is_sqlite = settings.database_url.startswith("sqlite")
+        is_sqlite = database_url.startswith("sqlite")
 
         pool_options = {
             "echo": False,
@@ -122,7 +201,7 @@ def get_engine():
                 }
             )
 
-        _engine = create_async_engine(settings.database_url, **pool_options)
+        _engine = create_async_engine(database_url, **pool_options)
     return _engine
 
 
