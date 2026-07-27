@@ -200,27 +200,55 @@ jobs:
       # A publish that produces no attestation cannot be verified by consumers.
       # cryptoserve@0.3.4 shipped with --provenance and has no attestations at
       # all, which went unnoticed. Fail the release instead.
-      - name: Attestations are present and SLSA-typed
+      # npm audit signatures cryptographically verifies the registry signature
+      # and the provenance attestation against npm's public keys. Grepping the
+      # metadata blob for the string "slsa" would only prove a word appears in
+      # some JSON: a descriptor is not a signature, and a check that cannot
+      # fail on a forged input is not a check.
+      - name: Verify provenance cryptographically
         run: |
           set -euo pipefail
           VERSION="${{ needs.verify-tag.outputs.version }}"
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null 2>&1
+
           for attempt in 1 2 3 4 5; do
-            ATTESTATIONS="$(npm view "cryptoserve@$VERSION" dist.attestations --json 2>/dev/null || echo '')"
-            if [ -n "$ATTESTATIONS" ] && [ "$ATTESTATIONS" != "null" ]; then
-              echo "$ATTESTATIONS"
-              echo "$ATTESTATIONS" | grep -qi 'slsa' || {
-                echo "::error::Attestations present but no SLSA predicate found."
-                exit 1
-              }
-              echo "Provenance verified for cryptoserve@$VERSION"
-              exit 0
+            if npm install --no-audit --no-fund "cryptoserve@$VERSION" >/dev/null 2>&1; then
+              break
             fi
-            echo "Attestations not visible yet (attempt $attempt); waiting for registry propagation..."
+            echo "Version not installable yet (attempt $attempt); waiting for registry propagation..."
             sleep 20
           done
-          echo "::error::cryptoserve@$VERSION published without attestations."
-          echo "::error::Check that Trusted Publishing is configured: npm trust list cryptoserve"
-          exit 1
+
+          # Fails on a missing, malformed, or untrusted attestation.
+          if ! npm audit signatures; then
+            echo "::error::cryptoserve@$VERSION failed signature/provenance verification."
+            echo "::error::Check Trusted Publishing: npm trust list cryptoserve"
+            exit 1
+          fi
+
+          # audit signatures also passes for a package that is merely signed,
+          # so assert the provenance attestation exists and carries a SLSA
+          # predicate type in the field that defines it, not anywhere in the
+          # document.
+          npm view "cryptoserve@$VERSION" dist.attestations --json > att.json || true
+          node -e '
+            const fs = require("fs");
+            let a = null;
+            try { a = JSON.parse(fs.readFileSync("att.json", "utf8") || "null"); } catch {}
+            if (!a) {
+              console.error("::error::no dist.attestations on the published version");
+              process.exit(1);
+            }
+            const pt = a && a.provenance && a.provenance.predicateType;
+            if (typeof pt !== "string" || !pt.startsWith("https://slsa.dev/provenance/")) {
+              console.error("::error::provenance.predicateType is not a SLSA provenance type: " + JSON.stringify(pt));
+              process.exit(1);
+            }
+            console.log("Provenance verified: " + pt);
+          '
+          echo "cryptoserve@$VERSION: signature and SLSA provenance verified."
 
   release:
     needs: [verify-tag, publish]
