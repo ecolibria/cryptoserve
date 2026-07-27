@@ -84,6 +84,21 @@ jobs:
       - name: Build
         run: cd frontend && npm run build
 
+      # Runtime dependencies only. Dev-tooling advisories do not reach a
+      # deployed dashboard, and mixing them in trains everyone to ignore the
+      # output. A critical in shipped code fails the build; highs are reported
+      # so a known-unfixable one (currently Next 14's advisories, which need a
+      # major upgrade) stays visible without blocking every unrelated PR.
+      - name: Audit runtime dependencies
+        run: |
+          set -uo pipefail
+          cd frontend
+          npm audit --omit=dev --audit-level=critical
+          STATUS=$?
+          echo "--- high and above, informational ---"
+          npm audit --omit=dev --audit-level=high || true
+          exit $STATUS
+
   sdk:
     runs-on: ubuntu-latest
 
