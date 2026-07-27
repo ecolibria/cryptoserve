@@ -1,44 +1,43 @@
 /**
  * Credential storage for CryptoServe platform integration.
  *
- * Stores/reads tokens at ~/.cryptoserve/credentials.json with 0o600 permissions.
+ * Stores/reads tokens at `<state dir>/credentials.json` with 0o600 permissions.
+ * The state directory is resolved by lib/paths.mjs, so CRYPTOSERVE_HOME moves
+ * it wholesale (tests, CI, containers).
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { configPath, ensureConfigDir } from './paths.mjs';
 
-const CONFIG_DIR = join(homedir(), '.cryptoserve');
-const CREDENTIALS_PATH = join(CONFIG_DIR, 'credentials.json');
-
-function ensureDir() {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
+/** Resolved per call so a CRYPTOSERVE_HOME change takes effect immediately. */
+export function tokenStorePath() {
+  return configPath('credentials.json');
 }
 
 export function saveToken(token, server = 'https://localhost:8003') {
-  ensureDir();
+  ensureConfigDir();
   const data = {
     token,
     server,
     savedAt: new Date().toISOString(),
   };
-  writeFileSync(CREDENTIALS_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
+  writeFileSync(tokenStorePath(), JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
 export function loadToken() {
-  if (!existsSync(CREDENTIALS_PATH)) return null;
+  const path = tokenStorePath();
+  if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf-8'));
+    return JSON.parse(readFileSync(path, 'utf-8'));
   } catch {
     return null;
   }
 }
 
 export function clearToken() {
-  if (existsSync(CREDENTIALS_PATH)) {
-    unlinkSync(CREDENTIALS_PATH);
+  const path = tokenStorePath();
+  if (existsSync(path)) {
+    unlinkSync(path);
   }
 }
 

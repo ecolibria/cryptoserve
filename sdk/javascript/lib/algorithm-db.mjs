@@ -23,9 +23,9 @@ export const ALGORITHM_DB = {
   'aes-128-cbc':        { category: 'encryption', quantumRisk: 'none', isWeak: false },
   'aes-256-cbc':        { category: 'encryption', quantumRisk: 'none', isWeak: false },
   'aes-ctr':            { category: 'encryption', quantumRisk: 'none', isWeak: false },
-  'aes-ecb':            { category: 'encryption', quantumRisk: 'none', isWeak: true, weaknessReason: 'ECB mode leaks patterns', cwe: 'CWE-327' },
-  'aes-128-ecb':        { category: 'encryption', quantumRisk: 'none', isWeak: true, weaknessReason: 'ECB mode leaks patterns', cwe: 'CWE-327' },
-  'aes-256-ecb':        { category: 'encryption', quantumRisk: 'none', isWeak: true, weaknessReason: 'ECB mode leaks patterns', cwe: 'CWE-327' },
+  'aes-ecb':            { category: 'encryption', quantumRisk: 'none', isWeak: true, weaknessReason: 'ECB mode leaks patterns', cwe: 'CWE-327', replacement: 'AES-256-GCM (any authenticated mode)' },
+  'aes-128-ecb':        { category: 'encryption', quantumRisk: 'none', isWeak: true, weaknessReason: 'ECB mode leaks patterns', cwe: 'CWE-327', replacement: 'AES-256-GCM (any authenticated mode)' },
+  'aes-256-ecb':        { category: 'encryption', quantumRisk: 'none', isWeak: true, weaknessReason: 'ECB mode leaks patterns', cwe: 'CWE-327', replacement: 'AES-256-GCM (any authenticated mode)' },
   'chacha20':           { category: 'encryption', quantumRisk: 'none', isWeak: false },
   'chacha20-poly1305':  { category: 'encryption', quantumRisk: 'none', isWeak: false },
   'xchacha20':          { category: 'encryption', quantumRisk: 'none', isWeak: false },
@@ -35,20 +35,22 @@ export const ALGORITHM_DB = {
   'camellia':           { category: 'encryption', quantumRisk: 'none', isWeak: false },
   'twofish':            { category: 'encryption', quantumRisk: 'none', isWeak: false },
   'serpent':            { category: 'encryption', quantumRisk: 'none', isWeak: false },
+  'aria':               { category: 'encryption', quantumRisk: 'none', isWeak: false },
+  'sm4':                { category: 'encryption', quantumRisk: 'none', isWeak: false },
 
   // Weak symmetric
-  'des':      { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: '56-bit key is trivially brutable', cwe: 'CWE-327' },
-  '3des':     { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: 'Deprecated, Sweet32 attack', cwe: 'CWE-327' },
-  'des-ede3': { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: 'Deprecated, Sweet32 attack', cwe: 'CWE-327' },
-  'rc4':      { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Biased keystream, RFC 7465', cwe: 'CWE-327' },
-  'rc2':      { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Weak with known attacks', cwe: 'CWE-327' },
-  'blowfish': { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: '64-bit block, birthday attacks', cwe: 'CWE-327' },
-  'idea':     { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: 'Deprecated, limited analysis', cwe: 'CWE-327' },
-  'cast5':    { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: '64-bit block, deprecated', cwe: 'CWE-327' },
+  'des':      { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: '56-bit key is trivially brutable', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
+  '3des':     { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: 'Deprecated, Sweet32 attack', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
+  'des-ede3': { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: 'Deprecated, Sweet32 attack', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
+  'rc4':      { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Biased keystream, RFC 7465', cwe: 'CWE-327', replacement: 'AES-256-GCM or ChaCha20-Poly1305' },
+  'rc2':      { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Weak with known attacks', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
+  'blowfish': { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: '64-bit block, birthday attacks', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
+  'idea':     { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: 'Deprecated, limited analysis', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
+  'cast5':    { category: 'encryption', quantumRisk: 'low', isWeak: true, weaknessReason: '64-bit block, deprecated', cwe: 'CWE-327', replacement: 'AES-256-GCM' },
 
   // Asymmetric — quantum-vulnerable (Shor's algorithm)
   'rsa':      { category: 'encryption', quantumRisk: 'high', isWeak: false },
-  'rsa-1024': { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Key too small', cwe: 'CWE-326' },
+  'rsa-1024': { category: 'encryption', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Key too small', cwe: 'CWE-326', replacement: 'RSA-3072 now, ML-KEM-768 / ML-DSA-65 for the quantum horizon' },
   'rsa-2048': { category: 'encryption', quantumRisk: 'high', isWeak: false },
   'rsa-4096': { category: 'encryption', quantumRisk: 'high', isWeak: false },
   'rsa-pss':  { category: 'signing', quantumRisk: 'high', isWeak: false },
@@ -59,7 +61,7 @@ export const ALGORITHM_DB = {
   'ed25519':  { category: 'signing', quantumRisk: 'high', isWeak: false },
   'ed448':    { category: 'signing', quantumRisk: 'high', isWeak: false },
   'eddsa':    { category: 'signing', quantumRisk: 'high', isWeak: false },
-  'dsa':      { category: 'signing', quantumRisk: 'high', isWeak: true, weaknessReason: 'Deprecated', cwe: 'CWE-327' },
+  'dsa':      { category: 'signing', quantumRisk: 'high', isWeak: true, weaknessReason: 'Deprecated', cwe: 'CWE-327', replacement: 'Ed25519, or ML-DSA-65 for the quantum horizon' },
   'secp256k1':{ category: 'signing', quantumRisk: 'high', isWeak: false },
   'secp384r1':{ category: 'signing', quantumRisk: 'high', isWeak: false },
   'secp256r1':{ category: 'signing', quantumRisk: 'high', isWeak: false },
@@ -102,7 +104,7 @@ export const ALGORITHM_DB = {
   'bike':       { category: 'key_exchange', quantumRisk: 'none', isWeak: false },
   'hqc':        { category: 'key_exchange', quantumRisk: 'none', isWeak: false },
   'frodokem':   { category: 'key_exchange', quantumRisk: 'none', isWeak: false },
-  'sike':       { category: 'key_exchange', quantumRisk: 'none', isWeak: true, weaknessReason: 'Broken by Castryck-Decru attack', cwe: 'CWE-327' },
+  'sike':       { category: 'key_exchange', quantumRisk: 'none', isWeak: true, weaknessReason: 'Broken by Castryck-Decru attack', cwe: 'CWE-327', replacement: 'ML-KEM-768 (FIPS 203)' },
 
   // Hashes — quantum-safe (Grover halving)
   'sha256':     { category: 'hashing', quantumRisk: 'low', isWeak: false },
@@ -121,10 +123,10 @@ export const ALGORITHM_DB = {
   'ripemd160':  { category: 'hashing', quantumRisk: 'low', isWeak: false },
 
   // Weak hashes
-  'md5':  { category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Collision attacks', cwe: 'CWE-328' },
-  'md4':  { category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Completely broken', cwe: 'CWE-328' },
-  'sha1': { category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'SHAttered collision', cwe: 'CWE-328' },
-  'sha-1':{ category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'SHAttered collision', cwe: 'CWE-328' },
+  'md5':  { category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Collision attacks', cwe: 'CWE-328', replacement: 'SHA-256' },
+  'md4':  { category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Completely broken', cwe: 'CWE-328', replacement: 'SHA-256' },
+  'sha1': { category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'SHAttered collision', cwe: 'CWE-328', replacement: 'SHA-256' },
+  'sha-1':{ category: 'hashing', quantumRisk: 'critical', isWeak: true, weaknessReason: 'SHAttered collision', cwe: 'CWE-328', replacement: 'SHA-256' },
 
   // KDFs — quantum-safe
   'argon2':   { category: 'kdf', quantumRisk: 'none', isWeak: false },
@@ -161,12 +163,12 @@ export const ALGORITHM_DB = {
 
   // TLS protocols
   'tls':     { category: 'protocol', quantumRisk: 'high', isWeak: false },
-  'tls-1.0': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Deprecated, POODLE/BEAST', cwe: 'CWE-326' },
-  'tls-1.1': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Deprecated', cwe: 'CWE-326' },
+  'tls-1.0': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Deprecated, POODLE/BEAST', cwe: 'CWE-326', replacement: 'TLS 1.3' },
+  'tls-1.1': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Deprecated', cwe: 'CWE-326', replacement: 'TLS 1.3' },
   'tls-1.2': { category: 'protocol', quantumRisk: 'high', isWeak: false },
   'tls-1.3': { category: 'protocol', quantumRisk: 'low', isWeak: false },
-  'ssl-3.0': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'POODLE attack', cwe: 'CWE-326' },
-  'ssl-2.0': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Completely broken', cwe: 'CWE-326' },
+  'ssl-3.0': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'POODLE attack', cwe: 'CWE-326', replacement: 'TLS 1.3' },
+  'ssl-2.0': { category: 'protocol', quantumRisk: 'critical', isWeak: true, weaknessReason: 'Completely broken', cwe: 'CWE-326', replacement: 'TLS 1.3' },
 };
 
 // ---------------------------------------------------------------------------
@@ -197,6 +199,19 @@ const ALIASES = {
   'rsa1024': 'rsa-1024',
   'ec': 'ecdsa',
   'ecc': 'ecdsa',
+  // WebCrypto registry identifiers
+  'rsassa-pkcs1-v1_5': 'rsa',
+  'rsassa-pkcs1-v15': 'rsa',
+  'rsa-oaep': 'rsa-oaep',
+  'aes-kw': 'aes',
+  // OpenSSL signature suite names (createSign/createVerify take these)
+  'rsa-sha1': 'sha1',
+  'rsa-sha256': 'rsa',
+  'rsa-sha384': 'rsa',
+  'rsa-sha512': 'rsa',
+  'ecdsa-with-sha256': 'ecdsa',
+  'sha256withrsa': 'rsa',
+  'sha1withrsa': 'sha1',
   'curve-25519': 'curve25519',
   'dh-2048': 'dh',
   'diffie_hellman': 'diffie-hellman',
@@ -240,6 +255,96 @@ function normalize(name) {
 export function lookupAlgorithm(name) {
   const key = normalize(name);
   return key ? { ...ALGORITHM_DB[key], name: key } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Cipher/digest token canonicalization
+// ---------------------------------------------------------------------------
+
+// OpenSSL and Node name a cipher by family, key length and mode in one token
+// ("des-ede3-cbc", "bf-cbc", "rc2-40-cbc"). Longest prefix wins, so "des-ede3"
+// must be tried before "des-ede" and "des".
+const CIPHER_FAMILY_PREFIXES = [
+  ['chacha20-poly1305', 'chacha20-poly1305'],
+  ['xchacha20-poly1305', 'xchacha20-poly1305'],
+  ['chacha20', 'chacha20'],
+  ['des-ede3', '3des'],
+  ['des-ede', '3des'],
+  ['des3', '3des'],
+  ['tripledes', '3des'],
+  ['desx', 'des'],
+  ['des', 'des'],
+  ['blowfish', 'blowfish'],
+  ['bf', 'blowfish'],
+  ['rc2', 'rc2'],
+  ['rc4', 'rc4'],
+  ['arcfour', 'rc4'],
+  ['cast5', 'cast5'],
+  ['cast', 'cast5'],
+  ['idea', 'idea'],
+  ['camellia', 'camellia'],
+  ['aria', 'aria'],
+  ['sm4', 'sm4'],
+];
+
+// AES tokens keep their mode because ECB is weak and GCM/CBC/CTR are not.
+const AES_MODES = new Set(['gcm', 'cbc', 'ctr', 'ecb', 'ccm', 'ocb', 'xts', 'cfb', 'ofb', 'wrap']);
+
+const DIGEST_TOKENS = {
+  'md4': 'md4', 'md5': 'md5', 'md5-sha1': 'md5',
+  'sha': 'sha1', 'sha1': 'sha1', 'sha-1': 'sha1',
+  'sha224': 'sha224', 'sha-224': 'sha224',
+  'sha256': 'sha256', 'sha-256': 'sha256',
+  'sha384': 'sha384', 'sha-384': 'sha384',
+  'sha512': 'sha512', 'sha-512': 'sha512',
+  'sha512-224': 'sha512', 'sha512-256': 'sha512',
+  'sha3-256': 'sha3-256', 'sha3-384': 'sha3-384', 'sha3-512': 'sha3-512',
+  'blake2b512': 'blake2b', 'blake2b': 'blake2b',
+  'blake2s256': 'blake2s', 'blake2s': 'blake2s',
+  'blake3': 'blake3',
+  'ripemd160': 'ripemd160', 'ripemd': 'ripemd160', 'rmd160': 'ripemd160',
+};
+
+/**
+ * Canonicalize a cipher or digest token as written in source code
+ * ("des-ede3-cbc", "AES-256-GCM", "SHA-1", "bf-ecb") to a key in ALGORITHM_DB.
+ *
+ * This is what keeps `createCipheriv('des-ede3-cbc', ...)` from being read as
+ * an unknown string, and what stops a family name from collapsing distinct
+ * algorithms onto one label.
+ *
+ * @param {string} token - Algorithm token as it appears in source
+ * @returns {string|null} Canonical ALGORITHM_DB key, or null if unrecognized
+ */
+export function canonicalizeAlgorithmToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const t = token.trim().toLowerCase().replace(/[_\s]+/g, '-');
+  if (!t) return null;
+
+  if (t in DIGEST_TOKENS) return DIGEST_TOKENS[t];
+
+  // AES: preserve the mode, drop the key length (ECB weakness is mode-borne).
+  const aes = t.match(/^aes-?(?:128|192|256)?-?([a-z]+)?(?:-\d+)?$/);
+  if (aes && t.startsWith('aes')) {
+    const mode = aes[1];
+    if (mode && AES_MODES.has(mode)) {
+      return mode === 'ecb' ? 'aes-ecb'
+        : mode === 'gcm' ? 'aes-gcm'
+        : mode === 'cbc' ? 'aes-cbc'
+        : mode === 'ctr' ? 'aes-ctr'
+        : 'aes';
+    }
+    return 'aes';
+  }
+
+  for (const [prefix, canonical] of CIPHER_FAMILY_PREFIXES) {
+    if (t === prefix || t.startsWith(prefix + '-')) {
+      return canonical in ALGORITHM_DB ? canonical : null;
+    }
+  }
+
+  // Fall back to the alias table for everything else (rsa-2048, ml-kem-768, ...).
+  return normalize(t);
 }
 
 /**

@@ -18,22 +18,55 @@ npx cryptoserve scan .
 ```
 
 ```
-  CryptoServe scan: .
+CRYPTOSERVE > scan
 
-  Found
-  ---------------------------------------------------
-  Crypto libraries        4
-  Source algorithms       3   (1 weak: MD5)
-  Hardcoded secrets       1
-  ---------------------------------------------------
-  Quantum readiness    40 / 100   (2 quantum-vulnerable)
+  Directory            /work/payments-api
+  Source files         2
+  Files examined       3
 
-  Next: cryptoserve pqc            (migration plan)
-        cryptoserve cbom           (export CBOM)
-        cryptoserve gate .         (block weak crypto in CI)
+Crypto Libraries
+  Library                Version    Risk       Algorithms
+  ---------------------- ---------- ---------- ------------------------------
+  jsonwebtoken           9.0.0      high       RS256, HS256, ES256
+  bcrypt                 5.1.0      none       bcrypt
+  cryptography           builtin    high       rsa
+  node:crypto            builtin    critical   md5, 3des, aes-gcm, csprng
+
+Weak Crypto Patterns
+  x RSA-1024: 1024-bit key is below the 2048-bit minimum (CWE-326)
+    src/keys.py:4
+    *  Fix: Generate keys at 3072 bits or move to ML-KEM / ML-DSA
+  x MD5: Collision attacks (CWE-328)
+    src/tokens.js:4
+    *  Fix: Replace with SHA-256
+  !  3DES: Deprecated, Sweet32 attack (CWE-327)
+    src/tokens.js:8
+    *  Fix: Replace with AES-256-GCM
+
+Source Code Crypto
+  Algorithm          Category      Language    Risk      Location
+  ------------------ ------------- ----------- --------- ------------------------------
+  rsa                encryption    python      high      src/keys.py:4
+  rsa-1024           encryption    python      critical  src/keys.py:4
+  md5                hashing       javascript  critical  src/tokens.js:4
+  3des               encryption    javascript  low       src/tokens.js:8
+  aes-gcm            encryption    javascript  none      src/tokens.js:12
+  csprng             random        javascript  none      src/tokens.js:12
+
+Summary
+  Libraries            4
+  Source algorithms    6
+  Languages            python, javascript
+  Manifests            package.json
+  Secrets found        + 0
+  Weak patterns        !  3
+  Cert/key files       0
 ```
 
-Scans 6 languages (JavaScript/TypeScript, Go, Python, Java/Kotlin, Rust, C/C++) against a database of 131 algorithms. Zero npm dependencies. Works offline.
+Scans 6 languages (JavaScript/TypeScript, Go, Python, Java/Kotlin, Rust, C/C++)
+against a database of 133 algorithms, 22 of them flagged weak with a named
+replacement. Every finding carries `file:line`. Zero npm dependencies. Works
+offline.
 
 ## Install
 
@@ -55,18 +88,34 @@ The Python SDK lives under `sdk/python/` (editable install via `pip install -e s
 
 ## Verifying releases
 
-Every published tag carries a `SHA256SUMS.txt` attached to the GitHub Release. Wheels and tarballs match those hashes; npm tarballs match `dist.shasum` from the registry.
+Every published tag attaches a `SHA256SUMS.txt` to its GitHub Release, covering
+every wheel, sdist and npm tarball uploaded with it. Entries use bare filenames,
+so verification works in whatever directory you download into.
 
 ```bash
-# Python wheel
-gh release download v1.4.3 -p SHA256SUMS.txt -R ecolibria/cryptoserve
+# Python SDK
+gh release download v1.4.3 -R ecolibria/cryptoserve
 sha256sum -c SHA256SUMS.txt
 
-# npm tarball
-npm view cryptoserve@0.3.4 dist.shasum dist.tarball
+# CLI (npm)
+gh release download js-v0.4.0 -R ecolibria/cryptoserve
+sha256sum -c SHA256SUMS.txt
 ```
 
-The npm and PyPI publish workflows run from a fixed-tag trigger with `id-token: write` and `--provenance`. SLSA provenance attestations and Sigstore signatures are scaffolded in the workflows but not yet propagated to released artifacts; until that ships, verify via `SHA256SUMS.txt`.
+Both publish workflows are triggered by a tag push and refuse to publish when
+the tag disagrees with the package version in the tree. npm publishes through
+npm Trusted Publishing and PyPI through PyPI Trusted Publishing, both over
+OIDC; no registry token exists in either workflow.
+
+Releases from `js-v0.4.0` onward also carry SLSA provenance, and the workflow
+fails the release if the published version has no attestation:
+
+```bash
+npm view cryptoserve@0.4.0 dist.attestations --json
+```
+
+Versions at or before `0.3.4` were published under the previous token-based
+workflow and carry no attestations. Verify those with `SHA256SUMS.txt` only.
 
 ## Which command do I want
 
@@ -131,11 +180,17 @@ Full reference: [docs/cli.md](docs/cli.md).
 - name: Crypto gate
   run: npx cryptoserve gate . --fail-on-weak --max-risk medium --format sarif --output crypto.sarif
 - uses: github/codeql-action/upload-sarif@v3
+  if: always()
   with:
     sarif_file: crypto.sarif
 ```
 
-Exit codes: `0` clean / gate passed, `1` failures found or invalid input.
+Each SARIF result carries the `file:line` that produced it, so findings land on
+the right line in the GitHub Security tab and in pull request annotations.
+
+Exit codes: `0` gate passed, `1` violations found, `2` the gate could not run
+(missing path, unreadable tree). A typo in the scanned path exits 2 rather than
+scoring a clean pass.
 
 ## SDKs
 
@@ -166,6 +221,24 @@ plaintext = crypto.decrypt(ciphertext, context="user-pii")
 ```
 
 Local mode works without a server. Full reference: [docs/sdk/python.md](docs/sdk/python.md).
+
+## Configuration
+
+State (master key, vault, cached census data) lives in `~/.cryptoserve` by
+default. Two environment variables move it, which is what makes the CLI usable
+in CI and in containers without writing into the invoking user's home:
+
+| Variable | Effect |
+|---|---|
+| `CRYPTOSERVE_HOME` | Absolute path to the state directory. Wins outright. |
+| `XDG_CONFIG_HOME` | Uses `$XDG_CONFIG_HOME/cryptoserve` when `CRYPTOSERVE_HOME` is unset. |
+
+```bash
+CRYPTOSERVE_HOME=/run/cryptoserve cryptoserve vault init --password "$VAULT_PW"
+```
+
+Scanner limits and skip lists come from an optional `.cryptoserve.json` in the
+scanned directory. See [docs/cli.md](docs/cli.md).
 
 ## Self-host (optional)
 

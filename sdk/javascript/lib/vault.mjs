@@ -18,27 +18,24 @@
  *   vault export     — Export as encrypted bundle
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { configPath, ensureConfigDir } from './paths.mjs';
 
-const CONFIG_DIR = join(homedir(), '.cryptoserve');
-const VAULT_PATH = join(CONFIG_DIR, 'vault.enc');
 const SALT_SIZE = 32;
 const IV_SIZE = 12;
 const TAG_SIZE = 16;
 const SCRYPT_OPTS = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function ensureConfigDir() {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
+/**
+ * Default vault path. Resolved per call rather than frozen at import time, so
+ * a CRYPTOSERVE_HOME set by the caller takes effect. Default parameters are
+ * evaluated at call time in JS, which is what makes `path = defaultVaultPath()`
+ * behave correctly on every exported function below.
+ */
+export function defaultVaultPath() {
+  return configPath('vault.enc');
 }
 
 function deriveKey(password, salt) {
@@ -69,14 +66,14 @@ function decryptData(packed, password) {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf-8');
 }
 
-function loadVault(password, path = VAULT_PATH) {
+function loadVault(password, path = defaultVaultPath()) {
   if (!existsSync(path)) return null;
   const packed = readFileSync(path);
   const json = decryptData(packed, password);
   return JSON.parse(json);
 }
 
-function saveVault(data, password, path = VAULT_PATH) {
+function saveVault(data, password, path = defaultVaultPath()) {
   ensureConfigDir();
   const json = JSON.stringify(data, null, 2);
   const encrypted = encryptData(json, password);
@@ -87,11 +84,11 @@ function saveVault(data, password, path = VAULT_PATH) {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function vaultExists(path = VAULT_PATH) {
+export function vaultExists(path = defaultVaultPath()) {
   return existsSync(path);
 }
 
-export function initVault(password, path = VAULT_PATH) {
+export function initVault(password, path = defaultVaultPath()) {
   if (existsSync(path)) {
     throw new Error('Vault already exists. Use "vault reset" to recreate.');
   }
@@ -104,7 +101,7 @@ export function initVault(password, path = VAULT_PATH) {
   return data;
 }
 
-export function setSecret(password, key, value, path = VAULT_PATH) {
+export function setSecret(password, key, value, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
   data.secrets[key] = {
@@ -114,7 +111,7 @@ export function setSecret(password, key, value, path = VAULT_PATH) {
   saveVault(data, password, path);
 }
 
-export function getSecret(password, key, path = VAULT_PATH) {
+export function getSecret(password, key, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
   const entry = data.secrets[key];
@@ -122,7 +119,7 @@ export function getSecret(password, key, path = VAULT_PATH) {
   return entry.value;
 }
 
-export function listSecrets(password, path = VAULT_PATH) {
+export function listSecrets(password, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
   return Object.entries(data.secrets).map(([key, entry]) => ({
@@ -131,7 +128,7 @@ export function listSecrets(password, path = VAULT_PATH) {
   }));
 }
 
-export function deleteSecret(password, key, path = VAULT_PATH) {
+export function deleteSecret(password, key, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
   if (!(key in data.secrets)) return false;
@@ -140,7 +137,7 @@ export function deleteSecret(password, key, path = VAULT_PATH) {
   return true;
 }
 
-export function resetVault(path = VAULT_PATH) {
+export function resetVault(path = defaultVaultPath()) {
   if (existsSync(path)) unlinkSync(path);
 }
 
@@ -148,7 +145,7 @@ export function resetVault(path = VAULT_PATH) {
 // vault run — inject secrets as env vars into a child process
 // ---------------------------------------------------------------------------
 
-export function vaultRun(password, command, args = [], path = VAULT_PATH) {
+export function vaultRun(password, command, args = [], path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
 
@@ -172,7 +169,7 @@ export function vaultRun(password, command, args = [], path = VAULT_PATH) {
 // vault import — read .env file, store each key in vault
 // ---------------------------------------------------------------------------
 
-export function importEnvFile(password, envPath, path = VAULT_PATH) {
+export function importEnvFile(password, envPath, path = defaultVaultPath()) {
   if (!existsSync(envPath)) throw new Error(`File not found: ${envPath}`);
 
   const content = readFileSync(envPath, 'utf-8');
@@ -206,7 +203,7 @@ export function importEnvFile(password, envPath, path = VAULT_PATH) {
 // vault export — create encrypted bundle
 // ---------------------------------------------------------------------------
 
-export function exportVault(password, exportPassword = null, path = VAULT_PATH) {
+export function exportVault(password, exportPassword = null, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found.');
 
@@ -215,7 +212,7 @@ export function exportVault(password, exportPassword = null, path = VAULT_PATH) 
   return encryptData(json, pw).toString('base64');
 }
 
-export function importVaultBundle(password, bundle, importPassword = null, path = VAULT_PATH) {
+export function importVaultBundle(password, bundle, importPassword = null, path = defaultVaultPath()) {
   const packed = Buffer.from(bundle, 'base64');
   const pw = importPassword || password;
   const json = decryptData(packed, pw);
