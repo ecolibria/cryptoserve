@@ -80,3 +80,52 @@ class TestRejections:
     def test_non_urls_are_rejected(self, url):
         with pytest.raises(ValueError):
             normalize_database_url(url)
+
+
+class TestCredentialsNeverReachTheErrorMessage:
+    """A startup error lands in tracebacks, container logs and crash reporters.
+
+    Echoing the DSN verbatim puts the database password in all three. These are
+    negative tests: each asserts the secret is ABSENT from the message, so they
+    fail against a version that interpolates the raw URL.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Only MALFORMED urls reach the branch that echoes the whole
+            # string; a well-formed one normalizes instead of raising. The
+            # single-slash case is the one that matters: anchoring redaction on
+            # "//" left the password visible in exactly this input.
+            "postgres:/app:hunter2@db/prod",
+            "weird:app:hunter2@db",
+        ],
+    )
+    def test_password_absent_from_exception(self, url):
+        with pytest.raises(ValueError) as exc:
+            normalize_database_url(url)
+        assert "hunter2" not in str(exc.value)
+
+    def test_username_absent_too(self):
+        from app.database import _redact_dsn
+
+        assert "solo-user" not in _redact_dsn("postgres://solo-user@db/prod")
+
+    def test_redaction_keeps_the_diagnostic_parts(self):
+        from app.database import _redact_dsn
+
+        redacted = _redact_dsn("postgres://app:hunter2@db.example.com/prod")
+        assert "postgres" in redacted
+        assert "db.example.com" in redacted
+        assert "prod" in redacted
+
+    def test_urls_without_credentials_are_untouched(self):
+        from app.database import _redact_dsn
+
+        assert _redact_dsn("sqlite+aiosqlite:///./cryptoserve.db") == "sqlite+aiosqlite:///./cryptoserve.db"
+        assert _redact_dsn("postgresql+asyncpg://db.internal/prod") == "postgresql+asyncpg://db.internal/prod"
+
+    def test_normalization_still_returns_the_real_url(self):
+        # Redaction is for messages only. It must never alter what the engine
+        # is actually handed.
+        assert normalize_database_url("postgres://u:p@h/db") == "postgresql+asyncpg://u:p@h/db"

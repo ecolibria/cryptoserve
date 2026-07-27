@@ -1,5 +1,6 @@
 """Database connection and session management."""
 
+import re
 import json
 from typing import Any
 
@@ -100,6 +101,23 @@ _ASYNC_DRIVERS = {
 }
 
 
+def _redact_dsn(url: str) -> str:
+    """Mask credentials in a DSN so it can appear in an error or a log line.
+
+    These messages are raised at startup and land in tracebacks, container
+    logs and crash reporters. `postgres://app:hunter2@db/prod` echoed verbatim
+    puts the database password in all three.
+    """
+    if not isinstance(url, str):
+        return "<not-a-string>"
+    # Match any userinfo segment, not just one following "//". The message
+    # that echoes the whole URL is the MALFORMED case, which by definition may
+    # not have a well-formed "//" authority: `postgres:/app:pw@db` must redact
+    # too. Anchoring on "//" left the password visible in exactly the branch
+    # that prints it.
+    return re.sub(r"[^/@\s]+@", "***@", url)
+
+
 def normalize_database_url(url: str) -> str:
     """Normalize a database URL to an async-capable SQLAlchemy URL.
 
@@ -120,7 +138,7 @@ def normalize_database_url(url: str) -> str:
     """
     if not url or "://" not in url:
         raise ValueError(
-            f"DATABASE_URL is not a connection string: {url!r}. "
+            f"DATABASE_URL is not a connection string: {_redact_dsn(url)!r}. "
             "Expected something like postgresql+asyncpg://user:pass@host/db"
         )
 
