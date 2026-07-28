@@ -5,6 +5,45 @@ All notable changes to CryptoServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `cryptoserve census` reported collection failures as measurements of zero.
+  Every one of the eleven download collectors recorded a failed request as
+  `downloads: 0`: 24 sites, plus 6 more in the inline copy behind `--live`.
+  pypistats.org rate-limits at the rate the collector asked, so `cryptography`,
+  which really has over a billion downloads a month, was printed as none. Three
+  runs of identical code hours apart differed by hundreds of millions of
+  downloads depending on which packages were throttled that minute.
+- The command carried its own package catalog, which had drifted to 357 entries
+  against the census's 355, so the CLI and census.cryptoserve.dev disagreed on
+  the denominator of every published share.
+- The report never showed the collection date, presenting a snapshot as a
+  current reading, and never separated measured from modelled downloads. NuGet
+  and RubyGems divide a lifetime total by an assumed number of months and
+  CocoaPods publishes nothing, so 10.5% of the headline is a proxy times a
+  constant. Both are now shown: the collection date leads the report and the
+  measured figure is named alongside the combined one.
+- `cryptoserve help <command>` printed the full command list instead of that
+  command's help. The per-command help existed but only `<command> --help`
+  reached it.
+
+### Changed
+- `cryptoserve census` renders the published snapshot from
+  census.cryptoserve.dev rather than collecting its own. The census publishes
+  dated snapshots, so there is now one definition of the measurement and the
+  CLI's figures match the site by construction. Cached for a day;
+  `--no-cache` re-fetches.
+- `cryptoserve census --live` has been removed. It collected three of the eleven
+  ecosystems from a third copy of the fetch logic, with the same silent zeros,
+  while the help text advertised all eleven. Running it now prints why and exits
+  non-zero.
+
+### Removed
+- `lib/census/collectors/`, `lib/census/package-catalog.mjs` and
+  `lib/census/aggregator.mjs`. Only `formatNumber` survives, in
+  `lib/census/format.mjs`.
+
 ## [CLI 0.4.0] - 2026-07-27
 
 ### Fixed

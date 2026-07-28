@@ -2,7 +2,19 @@
  * Styled terminal output for census results using cli-style.mjs.
  */
 
-import { formatNumber } from './aggregator.mjs';
+import { formatNumber } from './format.mjs';
+
+/**
+ * A date-only rendering in UTC.
+ *
+ * Not `toLocaleDateString()`: a date-only value formatted in local time shows
+ * the previous day everywhere west of Greenwich, which the site hit on this
+ * same field.
+ */
+function formatDate(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 10);
+}
 
 /**
  * Render census results to the terminal.
@@ -22,7 +34,14 @@ export function renderTerminal(data, style) {
   lines.push('');
 
   // --- Headline ---
+  //
+  // The collection date leads, because this is a dated snapshot and not a live
+  // reading. Without it, a figure collected in March reads as today's, which is
+  // how "refresh in progress" sat on a public page for four months.
   lines.push(section('Headline'));
+  if (data.collectedAt) {
+    lines.push(labelValue('Snapshot collected', formatDate(data.collectedAt), 26));
+  }
   lines.push(labelValue('Weak crypto downloads', `${formatNumber(data.totalWeakDownloads)}/month (${data.weakPercentage.toFixed(1)}%)`, 26));
   lines.push(labelValue('Modern crypto downloads', `${formatNumber(data.totalModernDownloads)}/month (${data.modernPercentage.toFixed(1)}%)`, 26));
   lines.push(labelValue('PQC crypto downloads', `${formatNumber(data.totalPqcDownloads)}/month (${data.pqcPercentage.toFixed(1)}%)`, 26));
@@ -121,8 +140,25 @@ export function renderTerminal(data, style) {
   lines.push(dim('             Packagist, NuGet, RubyGems, Hex.pm, pub.dev, CocoaPods Trunk'));
   lines.push(dim('  CVEs:      NIST NVD (CWE-326, CWE-327, CWE-328)'));
   lines.push(dim('  Advisories: GitHub Advisory Database (reviewed, crypto-CWE filtered)'));
+
+  // Not every registry publishes a monthly download count. NuGet and RubyGems
+  // divide a lifetime total by an assumed number of months; CocoaPods publishes
+  // nothing. Presenting the combined figure without saying so reports a proxy
+  // times a constant as a measurement.
+  if (typeof data.measuredDownloads === 'number' && typeof data.modelledDownloads === 'number') {
+    lines.push('');
+    lines.push(dim(`  Measured:  ${formatNumber(data.measuredDownloads)}/month from registries that publish a count` +
+      (typeof data.measuredShareOfTotal === 'number' ? ` (${data.measuredShareOfTotal.toFixed(1)}% of the total)` : '')));
+    lines.push(dim(`  Modelled:  ${formatNumber(data.modelledDownloads)}/month derived from lifetime totals or version counts`));
+    lines.push(dim('             The percentages above divide by the combined figure. Quote the measured one.'));
+  }
+
+  lines.push('');
   lines.push(dim('  Download counts reflect package installs (CI/CD + transitive deps), not direct usage'));
   lines.push(dim('  NIST 2030/2035 deadlines target public-key crypto only (AES, SHA-2, SHA-3 unaffected)'));
+  if (data.collectedAt) {
+    lines.push(dim(`  Published snapshot collected ${formatDate(data.collectedAt)}; not a live reading`));
+  }
   lines.push('');
 
   // --- Next Steps ---

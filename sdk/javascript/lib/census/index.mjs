@@ -1,212 +1,171 @@
 /**
- * Census orchestrator: run collectors, aggregate, cache results.
+ * Census client: fetch the published census snapshot and cache it locally.
  *
- * Supports 11 ecosystems: npm, PyPI, Go, Maven, crates.io, Packagist, NuGet,
- * RubyGems, Hex (Elixir), pub.dev (Dart), and CocoaPods (Swift/ObjC).
+ * This used to collect the census itself -- its own copy of thirteen collectors
+ * over its own copy of the catalog. That was a second definition of a published
+ * measurement, and the two disagreed: the CLI catalogued 357 packages while the
+ * census catalogued 355, and every collector in this package still records a
+ * failed request as `downloads: 0`, so anyone running `cryptoserve census` was
+ * shown collection failures as measurements of zero. `cryptography` alone really
+ * has over a billion downloads a month and was reported as none.
+ *
+ * The census now publishes from committed dated snapshots, so there is one
+ * number and one collection date. This module fetches that and renders it. It
+ * does not measure anything, which is why nothing here can disagree with what
+ * census.cryptoserve.dev shows.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { configPath, ensureConfigDir } from '../paths.mjs';
 
-import {
-  NPM_PACKAGES, PYPI_PACKAGES, GO_PACKAGES,
-  MAVEN_PACKAGES, CRATES_PACKAGES, PACKAGIST_PACKAGES, NUGET_PACKAGES,
-  RUBYGEMS_PACKAGES, HEX_PACKAGES, PUB_PACKAGES, COCOAPODS_PACKAGES,
-} from './package-catalog.mjs';
-import { collectNpmDownloads } from './collectors/npm-downloads.mjs';
-import { collectPypiDownloads } from './collectors/pypi-downloads.mjs';
-import { collectGoDownloads } from './collectors/go-downloads.mjs';
-import { collectMavenDownloads } from './collectors/maven-downloads.mjs';
-import { collectCratesDownloads } from './collectors/crates-downloads.mjs';
-import { collectPackagistDownloads } from './collectors/packagist-downloads.mjs';
-import { collectNugetDownloads } from './collectors/nuget-downloads.mjs';
-import { collectRubygemsDownloads } from './collectors/rubygems-downloads.mjs';
-import { collectHexDownloads } from './collectors/hex-downloads.mjs';
-import { collectPubDownloads } from './collectors/pub-downloads.mjs';
-import { collectCocoapodsDownloads } from './collectors/cocoapods-downloads.mjs';
-import { collectNvdCves } from './collectors/nvd-cves.mjs';
-import { collectGithubAdvisories } from './collectors/github-advisories.mjs';
-import { aggregate } from './aggregator.mjs';
+/** Where the published snapshot lives. Overridable for tests and local checks. */
+export const CENSUS_URL =
+  process.env.CRYPTOSERVE_CENSUS_URL || 'https://census.cryptoserve.dev/api/census';
 
 const cacheFile = () => configPath('census-cache.json');
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-// A census run fans out to thirteen third-party services. Without a per-request
-// deadline one unresponsive registry blocks the whole command indefinitely,
-// which is exactly what `cryptoserve census` used to do: no output, no timeout,
-// no way to tell a slow run from a hung one.
+/**
+ * The snapshot is a dated measurement that changes when someone publishes a new
+ * one, not a live feed, so the cache is a day rather than an hour. npm and
+ * pypistats both report a rolling 30-day window: re-fetching it four times a day
+ * advances that window by under a percent and returns the same number.
+ */
+export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 /**
- * fetch with a hard per-request deadline. Returned as a non-ok response shape
- * on timeout so collectors take their existing "registry did not answer" path
- * instead of aborting the run.
- */
-export function fetchWithTimeout(timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, baseFetch = globalThis.fetch) {
-  return async (url, options = {}) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await baseFetch(url, { ...options, signal: controller.signal });
-    } catch (err) {
-      if (err?.name === 'AbortError') {
-        return { ok: false, status: 408, statusText: `timeout after ${timeoutMs}ms`, json: async () => ({}), text: async () => '' };
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-}
-
-/**
- * Load cached data if valid.
- * @returns {Object|null}
+ * Read the cache. Returns `{ payload, fetchedAt, ageMs }` or null.
+ *
+ * Age is measured from when this machine fetched the snapshot, never from the
+ * snapshot's own `collectedAt` -- that is the date of the measurement, which is
+ * legitimately weeks old and would expire every cache entry the moment it was
+ * written.
  */
 function loadCache() {
   try {
     const file = cacheFile();
     if (!existsSync(file)) return null;
-    const raw = readFileSync(file, 'utf-8');
-    const cached = JSON.parse(raw);
-    const age = Date.now() - new Date(cached.collectedAt).getTime();
-    if (age < CACHE_TTL_MS) return cached;
-    return null;
+    const cached = JSON.parse(readFileSync(file, 'utf-8'));
+    if (!cached?.payload || !cached?.fetchedAt) return null;
+    const ageMs = Date.now() - new Date(cached.fetchedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+    return { payload: cached.payload, fetchedAt: cached.fetchedAt, ageMs };
   } catch {
     return null;
   }
 }
 
-/**
- * Save data to cache.
- */
-function saveCache(data) {
+function saveCache(payload) {
   try {
     ensureConfigDir();
-    writeFileSync(cacheFile(), JSON.stringify(data, null, 2));
+    writeFileSync(cacheFile(), JSON.stringify({
+      fetchedAt: new Date().toISOString(),
+      source: CENSUS_URL,
+      payload,
+    }, null, 2));
   } catch {
-    // Cache write failure is non-fatal
+    // A cache we could not write is not a reason to fail a read-only command.
   }
 }
 
+/** A payload that is missing its headline is a fetch that went somewhere else. */
+function looksLikeCensus(payload) {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    typeof payload.totalDownloads === 'number' &&
+    typeof payload.collectedAt === 'string' &&
+    payload.npm && typeof payload.npm === 'object'
+  );
+}
+
+export function describeAge(ms) {
+  const days = Math.floor(ms / 86_400_000);
+  if (days >= 1) return `${days} day${days === 1 ? '' : 's'} old`;
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours >= 1) return `${hours} hour${hours === 1 ? '' : 's'} old`;
+  return 'under an hour old';
+}
+
 /**
- * Run the full census: collect data from all sources and aggregate.
+ * Fetch the published census snapshot.
  *
- * @param {Object} [options]
- * @param {boolean} [options.verbose] - Log progress to stderr
- * @param {boolean} [options.noCache] - Skip cache
- * @param {string[]} [options.sources] - Which sources to query (default: all)
- * @param {Function} [options.fetchFn] - Injected fetch for testing
- * @returns {Promise<Object>} Aggregated census data
+ * @param {Object}   [options]
+ * @param {boolean}  [options.noCache]   Ignore any cached copy
+ * @param {boolean}  [options.verbose]   Narrate to stderr
+ * @param {Function} [options.fetchFn]   Injected fetch, for tests
+ * @param {number}   [options.timeoutMs]
+ * @returns {Promise<{data: Object, source: 'network'|'cache'|'stale-cache', fetchedAt: string}>}
  */
-export async function runCensus(options = {}) {
+export async function fetchCensus(options = {}) {
   const {
-    verbose = false,
     noCache = false,
-    sources,
-    fetchFn,
+    verbose = false,
+    fetchFn = globalThis.fetch,
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
-    onProgress,
   } = options;
 
-  // Check cache first
+  const note = (msg) => { if (verbose) process.stderr.write(`${msg}\n`); };
+
   if (!noCache) {
     const cached = loadCache();
-    if (cached) {
-      if (verbose) process.stderr.write('Using cached census data (< 1 hour old)\n');
-      return cached;
+    if (cached && cached.ageMs < CACHE_TTL_MS) {
+      note(`Using cached snapshot (${describeAge(cached.ageMs)})`);
+      return { data: cached.payload, source: 'cache', fetchedAt: cached.fetchedAt };
     }
   }
 
-  const enabledSources = sources || [
-    'npm', 'pypi', 'go', 'maven', 'crates', 'packagist', 'nuget',
-    'rubygems', 'hex', 'pub', 'cocoapods',
-    'nvd', 'github',
-  ];
-  // An explicitly injected fetch (tests) is used as-is; otherwise every
-  // collector gets the deadline-bounded fetch rather than a bare global.
-  const collectorOpts = { verbose, fetchFn: fetchFn || fetchWithTimeout(timeoutMs) };
-  const empty = { packages: [], period: 'last_month', collectedAt: new Date().toISOString() };
+  note(`Fetching ${CENSUS_URL}`);
 
-  // Progress is reported unconditionally, not only under --verbose. A command
-  // that reaches out to thirteen services must never look like it has hung.
-  const report = onProgress || (msg => process.stderr.write(msg + '\n'));
-  report(`Collecting census data from ${enabledSources.length} sources (timeout ${Math.round(timeoutMs / 1000)}s per request)...`);
-
-  // Phase 1: Package downloads (all 11 ecosystems in parallel)
-  const downloadPromises = [
-    enabledSources.includes('npm')
-      ? (report('  Fetching npm download counts...'), collectNpmDownloads(NPM_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('pypi')
-      ? (report('  Fetching PyPI download counts...'), collectPypiDownloads(PYPI_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('go')
-      ? (report('  Fetching Go module stats...'), collectGoDownloads(GO_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('maven')
-      ? (report('  Fetching Maven Central stats...'), collectMavenDownloads(MAVEN_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('crates')
-      ? (report('  Fetching crates.io download counts...'), collectCratesDownloads(CRATES_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('packagist')
-      ? (report('  Fetching Packagist download counts...'), collectPackagistDownloads(PACKAGIST_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('nuget')
-      ? (report('  Fetching NuGet download counts...'), collectNugetDownloads(NUGET_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('rubygems')
-      ? (report('  Fetching RubyGems download counts...'), collectRubygemsDownloads(RUBYGEMS_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('hex')
-      ? (report('  Fetching Hex.pm download counts...'), collectHexDownloads(HEX_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('pub')
-      ? (report('  Fetching pub.dev download counts...'), collectPubDownloads(PUB_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-    enabledSources.includes('cocoapods')
-      ? (report('  Fetching CocoaPods pod counts...'), collectCocoapodsDownloads(COCOAPODS_PACKAGES, collectorOpts))
-      : Promise.resolve(empty),
-  ];
-
-  const [npmData, pypiData, goData, mavenData, cratesData, packagistData, nugetData,
-         rubygemsData, hexData, pubData, cocoapodsData] =
-    await Promise.all(downloadPromises);
-
-  // Phase 2: Vulnerability data (NVD + GitHub in parallel)
-  const vulnPromises = [
-    enabledSources.includes('nvd')
-      ? (report('  Fetching NVD CVE data...'), collectNvdCves(collectorOpts))
-      : Promise.resolve({ cves: [], collectedAt: new Date().toISOString() }),
-    enabledSources.includes('github')
-      ? (report('  Fetching GitHub advisories...'), collectGithubAdvisories(collectorOpts))
-      : Promise.resolve({ advisories: [], collectedAt: new Date().toISOString() }),
-  ];
-
-  const [nvdData, githubData] = await Promise.all(vulnPromises);
-
-  // Aggregate
-  const result = aggregate({
-    npm: npmData,
-    pypi: pypiData,
-    go: goData,
-    maven: mavenData,
-    crates: cratesData,
-    packagist: packagistData,
-    nuget: nugetData,
-    rubygems: rubygemsData,
-    hex: hexData,
-    pub: pubData,
-    cocoapods: cocoapodsData,
-    nvd: nvdData,
-    github: githubData,
-  });
-
-  // Cache the result
-  if (!noCache) {
-    saveCache(result);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let payload = null;
+  let failure = null;
+  try {
+    const res = await fetchFn(CENSUS_URL, {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) {
+      failure = `${CENSUS_URL} returned HTTP ${res.status}`;
+    } else {
+      const body = await res.json();
+      if (!looksLikeCensus(body)) {
+        failure = `${CENSUS_URL} returned something that is not a census snapshot`;
+      } else {
+        payload = body;
+      }
+    }
+  } catch (err) {
+    const cause = err?.cause?.code || err?.cause?.message;
+    const reason = err?.name === 'AbortError'
+      ? `no response within ${Math.round(timeoutMs / 1000)}s`
+      : `${err?.message || err}${cause ? ` (${cause})` : ''}`;
+    failure = `could not reach ${CENSUS_URL}: ${reason}`;
+  } finally {
+    clearTimeout(timer);
   }
 
-  return result;
+  if (payload) {
+    saveCache(payload);
+    return { data: payload, source: 'network', fetchedAt: new Date().toISOString() };
+  }
+
+  // A stale local copy beats no answer, but it is announced as stale rather
+  // than passed off as current. Serving it silently is how a snapshot from
+  // months ago gets read as today's number.
+  const cached = loadCache();
+  if (cached) {
+    return {
+      data: cached.payload,
+      source: 'stale-cache',
+      fetchedAt: cached.fetchedAt,
+      failure,
+    };
+  }
+
+  const error = new Error(failure || 'census snapshot unavailable');
+  error.censusUnavailable = true;
+  throw error;
 }

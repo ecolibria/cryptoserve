@@ -21,7 +21,6 @@
  *   cryptoserve login [--server URL]
  *   cryptoserve status
  *   cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]
- *   cryptoserve census --live [--ecosystems npm,pypi,crates] [--format json]
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -38,7 +37,7 @@ const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-
 const OPTIONS_WITH_VALUES = new Set([
   '--password', '--algorithm', '--profile', '--format', '--file',
   '--output', '--server', '--context', '--max-risk', '--min-score',
-  '--ecosystems', '--emit-findings',
+  '--emit-findings',
 ]);
 
 const KNOWN_FLAGS = new Set([
@@ -104,7 +103,7 @@ async function cmdHelp() {
   console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (exit 0=pass, 1=fail)`);
   console.log();
   console.log(`  ${bold('Research')}`);
-  console.log(`    ${info('census [--live] [--format json|html]')}    Global crypto census (11 ecosystems + NVD)`);
+  console.log(`    ${info('census [--format json|html]')}           Published crypto census (11 ecosystems + NVD)`);
   console.log();
   console.log(`  ${bold('Encryption')}`);
   console.log(`    ${info('encrypt "text" [--context C]')}          Encrypt with context-aware algorithm selection`);
@@ -1115,261 +1114,17 @@ function timeSince(date) {
 // ---------------------------------------------------------------------------
 
 /**
- * Census --live: fetch real-time download data from npm, PyPI, crates.io.
+ * Census: render the published census snapshot.
+ *
+ * This command used to collect the census itself, from its own copy of the
+ * collectors and its own copy of the catalog. Two copies of a published
+ * measurement disagree, and these did: the CLI catalogued 357 packages against
+ * the census's 355, and every collector here recorded a failed request as
+ * `downloads: 0`, so a rate-limited run reported real packages as having no
+ * downloads at all. It is now a client of the published snapshot, so the number
+ * it prints is the number census.cryptoserve.dev serves, by construction.
  */
-async function cmdCensusLive(args) {
-  const {
-    compactHeader, section, labelValue, tableHeader, tableRow,
-    warning, info, dim, bold, divider,
-  } = await import('../lib/cli-style.mjs');
-  const { formatNumber } = await import('../lib/census/aggregator.mjs');
-  const {
-    NPM_PACKAGES, PYPI_PACKAGES, CRATES_PACKAGES, TIERS,
-  } = await import('../lib/census/package-catalog.mjs');
-
-  const format = getOption(args, '--format', 'text');
-  const ecosystemArg = getOption(args, '--ecosystems', 'npm,pypi,crates');
-  const enabledEcosystems = ecosystemArg.split(',').map(e => e.trim().toLowerCase());
-
-  const ECOSYSTEM_CONFIG = {
-    npm:    { label: 'npm',       packages: NPM_PACKAGES, delay: 100 },
-    pypi:   { label: 'PyPI',      packages: PYPI_PACKAGES, delay: 2000 },
-    crates: { label: 'crates.io', packages: CRATES_PACKAGES, delay: 200 },
-  };
-
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-  // --- Fetch functions ---
-
-  async function fetchNpm(pkg) {
-    try {
-      const res = await fetch(`https://api.npmjs.org/downloads/point/last-month/${pkg.name}`);
-      if (!res.ok) return 0;
-      const data = await res.json();
-      return data.downloads || 0;
-    } catch { return 0; }
-  }
-
-  async function fetchPypi(pkg) {
-    try {
-      const res = await fetch(`https://pypistats.org/api/packages/${pkg.name}/recent`);
-      if (!res.ok) return 0;
-      const data = await res.json();
-      return data?.data?.last_month || 0;
-    } catch { return 0; }
-  }
-
-  async function fetchCrates(pkg) {
-    try {
-      const res = await fetch(`https://crates.io/api/v1/crates/${pkg.name}`, {
-        headers: { 'User-Agent': 'cryptoserve-census/1.0 (https://cryptoserve.dev)' },
-      });
-      if (!res.ok) return 0;
-      const data = await res.json();
-      const recent = data?.crate?.recent_downloads || 0;
-      return Math.round(recent / 3); // 90-day -> monthly estimate
-    } catch { return 0; }
-  }
-
-  const fetchFns = { npm: fetchNpm, pypi: fetchPypi, crates: fetchCrates };
-
-  // --- Collect data ---
-
-  if (format === 'text') {
-    console.log(compactHeader('census --live'));
-    console.log('');
-    console.log(dim('  Collecting live data from package registries...'));
-    console.log('');
-  }
-
-  const ecosystemResults = {};
-
-  for (const ecoKey of enabledEcosystems) {
-    const config = ECOSYSTEM_CONFIG[ecoKey];
-    if (!config) {
-      if (format === 'text') {
-        console.log(warning(`  Unknown ecosystem: ${ecoKey} (supported: npm, pypi, crates)`));
-      }
-      continue;
-    }
-
-    const fetchFn = fetchFns[ecoKey];
-    const packages = config.packages;
-    const results = [];
-
-    if (format === 'text') {
-      process.stdout.write(`  ${config.label} (${packages.length} packages)`.padEnd(32));
-    }
-
-    for (let i = 0; i < packages.length; i++) {
-      const pkg = packages[i];
-      const downloads = await fetchFn(pkg);
-      results.push({
-        name: pkg.name,
-        downloads,
-        tier: pkg.tier,
-        category: pkg.category,
-        ecosystem: ecoKey,
-      });
-      if (i < packages.length - 1) {
-        await sleep(config.delay);
-      }
-    }
-
-    if (format === 'text') {
-      console.log('done');
-    }
-
-    ecosystemResults[ecoKey] = {
-      label: config.label,
-      packages: results.sort((a, b) => b.downloads - a.downloads),
-      packageCount: packages.length,
-    };
-  }
-
-  // --- Compute tier breakdowns ---
-
-  const ecosystemSummaries = [];
-  let grandTotal = 0;
-  let grandWeak = 0;
-  let grandModern = 0;
-  let grandPqc = 0;
-  const allPackages = [];
-
-  for (const [ecoKey, eco] of Object.entries(ecosystemResults)) {
-    let weak = 0, modern = 0, pqc = 0;
-    for (const pkg of eco.packages) {
-      if (pkg.tier === TIERS.WEAK) weak += pkg.downloads;
-      else if (pkg.tier === TIERS.PQC) pqc += pkg.downloads;
-      else modern += pkg.downloads;
-      allPackages.push(pkg);
-    }
-    const total = weak + modern + pqc;
-    ecosystemSummaries.push({
-      key: ecoKey,
-      label: eco.label,
-      total,
-      weak,
-      modern,
-      pqc,
-      weakPct: total > 0 ? (weak / total * 100) : 0,
-      modernPct: total > 0 ? (modern / total * 100) : 0,
-      pqcPct: total > 0 ? (pqc / total * 100) : 0,
-    });
-    grandTotal += total;
-    grandWeak += weak;
-    grandModern += modern;
-    grandPqc += pqc;
-  }
-
-  // Top 5 weak packages
-  const topWeak = allPackages
-    .filter(p => p.tier === TIERS.WEAK && p.downloads > 0)
-    .sort((a, b) => b.downloads - a.downloads)
-    .slice(0, 5);
-
-  // NIST 2030 deadline
-  const nist2030 = new Date('2030-01-01T00:00:00Z');
-  const daysLeft = Math.max(0, Math.ceil((nist2030.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-  const yearsLeft = Math.floor(daysLeft / 365);
-  const monthsLeft = Math.floor((daysLeft % 365) / 30);
-  const nistLabel = `${yearsLeft}y ${monthsLeft}mo remaining`;
-
-  // --- JSON output ---
-
-  if (format === 'json') {
-    const jsonOutput = {
-      command: 'census --live',
-      collectedAt: new Date().toISOString(),
-      ecosystems: {},
-      totals: {
-        downloads: grandTotal,
-        weak: grandWeak,
-        modern: grandModern,
-        pqc: grandPqc,
-        weakPercentage: grandTotal > 0 ? Math.round(grandWeak / grandTotal * 1000) / 10 : 0,
-        modernPercentage: grandTotal > 0 ? Math.round(grandModern / grandTotal * 1000) / 10 : 0,
-        pqcPercentage: grandTotal > 0 ? Math.round(grandPqc / grandTotal * 1000) / 10 : 0,
-      },
-      topWeakPackages: topWeak.map(p => ({
-        name: p.name,
-        ecosystem: p.ecosystem,
-        downloads: p.downloads,
-      })),
-      nist2030Deadline: { daysRemaining: daysLeft, label: nistLabel },
-    };
-    for (const summary of ecosystemSummaries) {
-      const eco = ecosystemResults[summary.key];
-      jsonOutput.ecosystems[summary.key] = {
-        label: summary.label,
-        packageCount: eco.packageCount,
-        totalDownloads: summary.total,
-        weak: summary.weak,
-        modern: summary.modern,
-        pqc: summary.pqc,
-        weakPercentage: Math.round(summary.weakPct * 10) / 10,
-        modernPercentage: Math.round(summary.modernPct * 10) / 10,
-        pqcPercentage: Math.round(summary.pqcPct * 10) / 10,
-        packages: eco.packages,
-      };
-    }
-    console.log(JSON.stringify(jsonOutput, null, 2));
-    return;
-  }
-
-  // --- Terminal table output ---
-
-  console.log('');
-  const colWidths = [14, 14, 10, 10, 8];
-  console.log(tableHeader(['Ecosystem', 'Total/mo', 'Weak %', 'Modern %', 'PQC %'], colWidths));
-
-  for (const s of ecosystemSummaries) {
-    console.log(tableRow([
-      s.label,
-      formatNumber(s.total),
-      s.weakPct.toFixed(1) + '%',
-      s.modernPct.toFixed(1) + '%',
-      s.pqcPct.toFixed(1) + '%',
-    ], colWidths));
-  }
-
-  if (ecosystemSummaries.length > 1) {
-    console.log(divider(56));
-    const grandWeakPct = grandTotal > 0 ? (grandWeak / grandTotal * 100) : 0;
-    const grandModernPct = grandTotal > 0 ? (grandModern / grandTotal * 100) : 0;
-    const grandPqcPct = grandTotal > 0 ? (grandPqc / grandTotal * 100) : 0;
-    console.log(tableRow([
-      'Total',
-      formatNumber(grandTotal),
-      grandWeakPct.toFixed(1) + '%',
-      grandModernPct.toFixed(1) + '%',
-      grandPqcPct.toFixed(1) + '%',
-    ], colWidths));
-  }
-
-  console.log('');
-
-  if (topWeak.length > 0) {
-    console.log(section('Top 5 Weak Packages'));
-    const ecoLabels = { npm: 'npm', pypi: 'PyPI', crates: 'crates' };
-    for (let i = 0; i < topWeak.length; i++) {
-      const p = topWeak[i];
-      const ecoLabel = ecoLabels[p.ecosystem] || p.ecosystem;
-      console.log(`    ${i + 1}. ${p.name} (${ecoLabel})`.padEnd(40) + `${formatNumber(p.downloads)}/mo`);
-    }
-    console.log('');
-  }
-
-  console.log(dim(`  NIST 2030 Deadline: ${nistLabel}`));
-  console.log('');
-}
-
 async function cmdCensus(args) {
-  if (getFlag(args, '--live')) {
-    await cmdCensusLive(args);
-    return;
-  }
-
   const {
     compactHeader, section, labelValue, tableHeader, tableRow,
     warning, info, dim, bold, divider, progressBar,
@@ -1380,15 +1135,38 @@ async function cmdCensus(args) {
   const verbose = getFlag(args, '--verbose');
   const noCache = getFlag(args, '--no-cache');
 
-  const { runCensus } = await import('../lib/census/index.mjs');
-
-  if (format === 'text') {
-    console.log(compactHeader('census'));
-    console.log(dim('  Collecting data from 11 ecosystems + NVD + GitHub...'));
-    console.log(dim('  This may take 90-120 seconds on first run.\n'));
+  if (getFlag(args, '--live')) {
+    console.error('cryptoserve census --live has been removed.');
+    console.error('');
+    console.error('It collected its own copy of the download figures, which disagreed with the');
+    console.error('published census and recorded a rate-limited request as zero downloads.');
+    console.error('The census now publishes dated snapshots and this command renders them;');
+    console.error('`cryptoserve census --no-cache` re-fetches the current one.');
+    process.exitCode = 2;
+    return;
   }
 
-  const data = await runCensus({ verbose, noCache });
+  const { fetchCensus, describeAge } = await import('../lib/census/index.mjs');
+
+  let result;
+  try {
+    result = await fetchCensus({ noCache, verbose });
+  } catch (err) {
+    console.error(`Could not load the census snapshot: ${err.message}`);
+    console.error('');
+    console.error('The published snapshot is at https://census.cryptoserve.dev/api/census');
+    console.error('and the full dataset at https://census.cryptoserve.dev/api/download.');
+    process.exitCode = 1;
+    return;
+  }
+
+  const data = result.data;
+
+  if (result.source === 'stale-cache') {
+    console.error(`Warning: showing a cached snapshot ${describeAge(Date.now() - new Date(result.fetchedAt).getTime())}.`);
+    console.error(`Reason: ${result.failure}`);
+    console.error('');
+  }
 
   if (format === 'json') {
     const json = JSON.stringify(data, null, 2);
@@ -1410,7 +1188,6 @@ async function cmdCensus(args) {
     return;
   }
 
-  // Default: terminal report
   const { renderTerminal } = await import('../lib/census/report-terminal.mjs');
   renderTerminal(data, {
     compactHeader, section, labelValue, tableHeader, tableRow,
@@ -1435,7 +1212,7 @@ const COMMAND_HELP = {
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',
-  census: 'cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]\ncryptoserve census --live [--ecosystems npm,pypi,crates] [--format json]\n\n  Global crypto adoption census across 11 ecosystems + NVD.\n  --live fetches real-time download data from package registries.\n  --ecosystems limits which registries to query (comma-separated: npm,pypi,crates).',
+  census: 'cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]\n\n  Render the published global crypto adoption census: 11 ecosystems, NVD and\n  GitHub advisories, collected on the date the snapshot carries.\n\n  The snapshot is fetched from census.cryptoserve.dev and cached for a day.\n  --no-cache re-fetches it. This command reports the published measurement and\n  does not collect its own, so its figures match census.cryptoserve.dev exactly.',
 };
 
 function showCommandHelp(command) {
@@ -1474,7 +1251,17 @@ try {
     case '--help':
     case '-h':
     case undefined:
-      await cmdHelp();
+      // `cryptoserve help census` printed the whole command list, so the
+      // per-command help existed but only `census --help` reached it.
+      if (commandArgs[0] && COMMAND_HELP[commandArgs[0]]) {
+        showCommandHelp(commandArgs[0]);
+      } else if (commandArgs[0]) {
+        console.error(`No help available for "${commandArgs[0]}".`);
+        console.error('Run "cryptoserve help" for the command list.');
+        process.exitCode = 1;
+      } else {
+        await cmdHelp();
+      }
       break;
     case 'version':
     case '--version':

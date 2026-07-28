@@ -142,7 +142,7 @@ Run `cryptoserve help` or `cryptoserve <command> --help` for full flags.
 | `cryptoserve pqc` | Quantum-readiness score with SNDL (Store Now, Decrypt Later) analysis and NIST-aligned migration guidance. |
 | `cryptoserve cbom [path] --format <fmt>` | Export a CBOM in CycloneDX or SPDX. |
 | `cryptoserve gate [path]` | CI/CD quality gate. Non-zero exit on weak algorithms or thresholds failing. SARIF for the GitHub Security tab. |
-| `cryptoserve census` | Global crypto adoption across 11 package ecosystems plus NVD. Live dashboard at [census.cryptoserve.dev](https://census.cryptoserve.dev). |
+| `cryptoserve census` | Global crypto adoption across 11 package ecosystems plus NVD. Renders the published snapshot from [census.cryptoserve.dev](https://census.cryptoserve.dev), which is a dated measurement rather than a live feed, and shows the collection date. Cached for a day; `--no-cache` re-fetches. |
 
 ### Encrypt
 

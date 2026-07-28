@@ -3,7 +3,7 @@
  * All data is embedded as JSON; charts render client-side.
  */
 
-import { formatNumber } from './aggregator.mjs';
+import { formatNumber } from './format.mjs';
 
 /**
  * Generate the full HTML string for the census report.
