@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `cryptoserve census` reported collection failures as measurements of zero.
   Every one of the eleven download collectors recorded a failed request as
-  `downloads: 0` — 24 sites, plus 6 more in the inline copy behind `--live`.
+  `downloads: 0`: 24 sites, plus 6 more in the inline copy behind `--live`.
   pypistats.org rate-limits at the rate the collector asked, so `cryptography`,
   which really has over a billion downloads a month, was printed as none. Three
   runs of identical code hours apart differed by hundreds of millions of
