@@ -10,7 +10,7 @@
 // Exit:  0 = all checks pass, 1 = at least one failure.
 //
 // The companion checklist in docs/testing/release-smoke.md covers the manual
-// items this runner can't (init, vault, login, census --live).
+// items this runner can't (init, vault, login).
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';

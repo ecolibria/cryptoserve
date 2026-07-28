@@ -1,329 +1,199 @@
-import { describe, it } from 'node:test';
+/**
+ * Guards the census client.
+ *
+ * This file used to test the CLI's own collectors, catalog and aggregator.
+ * Those are gone: they were a second definition of a published measurement, and
+ * the two disagreed. What matters now is that this package renders the
+ * published snapshot faithfully and never invents one.
+ *
+ * Every assertion corresponds to a way the old command misled someone:
+ *
+ *   - Each collector recorded a failed request as `downloads: 0`, so a
+ *     rate-limited run reported real packages as having no downloads at all.
+ *     pypistats.org rate-limits at the rate the collector asked, and
+ *     `cryptography` (over a billion downloads a month) was printed as 0.
+ *   - The CLI carried its own catalog, which drifted to 357 entries against the
+ *     census's 355, so the two disagreed on the denominator of every share.
+ */
+
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { NPM_PACKAGES, PYPI_PACKAGES, MAVEN_PACKAGES, TIERS, getPackages, getNamesByTier } from '../lib/census/package-catalog.mjs';
-import { collectNpmDownloads } from '../lib/census/collectors/npm-downloads.mjs';
-import { collectPypiDownloads } from '../lib/census/collectors/pypi-downloads.mjs';
-import { collectNvdCves } from '../lib/census/collectors/nvd-cves.mjs';
-import { collectGithubAdvisories } from '../lib/census/collectors/github-advisories.mjs';
-import { aggregate, formatNumber } from '../lib/census/aggregator.mjs';
+import { formatNumber } from '../lib/census/format.mjs';
 
-// ---------------------------------------------------------------------------
-// Package Catalog
-// ---------------------------------------------------------------------------
-
-describe('package-catalog', () => {
-  it('has npm packages in all three tiers', () => {
-    const tiers = new Set(NPM_PACKAGES.map(p => p.tier));
-    assert.ok(tiers.has(TIERS.WEAK));
-    assert.ok(tiers.has(TIERS.MODERN));
-    assert.ok(tiers.has(TIERS.PQC));
-  });
-
-  it('has pypi packages in all three tiers', () => {
-    const tiers = new Set(PYPI_PACKAGES.map(p => p.tier));
-    assert.ok(tiers.has(TIERS.WEAK));
-    assert.ok(tiers.has(TIERS.MODERN));
-    assert.ok(tiers.has(TIERS.PQC));
-  });
-
-  it('has maven packages in all three tiers', () => {
-    const tiers = new Set(MAVEN_PACKAGES.map(p => p.tier));
-    assert.ok(tiers.has(TIERS.WEAK));
-    assert.ok(tiers.has(TIERS.MODERN));
-    assert.ok(tiers.has(TIERS.PQC));
-  });
-
-  it('maven packages use groupId:artifactId format', () => {
-    for (const pkg of MAVEN_PACKAGES) {
-      assert.ok(pkg.name.includes(':'), `${pkg.name} missing groupId:artifactId separator`);
-    }
-  });
-
-  it('maven catalog has at least 30 entries', () => {
-    assert.ok(MAVEN_PACKAGES.length >= 30, `Expected >= 30, got ${MAVEN_PACKAGES.length}`);
-  });
-
-  it('getPackages returns correct ecosystem', () => {
-    assert.deepStrictEqual(getPackages('npm'), NPM_PACKAGES);
-    assert.deepStrictEqual(getPackages('pypi'), PYPI_PACKAGES);
-    assert.deepStrictEqual(getPackages('maven'), MAVEN_PACKAGES);
-  });
-
-  it('getPackages returns empty for unknown ecosystem', () => {
-    assert.deepStrictEqual(getPackages('unknown'), []);
-  });
-
-  it('getNamesByTier filters correctly', () => {
-    const weakNpm = getNamesByTier('npm', TIERS.WEAK);
-    assert.ok(weakNpm.includes('md5'));
-    assert.ok(weakNpm.includes('crypto-js'));
-    assert.ok(!weakNpm.includes('@noble/curves'));
-  });
-
-  it('getNamesByTier works for maven', () => {
-    const weakMaven = getNamesByTier('maven', TIERS.WEAK);
-    assert.ok(weakMaven.includes('org.jasypt:jasypt'));
-    assert.ok(weakMaven.includes('org.bouncycastle:bcprov-jdk15on'));
-    assert.ok(!weakMaven.includes('com.google.crypto.tink:tink'));
-  });
-
-  it('every entry has required fields', () => {
-    for (const pkg of [...NPM_PACKAGES, ...PYPI_PACKAGES, ...MAVEN_PACKAGES]) {
-      assert.ok(pkg.name, `missing name`);
-      assert.ok(Object.values(TIERS).includes(pkg.tier), `invalid tier: ${pkg.tier}`);
-      assert.ok(Array.isArray(pkg.algorithms), `${pkg.name} missing algorithms`);
-      assert.ok(typeof pkg.note === 'string', `${pkg.name} missing note`);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Mock fetch factory
-// ---------------------------------------------------------------------------
-
-function createMockFetch(responseMap) {
-  return async (url, _opts) => {
-    for (const [pattern, response] of Object.entries(responseMap)) {
-      if (url.includes(pattern)) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => response,
-          headers: { get: () => null },
-        };
-      }
-    }
-    return { ok: false, status: 404, json: async () => ({}), headers: { get: () => null } };
+/** A payload with the fields the client validates and the renderers read. */
+function snapshot(overrides = {}) {
+  return {
+    totalDownloads: 7_103_335_621,
+    measuredDownloads: 6_360_204_128,
+    modelledDownloads: 743_131_493,
+    measuredShareOfTotal: 89.5,
+    totalWeakDownloads: 1_027_777_533,
+    totalModernDownloads: 6_071_142_439,
+    totalPqcDownloads: 4_415_649,
+    weakPercentage: 14.5,
+    modernPercentage: 85.5,
+    pqcPercentage: 0.1,
+    weakToPqcRatio: 233,
+    totalCryptoCves: 735,
+    totalAdvisories: 7,
+    nistDeadline2030: '3 yrs, 158 days',
+    nistDeadline2035: '8 yrs, 159 days',
+    collectedAt: '2026-07-28T04:34:38.416Z',
+    catalogSize: 355,
+    ecosystemCount: 11,
+    npm: { weak: 0, modern: 0, pqc: 0, total: 0, topPackages: [], period: {} },
+    cveBreakdown: [],
+    advisoryBreakdown: [],
+    ...overrides,
   };
 }
 
-// ---------------------------------------------------------------------------
-// npm Collector
-// ---------------------------------------------------------------------------
-
-describe('npm-downloads collector', () => {
-  it('collects download counts from mocked API', async () => {
-    const mockFetch = createMockFetch({
-      'api.npmjs.org/downloads': {
-        'crypto-js': { downloads: 53_900_000, start: '2026-01-01', end: '2026-01-31', package: 'crypto-js' },
-        'md5': { downloads: 2_100_000, start: '2026-01-01', end: '2026-01-31', package: 'md5' },
-      },
-    });
-
-    const packages = [
-      { name: 'crypto-js', tier: 'weak', algorithms: [], note: '' },
-      { name: 'md5', tier: 'weak', algorithms: [], note: '' },
-    ];
-
-    const result = await collectNpmDownloads(packages, { fetchFn: mockFetch });
-    assert.equal(result.packages.length, 2);
-    assert.equal(result.packages[0].downloads, 53_900_000);
-    assert.ok(result.collectedAt);
-  });
-
-  it('handles API errors gracefully', async () => {
-    const mockFetch = async () => ({ ok: false, status: 503, json: async () => ({}), headers: { get: () => null } });
-
-    const packages = [{ name: 'fake-pkg', tier: 'weak', algorithms: [], note: '' }];
-    const result = await collectNpmDownloads(packages, { fetchFn: mockFetch });
-    assert.equal(result.packages.length, 1);
-    assert.equal(result.packages[0].downloads, 0);
-  });
+const response = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
 });
 
-// ---------------------------------------------------------------------------
-// PyPI Collector
-// ---------------------------------------------------------------------------
+/**
+ * Load the client against an isolated state directory, so a test never reads or
+ * writes the developer's real ~/.cryptoserve cache. The module is cache-busted
+ * because CENSUS_URL is resolved at import time.
+ */
+let loadCounter = 0;
+async function loadClient(home) {
+  process.env.CRYPTOSERVE_HOME = home;
+  process.env.CRYPTOSERVE_CENSUS_URL = 'https://census.example.test/api/census';
+  return import(`../lib/census/index.mjs?t=${++loadCounter}`);
+}
 
-describe('pypi-downloads collector', () => {
-  it('collects download counts from mocked API', async () => {
-    const mockFetch = createMockFetch({
-      'pypistats.org/api/packages/cryptography': {
-        data: { last_month: 250_000_000, last_week: 60_000_000, last_day: 8_000_000 },
-      },
-      'pypistats.org/api/packages/pycrypto': {
-        data: { last_month: 500_000, last_week: 100_000, last_day: 15_000 },
-      },
-    });
+const libFile = (rel) => fileURLToPath(new URL(`../lib/census/${rel}`, import.meta.url));
 
-    const packages = [
-      { name: 'cryptography', tier: 'modern', algorithms: [], note: '' },
-      { name: 'pycrypto', tier: 'weak', algorithms: [], note: '' },
-    ];
-
-    const result = await collectPypiDownloads(packages, { fetchFn: mockFetch });
-    assert.equal(result.packages.length, 2);
-    const crypto = result.packages.find(p => p.name === 'cryptography');
-    assert.equal(crypto.downloads, 250_000_000);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// NVD Collector
-// ---------------------------------------------------------------------------
-
-describe('nvd-cves collector', () => {
-  it('collects CVE counts from mocked API', async () => {
-    const mockFetch = createMockFetch({
-      'cweId=CWE-327': { totalResults: 523 },
-      'cweId=CWE-326': { totalResults: 187 },
-      'cweId=CWE-328': { totalResults: 89 },
-    });
-
-    const result = await collectNvdCves({ fetchFn: mockFetch });
-    assert.equal(result.cves.length, 3);
-    assert.equal(result.cves[0].totalCount, 523);
-    assert.equal(result.cves[0].cweId, 'CWE-327');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// GitHub Advisories Collector
-// ---------------------------------------------------------------------------
-
-describe('github-advisories collector', () => {
-  it('collects and filters crypto-related advisories', async () => {
-    const mockFetch = async (url, _opts) => ({
-      ok: true,
-      status: 200,
-      json: async () => [
-        { severity: 'high', cwes: [{ cwe_id: 'CWE-327', name: 'Broken Crypto' }], vulnerabilities: [{ package: { ecosystem: 'npm' } }] },
-        { severity: 'critical', cwes: [{ cwe_id: 'CWE-326', name: 'Inadequate Encryption' }], vulnerabilities: [{ package: { ecosystem: 'pip' } }] },
-        { severity: 'low', cwes: [{ cwe_id: 'CWE-79', name: 'XSS' }], vulnerabilities: [] }, // non-crypto, should be filtered out
-        { severity: 'medium', cwes: [{ cwe_id: 'CWE-328', name: 'Weak Hash' }], vulnerabilities: [{ package: { ecosystem: 'npm' } }] },
-      ],
-      headers: { get: () => null }, // no next page
-    });
-
-    const result = await collectGithubAdvisories({ fetchFn: mockFetch });
-    assert.equal(result.advisories.length, 3);
-    const cwe327 = result.advisories.find(a => a.cweId === 'CWE-327');
-    assert.equal(cwe327.count, 1);
-    assert.equal(cwe327.bySeverity.high, 1);
-    const cwe326 = result.advisories.find(a => a.cweId === 'CWE-326');
-    assert.equal(cwe326.count, 1);
-    assert.equal(cwe326.bySeverity.critical, 1);
-    const cwe328 = result.advisories.find(a => a.cweId === 'CWE-328');
-    assert.equal(cwe328.count, 1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Aggregator
-// ---------------------------------------------------------------------------
-
-describe('aggregator', () => {
-  const mockData = {
-    npm: {
-      packages: [
-        { name: 'crypto-js', downloads: 50_000_000, tier: 'weak' },
-        { name: 'md5', downloads: 2_000_000, tier: 'weak' },
-        { name: '@noble/curves', downloads: 10_000_000, tier: 'modern' },
-        { name: '@noble/post-quantum', downloads: 1_000, tier: 'pqc' },
-      ],
-      period: { start: '2026-01-01', end: '2026-01-31' },
-      collectedAt: '2026-01-31T00:00:00Z',
-    },
-    pypi: {
-      packages: [
-        { name: 'pycrypto', downloads: 500_000, tier: 'weak' },
-        { name: 'cryptography', downloads: 200_000_000, tier: 'modern' },
-        { name: 'liboqs-python', downloads: 500, tier: 'pqc' },
-      ],
-      period: 'last_month',
-      collectedAt: '2026-01-31T00:00:00Z',
-    },
-    nvd: {
-      cves: [
-        { cweId: 'CWE-327', cweName: 'Broken Crypto', totalCount: 500 },
-        { cweId: 'CWE-326', cweName: 'Inadequate Encryption', totalCount: 200 },
-        { cweId: 'CWE-328', cweName: 'Weak Hash', totalCount: 100 },
-      ],
-      collectedAt: '2026-01-31T00:00:00Z',
-    },
-    github: {
-      advisories: [
-        { cweId: 'CWE-327', count: 50, bySeverity: { critical: 5, high: 20, medium: 15, low: 10, unknown: 0 }, byEcosystem: { npm: 30, pip: 20 } },
-      ],
-      collectedAt: '2026-01-31T00:00:00Z',
-    },
-  };
-
-  it('computes total downloads by tier', () => {
-    const result = aggregate(mockData);
-    assert.equal(result.totalWeakDownloads, 52_500_000);
-    assert.equal(result.totalModernDownloads, 210_000_000);
-    assert.equal(result.totalPqcDownloads, 1_500);
-  });
-
-  it('computes weak-to-pqc ratio', () => {
-    const result = aggregate(mockData);
-    assert.equal(result.weakToPqcRatio, 35_000);
-  });
-
-  it('computes percentages', () => {
-    const result = aggregate(mockData);
-    assert.ok(result.weakPercentage > 0);
-    assert.ok(result.modernPercentage > 0);
-    assert.ok(result.pqcPercentage >= 0);
-    const total = result.weakPercentage + result.modernPercentage + result.pqcPercentage;
-    assert.ok(Math.abs(total - 100) < 0.1);
-  });
-
-  it('computes CVE totals', () => {
-    const result = aggregate(mockData);
-    assert.equal(result.totalCryptoCves, 800);
-  });
-
-  it('computes advisory severity totals', () => {
-    const result = aggregate(mockData);
-    assert.equal(result.advisorySeverity.critical, 5);
-    assert.equal(result.advisorySeverity.high, 20);
-  });
-
-  it('includes NIST deadline info', () => {
-    const result = aggregate(mockData);
-    assert.ok(result.nistDeadline2030Days > 0);
-    assert.ok(result.nistDeadline2035Days > 0);
-    assert.ok(result.nistDeadline2030.includes('yr'));
-  });
-
-  it('handles null pqc downloads gracefully', () => {
-    const noPqc = {
-      npm: { packages: [{ name: 'md5', downloads: 1000, tier: 'weak' }], period: {}, collectedAt: '' },
-      pypi: { packages: [], period: '', collectedAt: '' },
-    };
-    const result = aggregate(noPqc);
-    assert.equal(result.weakToPqcRatio, null);
-  });
-
-  it('produces per-ecosystem breakdowns', () => {
-    const result = aggregate(mockData);
-    assert.equal(result.npm.weak, 52_000_000);
-    assert.equal(result.npm.pqc, 1_000);
-    assert.equal(result.pypi.modern, 200_000_000);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// formatNumber
-// ---------------------------------------------------------------------------
-
-describe('formatNumber', () => {
-  it('formats millions', () => {
-    assert.equal(formatNumber(53_900_000), '53.9M');
-  });
-
-  it('formats thousands', () => {
+describe('format', () => {
+  it('abbreviates at each threshold', () => {
+    assert.equal(formatNumber(999), '999');
     assert.equal(formatNumber(1_500), '1.5K');
+    assert.equal(formatNumber(2_500_000), '2.5M');
+    assert.equal(formatNumber(7_103_335_621), '7.1B');
+  });
+});
+
+describe('census client', () => {
+  it('returns the published snapshot as fetched, computing nothing', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    const { fetchCensus } = await loadClient(home);
+    const published = snapshot();
+
+    const result = await fetchCensus({
+      noCache: true,
+      fetchFn: async () => response(200, published),
+    });
+
+    assert.equal(result.source, 'network');
+    assert.deepEqual(result.data, published,
+      'the client altered the published payload; it must render it, not recompute it');
+    rmSync(home, { recursive: true, force: true });
   });
 
-  it('formats small numbers', () => {
-    assert.equal(formatNumber(42), '42');
+  it('refuses a response that is not a census snapshot', async () => {
+    // A captive portal, a redirected CDN or a wrong URL all answer 200 with
+    // something. Rendering that as a census is worse than failing.
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    const { fetchCensus } = await loadClient(home);
+
+    await assert.rejects(
+      () => fetchCensus({ noCache: true, fetchFn: async () => response(200, { hello: 'world' }) }),
+      /not a census snapshot/);
+
+    await assert.rejects(
+      () => fetchCensus({ noCache: true, fetchFn: async () => response(503, {}) }),
+      /HTTP 503/);
+    rmSync(home, { recursive: true, force: true });
   });
 
-  it('formats billions', () => {
-    assert.equal(formatNumber(1_200_000_000), '1.2B');
+  it('names the transport failure rather than reporting a bare error', async () => {
+    // Node reports every transport failure as "fetch failed" and puts the
+    // reason on the cause. Without it, a typo in a hostname and a firewall look
+    // identical to whoever has to fix it.
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    const { fetchCensus } = await loadClient(home);
+
+    const err = await fetchCensus({
+      noCache: true,
+      fetchFn: async () => {
+        const e = new Error('fetch failed');
+        e.cause = { code: 'ENOTFOUND' };
+        throw e;
+      },
+    }).then(() => null, (e) => e);
+
+    assert.ok(err, 'an unreachable host resolved successfully');
+    assert.match(err.message, /ENOTFOUND/, 'the reason was discarded');
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('never invents a snapshot when it has none', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    const { fetchCensus } = await loadClient(home);
+
+    const err = await fetchCensus({
+      noCache: true,
+      fetchFn: async () => { throw new Error('offline'); },
+    }).then(() => null, (e) => e);
+
+    assert.ok(err?.censusUnavailable, 'a failed fetch produced a result instead of an error');
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('serves a stale cache only when it says so', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    const { fetchCensus } = await loadClient(home);
+    const published = snapshot();
+
+    await fetchCensus({ noCache: true, fetchFn: async () => response(200, published) });
+
+    const cache = join(home, 'census-cache.json');
+    assert.ok(existsSync(cache), 'a successful fetch did not populate the cache');
+    const cached = JSON.parse(readFileSync(cache, 'utf-8'));
+    cached.fetchedAt = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString();
+    writeFileSync(cache, JSON.stringify(cached));
+
+    const result = await fetchCensus({ fetchFn: async () => { throw new Error('offline'); } });
+    assert.equal(result.source, 'stale-cache',
+      'a month-old cached snapshot was returned as if it were current');
+    assert.match(result.failure, /offline/, 'the reason for falling back was not recorded');
+    assert.equal(result.data.totalDownloads, published.totalDownloads);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('measures cache age from the fetch, not from the snapshot date', async () => {
+    // The snapshot's own collectedAt is the date of the measurement. Keying the
+    // TTL on it expires every entry the moment it is written, because a
+    // published snapshot is legitimately weeks old.
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    const { fetchCensus } = await loadClient(home);
+    const old = snapshot({ collectedAt: '2026-03-18T00:00:00.000Z' });
+
+    await fetchCensus({ noCache: true, fetchFn: async () => response(200, old) });
+
+    const fetchFn = mock.fn(async () => response(200, old));
+    const result = await fetchCensus({ fetchFn });
+    assert.equal(result.source, 'cache',
+      'a snapshot collected months ago was treated as an expired cache entry');
+    assert.equal(fetchFn.mock.callCount(), 0, 'the cache was not used');
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('carries no package catalog, collectors or aggregator of its own', () => {
+    // The one that drifted to 357 against the census's 355. There is now one
+    // catalog and it is not in this package.
+    for (const gone of ['package-catalog.mjs', 'collectors', 'aggregator.mjs']) {
+      assert.equal(existsSync(libFile(gone)), false,
+        `lib/census/${gone} is back; the CLI is measuring the census again`);
+    }
   });
 });
