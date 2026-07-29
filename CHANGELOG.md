@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [CLI 0.5.0] - 2026-07-29
+
+A minor rather than a patch because `census --live` is gone. Under 0.x semver a
+breaking change bumps the minor, and a user pinned to `^0.4.0` should not
+silently receive a CLI whose flag was deleted -- even one that was reporting
+rate-limited requests as zero downloads.
+
 ### Fixed
 - `cryptoserve census` reported collection failures as measurements of zero.
   Every one of the eleven download collectors recorded a failed request as

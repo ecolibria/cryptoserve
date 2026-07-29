@@ -1,6 +1,6 @@
 {
   "name": "cryptoserve",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "CryptoServe CLI - Cryptographic scanning, PQC analysis, encryption, and local key management",
   "type": "module",
   "bin": {
@@ -38,5 +38,6 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "release-smoke": "node scripts/release-smoke.mjs"
-  }
+  },
+  "homepage": "https://cryptoserve.dev"
 }
