@@ -778,3 +778,49 @@ describe('vault reset', () => {
     assert.notEqual(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).code, 0);
   });
 });
+
+describe('gate and API misuse findings', () => {
+  // The third artifact class with the same defect. `scan` reported
+  // "TLS certificate verification disabled" at severity CRITICAL and `gate`
+  // exited 0, because gate derived violations from the algorithm inventory and
+  // a misuse finding carries no algorithm. Found by sweeping every finding
+  // class scan can produce against gate, rather than waiting for the next
+  // review to surface it.
+  function tree(body) {
+    const dir = tempDir('gate-misuse');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'm' }));
+    writeFileSync(join(dir, 'tls.js'), body);
+    return dir;
+  }
+
+  it('fails on a critical misuse finding that carries no algorithm', () => {
+    const dir = tree('const https=require("https");https.request({rejectUnauthorized:false});\n');
+    const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+    assert.equal(scanned.weakPatterns.length, 1, 'precondition: scan must report it');
+    assert.equal(scanned.weakPatterns[0].severity, 'critical');
+
+    const { code, stdout } = run(['gate', dir, '--min-score', '0', '--format', 'json']);
+    const g = JSON.parse(stdout);
+    assert.equal(g.status, 'fail',
+      'gate passed a tree whose scan reports a CRITICAL misuse finding');
+    assert.equal(code, 1);
+    const v = g.violations.find((x) => x.type === 'misuse');
+    assert.ok(v, `no misuse violation in ${JSON.stringify(g.violations)}`);
+    assert.equal(v.file, 'tls.js');
+    assert.equal(v.line, 1);
+  });
+
+  it('does not double-count a weak algorithm that already has a violation', () => {
+    // md5 produces BOTH a weakPattern and an algorithm violation. It must
+    // appear once, or the violation count inflates.
+    const dir = tree('const c=require("crypto");c.createHash("md5").update("x");\n');
+    const g = JSON.parse(run(['gate', dir, '--min-score', '0', '--fail-on-weak', '--format', 'json']).stdout);
+    const md5 = g.violations.filter((v) => /md5/i.test(v.algorithm || v.issue || ''));
+    assert.equal(md5.length, 1, `md5 counted ${md5.length} times: ${JSON.stringify(g.violations)}`);
+  });
+
+  it('still passes a clean tree', () => {
+    const dir = tree('const c=require("crypto");c.createHash("sha256").update("x");\n');
+    assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 0);
+  });
+});

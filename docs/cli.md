@@ -124,7 +124,8 @@ The report shows the directory and the file count, so a gate that passed because
 it scanned nothing is distinguishable from one that passed on a clean tree. A
 gate that read no files at all exits `2` rather than reporting `100/100`.
 
-Hardcoded secrets and committed private keys fail the gate. Before 0.5.0 `scan`
+Hardcoded secrets, committed private keys, and critical API-misuse findings
+(such as `rejectUnauthorized: false`) fail the gate. Before 0.5.0 `scan`
 reported `[CRIT] AWS Access Key .env:1` while `gate` on the same tree returned
 `PASS 100/100`, so the highest-severity findings the scanner produces had no path
 into CI. A public certificate does not fail the gate; the private key that signs

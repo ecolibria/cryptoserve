@@ -1246,6 +1246,26 @@ async function cmdGate(args) {
           reason: 'remove it from the tree and rotate the key',
         });
       }
+      // API misuse findings carry a severity and no algorithm, so they were
+      // invisible to a gate that derived violations from the inventory alone.
+      // "TLS certificate verification disabled" is exactly what a CI gate is
+      // for. Only findings with no algorithm attribution are added here: a weak
+      // ALGORITHM already produces its own violation above, and adding it twice
+      // would inflate the count -- the double-emit bug fixed in 0.4.0.
+      for (const wp of scanResults.weakPatterns || []) {
+        if (wp.algorithm) continue;
+        if (wp.severity !== 'critical' && wp.severity !== 'high') continue;
+        violations.push({
+          type: 'misuse',
+          algorithm: wp.issue,
+          risk: wp.severity,
+          source: wp.file,
+          file: wp.file,
+          line: wp.line,
+          reason: wp.fix,
+        });
+      }
+
       for (const secret of secretFindings) {
         violations.push({
           type: 'secret',
@@ -1283,7 +1303,8 @@ async function cmdGate(args) {
         const e = lookupAlgorithm(a);
         return e && (e.quantumRisk === 'none' || e.quantumRisk === 'low');
       }).length, 0),
-      vulnerable: violations.filter(v => !v.weak && v.type !== 'secret').length,
+      vulnerable: violations.filter(v => !v.weak && !v.type).length,
+      misuse: violations.filter(v => v.type === 'misuse').length,
       weak: violations.filter(v => v.weak).length,
       secrets: secretFindings.length,
       privateKeys: privateKeys.length,
@@ -1330,7 +1351,9 @@ async function cmdGate(args) {
       if (violations.length > 0) {
         console.log(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
-          const label = v.type === 'private-key'
+          const label = v.type === 'misuse'
+            ? error(`[MISUSE] ${v.algorithm}`)
+            : v.type === 'private-key'
             ? error(`[KEY] ${v.algorithm}`)
             : v.type === 'secret'
             ? error(`[SECRET] ${v.algorithm}`)

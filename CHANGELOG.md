@@ -130,6 +130,21 @@ immediately above:
   secret was authenticated and deleting all of them was not. `reset` now proves
   it can open the vault first.
 
+A systematic sweep of every finding class `scan` can produce against `gate`
+then found the third instance of the same defect, before another review had to:
+
+- **`gate` ignored API-misuse findings.** `scan` reported
+  `TLS certificate verification disabled` at severity CRITICAL and `gate`
+  exited `0`, because violations were derived from the algorithm inventory and
+  a misuse finding carries no algorithm. Disabling certificate verification is
+  precisely what a CI gate exists to stop. Misuse findings at `critical` or
+  `high` are violations now; a weak ALGORITHM still produces exactly one
+  violation rather than two.
+
+The full sweep now agrees in both directions: a committed secret, a committed
+private key, a weak algorithm and a disabled certificate check all fail the
+gate; a public certificate and a clean SHA-256 tree both pass.
+
 Two detection gaps closed while there:
 
 - `AWS_SECRET_ACCESS_KEY` was not detected. Detection was prefix-driven (`AKIA`,
