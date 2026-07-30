@@ -885,3 +885,70 @@ describe('gate waivers and severity, corrected', () => {
     assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 0);
   });
 });
+
+describe('private keys without a recognised extension', () => {
+  // Detection was gated on the file EXTENSION, so `server.key` was found and a
+  // byte-identical `id_rsa` was not -- and `id_rsa` is the single most common
+  // name for a committed private key. The evidence is in the file's first line,
+  // not in its name.
+  const PEM = (kind) => `-----BEGIN ${kind}-----\nMIIBOgIBAAJBAK\n-----END ${kind}-----\n`;
+
+  function tree(name, body) {
+    const dir = tempDir('bare-key');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'b' }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, name), body);
+    return dir;
+  }
+
+  for (const name of ['id_rsa', 'id_ed25519', 'deploy_key', 'key.txt', 'id_rsa.bak']) {
+    it(`finds a private key committed as ${name}`, () => {
+      const dir = tree(name, PEM('RSA PRIVATE KEY'));
+      const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+      assert.deepEqual(scanned.privateKeyFiles, [name],
+        `${name} was not recognised as a private key`);
+      assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 1,
+        `a committed ${name} passed the gate`);
+    });
+  }
+
+  it('does not treat a public certificate or an ordinary file as a key', () => {
+    assert.equal(run(['gate', tree('server.crt', PEM('CERTIFICATE')), '--min-score', '0']).code, 0);
+    assert.equal(run(['gate', tree('notes.txt', 'just some notes\n'), '--min-score', '0']).code, 0);
+    assert.equal(run(['gate', tree('README', '# hello\n'), '--min-score', '0']).code, 0);
+  });
+});
+
+describe('every output format agrees on what the gate decided', () => {
+  it('--allow-secrets removes the finding from SARIF as well as JSON', () => {
+    // Text said "waived", JSON dropped the violation, and SARIF still emitted
+    // it at level "error". Uploaded to code scanning, that raises alerts for a
+    // gate that exited 0 -- three surfaces, two answers.
+    const dir = tempDir('sarif-waive');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 's' }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, '.env'), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+
+    const on = run(['gate', dir, '--min-score', '0', '--allow-secrets', '--format', 'sarif']);
+    assert.equal(on.code, 0, 'precondition: the waiver must make the gate pass');
+    const results = JSON.parse(on.stdout).runs[0].results;
+    assert.equal(results.filter((r) => /secret/i.test(r.ruleId || '')).length, 0,
+      'SARIF still reports a secret the gate declared waived');
+
+    // Without the waiver it must still be there, or this test would pass on a
+    // SARIF emitter that reports nothing at all.
+    const off = run(['gate', dir, '--min-score', '0', '--format', 'sarif']);
+    assert.equal(off.code, 1);
+    assert.ok(JSON.parse(off.stdout).runs[0].results.some((r) => /secret/i.test(r.ruleId || '')),
+      'SARIF does not report the secret even without the waiver');
+  });
+});
+
+describe('gate help', () => {
+  it('documents the flag that can turn a failure into a pass', () => {
+    // An undocumented switch that turns exit 1 into exit 0 is not auditable in
+    // a CI config review.
+    const { stdout } = run(['gate', '--help']);
+    assert.match(stdout, /--allow-secrets/);
+  });
+});

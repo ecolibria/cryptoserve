@@ -7,7 +7,7 @@
  * Zero dependencies — uses only node:fs and node:path.
  */
 
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -55,6 +55,37 @@ const CONFIG_NAMES = new Set([
  * is the higher-risk case rather than the lower-risk one. Placeholders are
  * filtered by their VALUE instead, where the evidence is.
  */
+/**
+ * Whether a file begins with a PEM private-key header.
+ *
+ * Reads only the first line. A public `-----BEGIN CERTIFICATE-----` is
+ * deliberately not a match: publishing a certificate is routine, publishing the
+ * key that signs it is the incident.
+ */
+/** A PEM private key is small; anything large is not worth opening to check. */
+function isSmallEnoughToSniff(filePath) {
+  try {
+    const { size } = statSync(filePath);
+    return size > 0 && size <= 64 * 1024;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikePemPrivateKey(filePath) {
+  let fd;
+  try {
+    fd = openSync(filePath, 'r');
+    const buf = Buffer.alloc(64);
+    const read = readSync(fd, buf, 0, 64, 0);
+    return /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/.test(buf.subarray(0, read).toString('latin1'));
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* already closed */ } }
+  }
+}
+
 export function isDotenvFile(name) {
   return name === '.env' || (name.startsWith('.env.') && name.length > '.env.'.length);
 }
@@ -130,6 +161,20 @@ export function walkProject(dir, options = {}) {
       const name = entry.name;
 
       // Classify cert files (no size check needed — just record path)
+      // A private key's evidence is its first line, not its filename. Gating
+      // on the extension found `server.key` and missed a byte-identical
+      // `id_rsa`, which is the most common name a committed key actually has.
+      // Only small unclassified files are sniffed, and only their first line:
+      // PEM keys are tiny, so this costs one short read per candidate.
+      if (!CERT_EXTENSIONS.has(ext) && !BINARY_EXTENSIONS.has(ext)
+          && !extraSourceExts.has(ext) && !CONFIG_EXTENSIONS.has(ext)
+          && !CONFIG_NAMES.has(name) && !isDotenvFile(name)
+          && isSmallEnoughToSniff(filePath) && looksLikePemPrivateKey(filePath)) {
+        certFiles.push(filePath);
+        totalFiles++;
+        continue;
+      }
+
       if (CERT_EXTENSIONS.has(ext)) {
         certFiles.push(filePath);
         totalFiles++;

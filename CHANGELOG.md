@@ -158,10 +158,31 @@ A final pre-publish check then caught two defects in that very fix:
   raised, so a HIGH finding is always reachable and a weak algorithm is still
   counted exactly once.
 
+A final check found three more, two of them about surfaces disagreeing:
+
+- **Private-key detection was gated on the file EXTENSION**, so `server.key`
+  was found and a byte-identical `id_rsa` was not. `id_rsa` is the most common
+  name a committed private key actually has; `id_ed25519`, `deploy_key` and
+  `key.txt` were missed the same way. A key's evidence is its first line, so
+  small unclassified files are now sniffed for a PEM private-key header. A
+  public `-----BEGIN CERTIFICATE-----` is deliberately not a match.
+- **`--allow-secrets` did not filter SARIF.** Text said "waived", JSON dropped
+  the violation, and SARIF still emitted it at `level: "error"`, so a gate that
+  exited `0` uploaded alerts to code scanning for findings it had just declared
+  waived. And private keys never reached SARIF at all, so a CI job saw no alert
+  for the finding that failed its build. All three surfaces agree now.
+- `--allow-secrets` was undocumented on every help surface. A switch that turns
+  exit `1` into exit `0` has to be visible in a CI config review.
+
+`gate --help` now also states plainly that `--max-risk` bounds QUANTUM risk
+rather than security severity, which is why a weak algorithm fails the gate
+regardless of it.
+
 The full sweep now agrees in both directions. Fails by default: a committed
-secret, a committed private key, MD5, AES-ECB, 3DES, and a disabled certificate
-check. Passes: a public certificate and a clean SHA-256 tree. `--allow-secrets`
-moves only the first two.
+secret, a committed private key (whatever it is named), MD5, SHA-1, RC4,
+AES-ECB, 3DES, RSA-1024, and a disabled certificate check. Passes: a public
+certificate and a clean SHA-256 tree. `--allow-secrets` moves only the
+credential findings, on every output format.
 
 Two detection gaps closed while there:
 

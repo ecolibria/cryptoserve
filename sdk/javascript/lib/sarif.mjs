@@ -85,6 +85,19 @@ export function collectFindings(scanResults) {
     });
   }
 
+  // Private keys were acted on by `gate` and absent from SARIF, so a CI job
+  // uploading the report saw no alert for the finding that failed its build.
+  for (const keyFile of scanResults.privateKeyFiles || []) {
+    findings.push({
+      kind: 'private-key',
+      message: 'Private key committed to the repository',
+      severity: 'critical',
+      file: keyFile,
+      cwe: 'CWE-798',
+      fix: 'Remove it from the tree and rotate the key',
+    });
+  }
+
   for (const t of scanResults.tlsFindings || []) {
     findings.push({
       kind: 'tls',

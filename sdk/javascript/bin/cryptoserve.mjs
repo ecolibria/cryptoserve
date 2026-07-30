@@ -1322,7 +1322,13 @@ async function cmdGate(args) {
 
     if (format === 'sarif') {
       const { collectFindings, toSarif } = await import('../lib/sarif.mjs');
-      const document = JSON.stringify(toSarif(collectFindings(scanResults)), null, 2);
+      // The waiver has to reach every surface. Text said "waived", JSON dropped
+      // the violation, and SARIF still emitted it at level "error" -- so a gate
+      // that exited 0 uploaded alerts to code scanning for findings it had just
+      // declared waived. Three surfaces must not give two answers.
+      const findings = collectFindings(scanResults)
+        .filter((f) => !(allowSecrets && (f.kind === 'secret' || f.kind === 'private-key')));
+      const document = JSON.stringify(toSarif(findings), null, 2);
       if (outputPath) {
         const { writeFileSync } = await import('node:fs');
         writeFileSync(outputPath, document + '\n');
@@ -1585,7 +1591,7 @@ const COMMAND_HELP = {
   'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',
   context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
   cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials. Reports how many files it read, and\n  refuses a path that does not exist rather than certifying an empty tree.',
-  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--min-score 0-100] [--fail-on-weak] [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.',
+  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--min-score 0-100] [--fail-on-weak] [--allow-secrets]\n        [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.\n\n  Fails on hardcoded secrets, committed private keys, weak algorithms and\n  critical API misuse such as a disabled TLS certificate check.\n\n  --max-risk bounds QUANTUM risk, not security severity: a weak algorithm\n  fails the gate regardless of it.\n  --allow-secrets waives credential findings only (secrets and private\n  keys). It does not reach weak algorithms or misuse findings.',
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',
