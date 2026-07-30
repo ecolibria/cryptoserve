@@ -110,6 +110,7 @@ cryptoserve gate . --format sarif           # SARIF output
 | `--max-risk <level>` | Maximum allowed risk level: `none`, `low`, `medium`, `high` (default), `critical` |
 | `--min-score <n>` | Minimum quantum readiness score (default: `50`) |
 | `--fail-on-weak` | Fail on weak algorithms (MD5, DES, RC4, ECB) |
+| `--allow-secrets` | Do not fail on hardcoded secrets (they are still reported) |
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
 | `--verbose` | Show detailed violations |
 
@@ -120,7 +121,16 @@ unenforceable threshold is not a lax gate but an absent one. Before 0.5.0
 score printed `min: NaN` and exited `0`.
 
 The report shows the directory and the file count, so a gate that passed because
-it scanned nothing is distinguishable from one that passed on a clean tree.
+it scanned nothing is distinguishable from one that passed on a clean tree. A
+gate that read no files at all exits `2` rather than reporting `100/100`.
+
+Hardcoded secrets fail the gate. Before 0.5.0 `scan` reported
+`[CRIT] AWS Access Key .env:1` while `gate` on the same tree returned
+`PASS 100/100`, so the highest-severity finding the scanner produces had no path
+into CI. `--allow-secrets` waives them explicitly and still reports the count.
+
+An unknown flag exits `2` rather than warning and continuing, because
+`gate . --min-scoree 95` used to fall back to the default threshold and pass.
 
 ### `census`: Ecosystem Census
 

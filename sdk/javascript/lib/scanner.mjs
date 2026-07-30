@@ -110,8 +110,34 @@ function lineNumberAt(content, index) {
  * Extracted from the source-file loop so config files can be scanned with the
  * identical rules: one definition, so the two surfaces cannot drift.
  */
+/**
+ * Variables whose VALUE is a credential even though the value itself carries no
+ * recognisable prefix.
+ *
+ * Prefix patterns (AKIA, ghp_, sk-) catch an identifier and miss its secret
+ * half: `AWS_SECRET_ACCESS_KEY` is 40 characters of base64 alphabet with
+ * nothing to key on. The variable it is assigned to is the signal, so the
+ * length and alphabet of the value are what qualify it.
+ */
+const SECRET_ASSIGNMENTS = [
+  { id: 'aws-secret', name: 'AWS Secret Access Key', envVar: 'AWS_SECRET_ACCESS_KEY',
+    key: /AWS_SECRET_ACCESS_KEY/i, value: /^[A-Za-z0-9/+=]{40}$/ },
+  { id: 'generic-secret-key', name: 'Secret Key', envVar: 'SECRET_KEY',
+    key: /^(?:[A-Z0-9_]*_)?SECRET_KEY$/i, value: /^[A-Fa-f0-9]{32,}$|^[A-Za-z0-9/+=]{32,}$/ },
+];
+
+/** Values that are obviously stand-ins rather than credentials. */
+const PLACEHOLDER_VALUE = /^(?:$|<.*>$|your[-_ ]|xxx+$|changeme$|placeholder$|todo$|example$|dummy$|test$|\.\.\.$)/i;
+
+/**
+ * Record every hardcoded secret in one file's contents.
+ *
+ * Extracted from the source-file loop so config files can be scanned with the
+ * identical rules: one definition, so the two surfaces cannot drift.
+ */
 function collectSecrets(content, relPath, results) {
   const lines = content.split('\n');
+  const seen = new Set();
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.length > 4096) continue; // ReDoS protection
@@ -119,18 +145,25 @@ function collectSecrets(content, relPath, results) {
     // `KEY=${OTHER}` and source holds `process.env.KEY`.
     if (/\$\{[A-Z_]+\}/.test(line) || /\$[A-Z_]{2,}/.test(line) || /process\.env\.[A-Z_]+/.test(line)) continue;
 
+    const record = (id, name, envVar) => {
+      const key = `${id}:${i + 1}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      results.secrets.push({ type: id, name, file: relPath, line: i + 1, envVar, severity: 'critical' });
+    };
+
     for (const { id, regex, name, envVar } of SECRET_PATTERNS) {
       regex.lastIndex = 0;
-      if (regex.test(line)) {
-        results.secrets.push({
-          type: id,
-          name,
-          file: relPath,
-          line: i + 1,
-          envVar,
-          severity: 'critical',
-        });
-      }
+      if (regex.test(line)) record(id, name, envVar);
+    }
+
+    // Assignment-shaped credentials, judged by the value rather than a prefix.
+    const assignment = /^\s*(?:export\s+)?([A-Za-z0-9_.]+)\s*[:=]\s*["']?([^"'\s#]*)["']?\s*(?:#.*)?$/.exec(line);
+    if (!assignment) continue;
+    const [, varName, rawValue] = assignment;
+    if (PLACEHOLDER_VALUE.test(rawValue)) continue;
+    for (const { id, name, envVar, key, value } of SECRET_ASSIGNMENTS) {
+      if (key.test(varName) && value.test(rawValue)) record(id, name, envVar);
     }
   }
 }

@@ -175,10 +175,15 @@ describe('gate other option values', () => {
     assert.equal(m.summary.filesScanned, 0);
     assert.equal(m.summary.manifestsFound, 1, 'a manifest-only tree must be distinguishable from an empty one');
 
-    const empty = tempDir('gate-empty');
-    const e = JSON.parse(run(['gate', empty, '--min-score', '0', '--format', 'json']).stdout);
-    assert.equal(e.summary.filesScanned, 0);
-    assert.equal(e.summary.manifestsFound, 0);
+    // A source file with no manifest: the mirror image of the case above, so
+    // the two counts are shown to move independently rather than together.
+    // (An entirely empty tree is refused outright; see 'refuses a tree it read
+    // nothing from'.)
+    const sourceOnly = tempDir('gate-source-only');
+    writeFileSync(join(sourceOnly, 'a.js'), 'const crypto = require("crypto");\n');
+    const so = JSON.parse(run(['gate', sourceOnly, '--min-score', '0', '--format', 'json']).stdout);
+    assert.equal(so.summary.filesScanned, 1);
+    assert.equal(so.summary.manifestsFound, 0);
   });
 });
 
@@ -590,5 +595,116 @@ describe('login', () => {
     } finally {
       await new Promise((res) => blocker.close(res));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The gate must act on what the scanner found
+// ---------------------------------------------------------------------------
+
+describe('gate and hardcoded secrets', () => {
+  // `scan` reported `[CRIT] AWS Access Key .env:1` and `gate` on the identical
+  // tree returned PASS 100/100 exit 0 with `violations: []`. The gate evaluated
+  // algorithm risk only, so the highest-severity finding the scanner produces
+  // had no path into CI enforcement at all. Two commands reading one tree must
+  // not disagree on direction.
+  function treeWithSecret() {
+    const dir = tempDir('gate-secret');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'g' }));
+    writeFileSync(join(dir, '.env'), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+    return dir;
+  }
+
+  it('scan and gate agree that a committed key is a problem', () => {
+    const dir = treeWithSecret();
+    const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+    assert.equal(scanned.secrets.length, 1, 'precondition: scan must find it');
+
+    const { code, stdout } = run(['gate', dir, '--format', 'json']);
+    const gated = JSON.parse(stdout);
+    assert.equal(gated.status, 'fail',
+      'gate passed a tree whose scan reports a CRITICAL hardcoded secret');
+    assert.equal(code, 1);
+    assert.equal(gated.summary.secrets, 1);
+    const v = gated.violations.find((x) => x.type === 'secret');
+    assert.ok(v, `no secret violation in ${JSON.stringify(gated.violations)}`);
+    assert.equal(v.file, '.env');
+    assert.equal(v.line, 1, 'a violation must point at a line');
+  });
+
+  it('names the secret in its text output too', () => {
+    const { stdout } = run(['gate', treeWithSecret()]);
+    assert.match(stdout, /AWS Access Key/);
+    assert.match(stdout, /\.env:1/, 'the violation must be openable');
+  });
+
+  it('can be opted out of explicitly, and says so', () => {
+    // An escape hatch for a documented false positive. Explicit, never implied.
+    const { code, stdout } = run(['gate', treeWithSecret(), '--allow-secrets', '--format', 'json']);
+    assert.equal(code, 0);
+    assert.equal(JSON.parse(stdout).summary.secrets, 1,
+      'the count must still be reported even when it does not fail the gate');
+  });
+
+  it('refuses a tree it read nothing from', () => {
+    // PASS 100/100 on an empty directory is the same shape as certifying a
+    // missing path: a verdict about something that was never measured.
+    const empty = tempDir('gate-empty-tree');
+    const { code, stdout, stderr } = run(['gate', empty, '--format', 'json']);
+    assert.equal(code, 2, 'an empty tree was certified rather than refused');
+    assert.doesNotMatch(stdout, /"status":\s*"pass"/);
+    assert.match(stdout + stderr, /no files|nothing to scan/i);
+  });
+});
+
+describe('an unknown flag', () => {
+  it('stops the command instead of warning and continuing', () => {
+    // `gate . --min-scoree 95` warned, silently reverted to the default
+    // threshold, printed "(min: 50)" and exited 0. A typo must not loosen a
+    // gate: that is the same fail-open as an unparseable value, which already
+    // exits 2.
+    const dir = scoreOnlyFixture();
+    const { code, stderr } = run(['gate', dir, '--min-scoree', '95']);
+    assert.equal(code, 2);
+    assert.match(stderr, /--min-scoree/);
+    // A known flag must still be accepted.
+    assert.equal(run(['gate', dir, '--min-score', '10', '--format', 'json']).code, 0);
+  });
+});
+
+describe('secret detection coverage', () => {
+  function scanOf(files) {
+    const dir = tempDir('coverage');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'c' }));
+    for (const [n, b] of Object.entries(files)) writeFileSync(join(dir, n), b);
+    return JSON.parse(run(['scan', dir, '--format', 'json']).stdout).secrets;
+  }
+
+  it('finds the AWS secret key, not only the access key id', () => {
+    // Detection was prefix-driven (AKIA, ghp_, sk-), so the access key ID was
+    // caught and its more sensitive other half was not. A 40-character secret
+    // has no distinguishing prefix; the variable it is assigned to is the
+    // signal.
+    const secret = 'wJalrXUtnFEMI' + '/K7MDENG/bPxRfiCYEXAMPLEKEY';   // 40 chars, AWS docs shape
+    const found = scanOf({ '.env': `AWS_SECRET_ACCESS_KEY=${secret}\n` });
+    assert.equal(found.length, 1, 'the AWS secret access key was not detected');
+    assert.equal(found[0].file, '.env');
+  });
+
+  it('does not flag a short or placeholder value on the same variable', () => {
+    // The guard against turning the variable name into the whole signal.
+    assert.deepEqual(scanOf({ '.env': 'AWS_SECRET_ACCESS_KEY=changeme\n' }), []);
+    assert.deepEqual(scanOf({ '.env': 'AWS_SECRET_ACCESS_KEY=\n' }), []);
+    assert.deepEqual(scanOf({ '.env': 'AWS_SECRET_ACCESS_KEY=${AWS_SECRET}\n' }), []);
+  });
+
+  it('flags a real key committed in a template, and still ignores placeholders', () => {
+    // Suppression was by FILENAME, so any value in .env.example was ignored.
+    // Templates are the files that actually get committed, so a real key there
+    // is the higher-risk case, not the lower-risk one. Judge the value.
+    assert.equal(scanOf({ '.env.example': `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` }).length, 1,
+      'a real key committed in a template was ignored because of its filename');
+    assert.deepEqual(scanOf({ '.env.example': 'AWS_ACCESS_KEY_ID=your-key-here\n' }), []);
+    assert.deepEqual(scanOf({ '.env.example': 'AWS_ACCESS_KEY_ID=<your-key>\n' }), []);
   });
 });

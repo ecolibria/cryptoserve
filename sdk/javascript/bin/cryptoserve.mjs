@@ -43,6 +43,7 @@ const OPTIONS_WITH_VALUES = new Set([
 const KNOWN_FLAGS = new Set([
   '--insecure-storage', '--verbose', '--binary', '--fail-on-weak',
   '--help', '--version', '--no-cache', '--live', '--password-stdin',
+  '--allow-secrets',
 ]);
 
 /**
@@ -256,13 +257,27 @@ function getPositional(args) {
   return result;
 }
 
-function warnUnknownFlags(args) {
+/**
+ * Stop on a flag this CLI does not know.
+ *
+ * This used to warn and continue, which is a fail-open in flag-name form:
+ * `gate . --min-scoree 95` warned, silently fell back to the default threshold,
+ * printed "(min: 50)" and exited 0. A typo must not loosen a gate. An
+ * unparseable option VALUE already exits 2; an unknown option NAME is the same
+ * class of mistake and now does too.
+ */
+function rejectUnknownFlags(args) {
+  const unknown = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--') && !OPTIONS_WITH_VALUES.has(arg) && !KNOWN_FLAGS.has(arg)) {
-      console.error(`Warning: unknown flag "${arg}"`);
+      unknown.push(arg);
     }
     if (OPTIONS_WITH_VALUES.has(arg)) i++; // skip value
+  }
+  if (unknown.length > 0) {
+    usageError(`unknown ${unknown.length === 1 ? 'flag' : 'flags'}: ${unknown.join(', ')}`,
+      'run "cryptoserve help <command>" for the flags this command accepts');
   }
 }
 
@@ -1196,6 +1211,37 @@ async function cmdGate(args) {
 
     const violations = [...byAlgorithm.values()];
 
+    // A hardcoded secret is the highest-severity thing the scanner reports, and
+    // the gate used to ignore it entirely: `scan` printed
+    // "[CRIT] AWS Access Key .env:1" while `gate` on the same tree returned
+    // PASS 100/100. Two commands reading one tree must not disagree on
+    // direction, so secrets fail the gate unless waived by name.
+    const allowSecrets = getFlag(args, '--allow-secrets');
+    const secretFindings = scanResults.secrets || [];
+    if (!allowSecrets) {
+      for (const secret of secretFindings) {
+        violations.push({
+          type: 'secret',
+          algorithm: secret.name,
+          risk: 'critical',
+          source: secret.file,
+          file: secret.file,
+          line: secret.line,
+          reason: secret.envVar ? `read it from $${secret.envVar} instead` : 'hardcoded credential',
+        });
+      }
+    }
+
+    // A gate that read nothing cannot certify anything. An empty tree scored
+    // 100/100 PASS, which is a verdict about something never measured -- the
+    // same shape as certifying a path that does not exist.
+    const readSomething = (scanResults.filesScanned ?? 0) > 0
+      || (scanResults.configFilesScanned ?? 0) > 0
+      || (scanResults.manifestsFound?.length ?? 0) > 0;
+    if (!readSomething) {
+      refuse(`Found no files to scan under ${scanDir}. A gate cannot pass a tree it did not read.`);
+    }
+
     const scoreFail = score < minScore;
     const pass = violations.length === 0 && !scoreFail;
 
@@ -1210,8 +1256,9 @@ async function cmdGate(args) {
         const e = lookupAlgorithm(a);
         return e && (e.quantumRisk === 'none' || e.quantumRisk === 'low');
       }).length, 0),
-      vulnerable: violations.filter(v => !v.weak).length,
+      vulnerable: violations.filter(v => !v.weak && v.type !== 'secret').length,
       weak: violations.filter(v => v.weak).length,
+      secrets: secretFindings.length,
     };
 
     const outputPath = getOption(args, '--output');
@@ -1255,7 +1302,9 @@ async function cmdGate(args) {
       if (violations.length > 0) {
         console.log(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
-          const label = v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
+          const label = v.type === 'secret'
+            ? error(`[SECRET] ${v.algorithm}`)
+            : v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
           const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
           console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
         }
@@ -1504,7 +1553,7 @@ if (command && !['help', '--help', '-h', 'version', '--version', '-v', undefined
 
 // Warn about unknown flags (skip for vault/context which have subcommands)
 if (command && !['vault', 'context', 'help', '--help', '-h', 'version', '--version', '-v'].includes(command)) {
-  warnUnknownFlags(commandArgs);
+  rejectUnknownFlags(commandArgs);
 }
 
 try {

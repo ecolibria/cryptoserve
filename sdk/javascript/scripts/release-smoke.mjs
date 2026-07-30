@@ -364,13 +364,19 @@ phase('9. Error paths');
   check('unknown command suggests `cryptoserve help`',
     () => /cryptoserve help/i.test(unk.stderr));
 
-  // Unknown flag should warn (stderr) but not crash. Use a command that
-  // doesn't otherwise need state.
+  // An unknown flag is REFUSED as of 0.5.0. It used to warn and continue, which
+  // is a fail-open in flag-name form: `gate . --min-scoree 95` warned, silently
+  // fell back to the default threshold, printed "(min: 50)" and exited 0. A
+  // typo must not loosen a gate.
   const flag = run(['scan', join(FIX, 'benign'), '--definitely-bogus', '--format', 'json']);
-  check('unknown flag warning is emitted to stderr',
-    () => /unknown flag/i.test(flag.stderr));
-  check('unknown flag does not break command (still exits 0)',
-    () => flag.exit === 0, `exit=${flag.exit}`);
+  check('unknown flag is named on stderr',
+    () => /unknown flag/i.test(flag.stderr), flag.stderr.slice(0, 80));
+  check('unknown flag exits 2', () => flag.exit === 2, `exit=${flag.exit}`);
+  check('unknown flag produces no report', () => parseJson(flag.stdout) === null);
+
+  // The fail-open this replaced, asserted directly.
+  const typo = run(['gate', join(FIX, 'weak'), '--min-scoree', '95', '--format', 'json']);
+  check('mistyped --min-score flag exits 2', () => typo.exit === 2, `exit=${typo.exit}`);
 }
 
 // ---------------------------------------------------------------------------

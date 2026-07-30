@@ -103,6 +103,31 @@ A fresh-user release test then found three more, also pre-existing:
   operator's server, and a guess that is wrong for everyone is worse than an
   error naming what to pass.
 
+A re-test after those fixes found one more, and it made the `.env` fix
+unreachable from the enforcement path:
+
+- **`gate` ignored hardcoded secrets entirely.** `scan` printed
+  `[CRIT] AWS Access Key .env:1` and `gate` on the identical tree returned
+  `PASS 100/100`, exit `0`, `violations: []`. The gate evaluated algorithm risk
+  only, so the highest-severity finding the scanner produces had no path into
+  CI. Two commands reading one tree must not disagree on direction. Secrets are
+  now violations, with `file:line`, and `--allow-secrets` waives them by name
+  for a documented false positive.
+
+Two detection gaps closed while there:
+
+- `AWS_SECRET_ACCESS_KEY` was not detected. Detection was prefix-driven (`AKIA`,
+  `ghp_`, `sk-`), which catches an access key ID and misses its more sensitive
+  other half, because a 40-character secret has no prefix to key on. The
+  variable it is assigned to is the signal, so the value's length and alphabet
+  now qualify it. Verified against three real trees for false positives: the
+  only hits were this repository's own deliberate fixtures.
+- Placeholder suppression was by FILENAME, so any value in `.env.example` was
+  ignored. That is backwards: a template is the file that actually gets
+  committed while `.env` is usually gitignored, so a real key pasted into a
+  template is the higher-risk case. Templates are scanned, and placeholders are
+  filtered by their value (`your-key-here`, `<your-key>`, `changeme`).
+
 ### Added
 - `--password-stdin` on every command that takes a password. `--password <value>`
   puts the secret in `argv`, where it is readable from `ps`,
@@ -142,6 +167,15 @@ A fresh-user release test then found three more, also pre-existing:
   reached it.
 
 ### Changed
+- **An unknown flag now stops the command (exit `2`) rather than warning and
+  continuing.** That was a fail-open in flag-name form: `gate . --min-scoree 95`
+  warned, silently fell back to the default threshold, printed `(min: 50)` and
+  exited `0`. A typo must not loosen a gate, and an unparseable option *value*
+  already exited `2`.
+- **`gate` fails on hardcoded secrets by default**, and refuses a tree it read
+  no files from rather than certifying it `100/100`. A repository with a
+  committed credential that previously passed will now fail; that is the point.
+  `--allow-secrets` opts out explicitly.
 - Exit `2` now means "the command could not run as invoked" across the whole
   CLI, not just `gate`; one condition should not have two codes. `1` keeps its
   meaning: the command ran and reported a failure. Moved from `1` to `2`: `scan`

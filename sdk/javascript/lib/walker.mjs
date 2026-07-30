@@ -42,22 +42,21 @@ const CONFIG_NAMES = new Set([
   '.env',
 ]);
 
-// Templates are committed on purpose and hold placeholders, so they are not
-// dotenv files that carry values. Everything else matching `.env.*` is.
-const ENV_TEMPLATE_SUFFIXES = ['example', 'sample', 'template', 'dist', 'defaults'];
-
 /**
- * Whether a filename is a dotenv file that carries real values.
+ * Whether a filename is a dotenv file.
  *
  * `.env` alone was the only name recognised, so `.env.local` and
  * `.env.production` -- the ones a developer is most likely to have on disk with
  * live credentials in them -- were not collected at all.
+ *
+ * Templates (`.env.example` and friends) are INCLUDED. Excluding them by name
+ * was the wrong instinct: a template is the file that actually gets committed,
+ * while `.env` is usually gitignored, so a real key pasted into `.env.example`
+ * is the higher-risk case rather than the lower-risk one. Placeholders are
+ * filtered by their VALUE instead, where the evidence is.
  */
 export function isDotenvFile(name) {
-  if (name === '.env') return true;
-  if (!name.startsWith('.env.')) return false;
-  const suffix = name.slice('.env.'.length).toLowerCase();
-  return suffix.length > 0 && !ENV_TEMPLATE_SUFFIXES.includes(suffix);
+  return name === '.env' || (name.startsWith('.env.') && name.length > '.env.'.length);
 }
 
 const BINARY_EXTENSIONS = new Set([
