@@ -824,3 +824,64 @@ describe('gate and API misuse findings', () => {
     assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 0);
   });
 });
+
+describe('gate waivers and severity, corrected', () => {
+  function tree(body, name = 'code.js') {
+    const dir = tempDir('gate-sev');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(dir, name), body);
+    return dir;
+  }
+  const TLS_OFF = 'const https=require("https");https.request({rejectUnauthorized:false});\n';
+  const ECB = 'const c=require("crypto");c.createCipheriv("aes-256-ecb",k,null);\n';
+  const DES3 = 'const c=require("crypto");c.createCipheriv("des-ede3-cbc",k,iv);\n';
+
+  it('--allow-secrets waives credentials only, never a security check', () => {
+    // The flag exists to waive a false-positive CREDENTIAL. Letting it also
+    // switch off TLS-verification-bypass detection makes it a silent
+    // enforcement kill switch, which is worse than not having the check.
+    const dir = tree(TLS_OFF);
+    assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 1,
+      'precondition: the TLS bypass must fail the gate');
+    const { code, stdout } = run(['gate', dir, '--min-score', '0', '--allow-secrets', '--format', 'json']);
+    assert.equal(code, 1, '--allow-secrets silently waived a TLS verification bypass');
+    assert.ok(JSON.parse(stdout).violations.some((v) => v.type === 'misuse'));
+  });
+
+  it('still waives an actual credential, and says how many', () => {
+    const dir = tempDir('gate-waive');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'w' }));
+    writeFileSync(join(dir, '.env'), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+    const { code, stdout } = run(['gate', dir, '--min-score', '0', '--allow-secrets']);
+    assert.equal(code, 0);
+    assert.match(stdout, /waived/i, 'a waiver must be stated, not silent');
+  });
+
+  it('fails on a HIGH-severity weakness the quantum-risk ladder rates none', () => {
+    // AES-ECB is structurally broken, not quantum-broken, so its quantumRisk is
+    // correctly `none` and it never breached --max-risk at ANY level, including
+    // `none`. scan called the same line severity `high`. A finding the scanner
+    // rates HIGH must be reachable by the gate.
+    for (const [name, body] of [['ECB', ECB], ['3DES', DES3]]) {
+      const dir = tree(body);
+      const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+      assert.equal(scanned.weakPatterns[0].severity, 'high', `precondition for ${name}`);
+      const { code, stdout } = run(['gate', dir, '--min-score', '0', '--format', 'json']);
+      assert.equal(code, 1, `${name} passed the gate at the default --max-risk`);
+      assert.ok(JSON.parse(stdout).violations.length > 0, `${name} produced no violation`);
+    }
+  });
+
+  it('counts a weak algorithm once, not twice', () => {
+    // md5 produces BOTH a weakPattern and an algorithm violation.
+    const dir = tree('const c=require("crypto");c.createHash("md5").update("x");\n');
+    const g = JSON.parse(run(['gate', dir, '--min-score', '0', '--fail-on-weak', '--format', 'json']).stdout);
+    const md5 = g.violations.filter((v) => /md5/i.test(v.algorithm || ''));
+    assert.equal(md5.length, 1, `md5 counted ${md5.length} times: ${JSON.stringify(g.violations)}`);
+  });
+
+  it('still passes a project using modern crypto correctly', () => {
+    const dir = tree('const c=require("crypto");c.createCipheriv("aes-256-gcm",k,iv);c.createHash("sha256");\n');
+    assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 0);
+  });
+});

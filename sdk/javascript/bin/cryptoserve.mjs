@@ -1229,6 +1229,34 @@ async function cmdGate(args) {
     // "[CRIT] AWS Access Key .env:1" while `gate` on the same tree returned
     // PASS 100/100. Two commands reading one tree must not disagree on
     // direction, so secrets fail the gate unless waived by name.
+    // A severe weakness the scanner reported must be reachable by the gate.
+    //
+    // Deduplication is against the violations ALREADY raised, not against the
+    // presence of an `algorithm` field. Those are different sets: AES-ECB is
+    // structurally broken rather than quantum-broken, so its quantumRisk is
+    // correctly `none`, it breaches no --max-risk level including `none`, and
+    // it therefore raised no violation above. Skipping it because it merely
+    // HAD an algorithm name meant a finding scan rates `high` passed the gate
+    // at every setting. A weak algorithm that DID raise one is still counted
+    // once -- the double-emit bug fixed in 0.4.0.
+    for (const wp of scanResults.weakPatterns || []) {
+      if (wp.severity !== 'critical' && wp.severity !== 'high') continue;
+      if (wp.algorithm && byAlgorithm.has(wp.algorithm.toLowerCase())) continue;
+      violations.push({
+        type: 'misuse',
+        algorithm: wp.issue,
+        risk: wp.severity,
+        source: wp.file,
+        file: wp.file,
+        line: wp.line,
+        reason: wp.fix,
+      });
+    }
+
+    // --allow-secrets waives CREDENTIALS. It deliberately does not reach the
+    // misuse findings above: a flag that quietly switches off
+    // TLS-verification-bypass detection is an enforcement kill switch, which is
+    // worse than never having had the check.
     const allowSecrets = getFlag(args, '--allow-secrets');
     const secretFindings = scanResults.secrets || [];
     const privateKeys = scanResults.privateKeyFiles || [];
@@ -1246,26 +1274,6 @@ async function cmdGate(args) {
           reason: 'remove it from the tree and rotate the key',
         });
       }
-      // API misuse findings carry a severity and no algorithm, so they were
-      // invisible to a gate that derived violations from the inventory alone.
-      // "TLS certificate verification disabled" is exactly what a CI gate is
-      // for. Only findings with no algorithm attribution are added here: a weak
-      // ALGORITHM already produces its own violation above, and adding it twice
-      // would inflate the count -- the double-emit bug fixed in 0.4.0.
-      for (const wp of scanResults.weakPatterns || []) {
-        if (wp.algorithm) continue;
-        if (wp.severity !== 'critical' && wp.severity !== 'high') continue;
-        violations.push({
-          type: 'misuse',
-          algorithm: wp.issue,
-          risk: wp.severity,
-          source: wp.file,
-          file: wp.file,
-          line: wp.line,
-          reason: wp.fix,
-        });
-      }
-
       for (const secret of secretFindings) {
         violations.push({
           type: 'secret',

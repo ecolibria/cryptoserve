@@ -129,7 +129,10 @@ Hardcoded secrets, committed private keys, and critical API-misuse findings
 reported `[CRIT] AWS Access Key .env:1` while `gate` on the same tree returned
 `PASS 100/100`, so the highest-severity findings the scanner produces had no path
 into CI. A public certificate does not fail the gate; the private key that signs
-it does. `--allow-secrets` waives both explicitly and still reports the count.
+it does. `--allow-secrets` waives the credential findings explicitly, states how many,
+and does NOT reach weak algorithms, AES-ECB, 3DES or a disabled certificate
+check. A flag that quietly stops enforcing a security check is worse than not
+having the check.
 
 An unknown flag exits `2` rather than warning and continuing, because
 `gate . --min-scoree 95` used to fall back to the default threshold and pass.

@@ -141,9 +141,27 @@ then found the third instance of the same defect, before another review had to:
   `high` are violations now; a weak ALGORITHM still produces exactly one
   violation rather than two.
 
-The full sweep now agrees in both directions: a committed secret, a committed
-private key, a weak algorithm and a disabled certificate check all fail the
-gate; a public certificate and a clean SHA-256 tree both pass.
+A final pre-publish check then caught two defects in that very fix:
+
+- **`--allow-secrets` waived the TLS-verification-bypass finding too**, silently,
+  turning a credential waiver into an enforcement kill switch. It waives
+  credentials only: a committed secret and a committed private key. Weak
+  algorithms, AES-ECB, 3DES and a disabled certificate check are unaffected by
+  it, and any waiver is now stated in the human output.
+- **AES-ECB and 3DES passed the gate at every `--max-risk` level, including
+  `none`.** Deduplication skipped any weak-pattern finding that carried an
+  algorithm name, on the assumption it had already produced a violation. Those
+  are different sets: ECB is structurally broken rather than quantum-broken, so
+  its `quantumRisk` is correctly `none`, it breaches no risk level, and it had
+  raised no violation to be deduplicated against. `scan` rated the same line
+  `severity: high`. Deduplication is now against the violations actually
+  raised, so a HIGH finding is always reachable and a weak algorithm is still
+  counted exactly once.
+
+The full sweep now agrees in both directions. Fails by default: a committed
+secret, a committed private key, MD5, AES-ECB, 3DES, and a disabled certificate
+check. Passes: a public certificate and a clean SHA-256 tree. `--allow-secrets`
+moves only the first two.
 
 Two detection gaps closed while there:
 
