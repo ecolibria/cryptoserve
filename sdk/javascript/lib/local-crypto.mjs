@@ -23,7 +23,7 @@ const AES_GCM_NONCE_SIZE = 12;
 const CHACHA_NONCE_SIZE = 12;
 const AUTH_TAG_LENGTH = 16;
 
-const ALGORITHMS = {
+export const ALGORITHMS = {
   'AES-256-GCM':       { cipher: 'aes-256-gcm',       keySize: 32, nonceSize: AES_GCM_NONCE_SIZE },
   'AES-128-GCM':       { cipher: 'aes-128-gcm',       keySize: 16, nonceSize: AES_GCM_NONCE_SIZE },
   'ChaCha20-Poly1305': { cipher: 'chacha20-poly1305',  keySize: 32, nonceSize: CHACHA_NONCE_SIZE },
@@ -192,6 +192,9 @@ export function decryptFile(inPath, outPath, password) {
 // ---------------------------------------------------------------------------
 // Password hashing
 // ---------------------------------------------------------------------------
+
+/** The hash algorithms `hashPassword` implements. The CLI validates against this. */
+export const HASH_ALGORITHMS = ['scrypt', 'pbkdf2'];
 
 export function hashPassword(password, algorithm = 'scrypt') {
   const salt = randomBytes(SALT_SIZE);

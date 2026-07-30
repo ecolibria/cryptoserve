@@ -161,9 +161,10 @@ phase('2. Scan (benign / weak / pqc)');
     () => pj && pj.libraries.some(
       (l) => l.name === '@noble/post-quantum' && l.quantumRisk === 'none'));
 
-  // Error path — nonexistent dir must exit 1, not crash.
+  // Error path — a nonexistent dir must exit 2 ("could not run as invoked"),
+  // the same code gate/cbom/pqc use for the same condition. Was 1 before 0.5.0.
   const miss = run(['scan', join(FIX, '__does_not_exist__'), '--format', 'json']);
-  check('scan on missing path exits 1', () => miss.exit === 1, `exit=${miss.exit}`);
+  check('scan on missing path exits 2', () => miss.exit === 2, `exit=${miss.exit}`);
   check('scan on missing path writes to stderr', () => /Error|does not exist/i.test(miss.stderr));
 }
 
@@ -194,11 +195,15 @@ phase('3. PQC analysis');
     () => pj && wj && pj.quantumReadinessScore >= wj.quantumReadinessScore,
     `pqc=${pj?.quantumReadinessScore} weak=${wj?.quantumReadinessScore}`);
 
-  // Profile validation — unknown profile should still produce JSON, with a
-  // warning routed to stderr (not contaminating stdout).
+  // Profile validation — an unknown profile is REFUSED as of 0.5.0. It used to
+  // fall back to `general` and emit a confident JSON report, with the warning
+  // suppressed in JSON mode: a CI job asserting healthcare posture with one
+  // transposed letter got "not vulnerable / medium" and exit 0 on every stream.
   const bogus = run(['pqc', '--profile', 'definitely-not-a-profile', '--format', 'json'],
     { cwd: join(FIX, 'benign') });
-  check('pqc --profile invalid still emits JSON', () => parseJson(bogus.stdout) !== null);
+  check('pqc --profile invalid exits 2', () => bogus.exit === 2, `exit=${bogus.exit}`);
+  check('pqc --profile invalid emits no report', () => parseJson(bogus.stdout) === null);
+  check('pqc --profile invalid names the flag', () => /--profile/.test(bogus.stderr));
 }
 
 // ---------------------------------------------------------------------------
@@ -282,8 +287,10 @@ phase('6. Context');
   check('context show returns resolved algorithm',
     () => sj && typeof sj.algorithm === 'string' && sj.algorithm.length > 0);
 
+  // Exit 2 as of 0.5.0: a context that does not exist is an invocation the CLI
+  // cannot carry out, not a resolution it carried out and reported as failed.
   const bad = run(['context', 'show', 'definitely-not-a-context']);
-  check('context show unknown exits 1', () => bad.exit === 1, `exit=${bad.exit}`);
+  check('context show unknown exits 2', () => bad.exit === 2, `exit=${bad.exit}`);
   check('context show unknown lists valid contexts',
     () => /Valid contexts:/i.test(bad.stderr));
 }
@@ -349,8 +356,11 @@ phase('8. Hash password');
 phase('9. Error paths');
 
 {
+  // Exit 2 as of 0.5.0: "could not run as invoked", the same code as a bad
+  // path or an unusable option value. 1 is reserved for a command that RAN and
+  // reported a failure, which an unknown command never did.
   const unk = run(['frobnicate']);
-  check('unknown command exits 1', () => unk.exit === 1);
+  check('unknown command exits 2', () => unk.exit === 2, `exit=${unk.exit}`);
   check('unknown command suggests `cryptoserve help`',
     () => /cryptoserve help/i.test(unk.stderr));
 

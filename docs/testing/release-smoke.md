@@ -9,7 +9,7 @@ Run before tagging a `js-v*` or `v*` (Python) release. Two parts per SDK:
    scan, pqc, cbom, gate, encrypt/decrypt, hash, and the error
    exit-code matrix. Must end with `PASS N/N`.
 2. **Manual.** This checklist. Covers the surfaces the automated runner
-   can't exercise without side effects (init, vault, login, census --live)
+   can't exercise without side effects (init, vault, login, census)
    and the UX/feel checks that a script can't make.
 
 Every item below traces to a regression we either shipped or caught. Skipping
@@ -66,7 +66,12 @@ node /path/to/cryptoserve/sdk/javascript/bin/cryptoserve.mjs init
 - [ ] Creates `.cryptoserve.json` in cwd.
 - [ ] Re-running `init` reports `Master key already configured` and does not
       overwrite the existing key.
-- [ ] `init --insecure-storage` clearly warns about plaintext storage.
+- [ ] `init --insecure-storage` clearly warns about plaintext storage AND
+      completes. Run it on a machine with NO cryptoserve key in its keychain --
+      that is the only state where the branch executes. Until 0.5.0 it threw
+      `Cannot access 'configPath' before initialization`, and it is the exact
+      recovery the preceding no-keychain error recommends, so `init` dead-ended
+      for every new user without a keychain.
 
 Cleanup: delete `/tmp/cs-init-smoke` and remove the keychain entry
 (`security delete-generic-password -s cryptoserve` on macOS).
@@ -98,25 +103,47 @@ node $CLI vault reset
 
 Cleanup: `rm -rf $HOME` (which is the temp dir).
 
-## 5. Census (manual; network + slow)
+## 5. Census (manual; network)
 
-The automated runner skips both `census` and `census --live` because they
-hit npm / PyPI / crates.io and can take 90–120s.
+The automated runner skips `census` because it fetches the published snapshot
+over the network.
+
+`--live` was REMOVED in 0.5.0. It collected three of the eleven ecosystems from
+its own copy of the fetch logic and recorded a rate-limited request as zero
+downloads, while the help text advertised all eleven. The command now renders
+the dated snapshot published by census.cryptoserve.dev, so the CLI and the site
+agree on every share by construction.
 
 ```bash
-node bin/cryptoserve.mjs census --live --ecosystems npm --format json | jq .totals
-node bin/cryptoserve.mjs census --live --ecosystems npm,pypi,crates | head -30
+node bin/cryptoserve.mjs census
+node bin/cryptoserve.mjs census --format json | jq .
+node bin/cryptoserve.mjs census --no-cache
+node bin/cryptoserve.mjs census --live      # expect the removal notice, exit 2
 ```
 
-- [ ] `--live --ecosystems npm` returns JSON with non-zero `totals.downloads`.
-- [ ] All three ecosystems together produce a table with one row per
-      ecosystem and a `Total` row.
-- [ ] Top 5 weak packages list shows recognizable names (jsonwebtoken,
-      bcrypt, md5, etc.); sanity check that classification still works.
+- [ ] `census` prints the snapshot's COLLECTION DATE before the figures. A
+      snapshot presented as a current reading is the defect this release exists
+      to fix; do not accept an undated report.
+- [ ] Measured and modelled downloads are shown separately. NuGet and RubyGems
+      divide a lifetime total by an assumed number of months and CocoaPods
+      publishes nothing, so part of the headline is a proxy times a constant and
+      must never be presented as measured.
+- [ ] Headline totals are non-zero, and a package known to be large is large:
+      `cryptography` on PyPI really does exceed a billion downloads a month. A
+      zero there is a collection failure being reported as a measurement.
+- [ ] `--format json` is valid JSON (`| jq .` exits 0).
+- [ ] `--no-cache` re-fetches rather than serving the day-old cache.
+- [ ] `--live` prints why it was removed and exits NON-ZERO. Measure the code
+      unpiped (`cmd >/dev/null 2>&1; echo $?`) -- a pipe reports the exit status
+      of the last command, not the CLI's.
 - [ ] NIST 2030 countdown is sensible (years remaining > 0 today; will
       need an update when 2030 passes).
-- [ ] Unknown ecosystem (`--ecosystems pizza`) warns to stderr and continues
-      with the known ones.
+- [ ] `--ecosystems` was REMOVED alongside `--live` in 0.5.0. It is no longer a
+      supported option; passing it warns `unknown flag` and the command continues.
+- [ ] `census --format xml` exits 2 rather than silently rendering text.
+- [ ] The figures match census.cryptoserve.dev for the same snapshot date. The
+      whole point of rendering the published snapshot is that these cannot
+      diverge; if they do, one of the two is not reading what it claims to.
 
 ## 6. Login + status (manual; needs a running server)
 
@@ -132,6 +159,48 @@ node bin/cryptoserve.mjs status
       connection badge.
 - [ ] `status` with no token shows `Not logged in` (run after deleting
       `~/.cryptoserve/credentials.json`).
+
+## 6b. Argument contract (manual; fast, no side effects)
+
+`npm test` covers all of this in `test/cli-argument-contracts.test.mjs`, so this
+section is a spot-check that the built artifact behaves like the source. Every
+line here traces to a defect that shipped: each one reported a confident result
+about something the command had not measured.
+
+```bash
+FIX=$(mktemp -d)
+printf '{"name":"p","dependencies":{"jsonwebtoken":"^9.0.0"}}' > "$FIX/package.json"
+
+node $CLI gate "$FIX" --format json;               echo "want 1  got $?"
+node $CLI gate "$FIX" --min-score abc;             echo "want 2  got $?"
+node $CLI gate "$FIX" --min-score 500;             echo "want 2  got $?"
+node $CLI gate "$FIX" --max-risk bogus;            echo "want 2  got $?"
+node $CLI cbom /nope >/dev/null;                   echo "want 2  got $?"
+node $CLI pqc  /nope >/dev/null;                   echo "want 2  got $?"
+node $CLI scan /nope >/dev/null;                   echo "want 2  got $?"
+node $CLI hash-password </dev/null;                echo "want 2  got $?"
+node $CLI hash-password --password "" </dev/null;  echo "want 2  got $?"
+```
+
+- [ ] The fixture FAILS its own baseline (exit 1) before any threshold is
+      passed. A fixture scoring 100, or one failing on `--max-risk`, exits the
+      same way with and without the defect and proves nothing -- which is why
+      this went unreproduced on the first two fixtures tried.
+- [ ] `--min-score abc` exits 2 and the report never prints `min: NaN`. Until
+      0.5.0 this exited 0: `parseInt('abc')` is NaN, `score < NaN` is false, so
+      a typo'd CI threshold turned a failing gate green.
+- [ ] `--min-score 40abc` exits 2 rather than silently becoming a threshold of 40.
+- [ ] A valid threshold still bites: `--min-score 10` passes and `--min-score 90`
+      fails on the same fixture. Rejecting everything is not a fix.
+- [ ] `cbom /nope` emits NO document. Until 0.5.0 it emitted a valid CBOM
+      asserting `quantumReadiness.score: 100, riskLevel: none` and exited 0.
+- [ ] `pqc "$FIX"` names `$FIX` in its output and scores it, not the cwd. Run it
+      from a DIFFERENT directory or the check is vacuous.
+- [ ] `gate` and `cbom` both report how many files they read. Without a count,
+      a wrong path and a clean tree look identical.
+- [ ] Every password prompt with stdin redirected says what to pass and exits 2.
+      Nothing may print `unsettled top-level await` or exit 13 -- that is Node
+      reporting our internals, with installed file paths, at a user.
 
 ## 7. UX sanity
 

@@ -202,7 +202,10 @@ export async function initProject(projectDir, options = {}) {
       result.keyStorage = { storage: 'plaintext-file', path: masterKeyPath };
     } else {
       // Encrypted file with password
-      const pw = await promptPassword('Set vault password (for encrypted key storage): ');
+      const pw = await promptPassword('Set vault password (for encrypted key storage): ', {
+        hint: 'Run "cryptoserve init --insecure-storage" to store the key without a password, '
+          + 'or run init in an interactive terminal.',
+      });
       result.keyStorage = await storeMasterKey(keyBase64, {
         useKeychain: false,
         fallbackPassword: pw,
@@ -224,10 +227,16 @@ export async function initProject(projectDir, options = {}) {
     }
   }
 
-  // 4. Create project config
-  const configPath = join(projectDir, '.cryptoserve.json');
-  if (!existsSync(configPath)) {
-    writeFileSync(configPath, JSON.stringify({
+  // 4. Create project config.
+  // NOT named `configPath`: that shadowed the `configPath` import above for the
+  // whole function body, so the `configPath('master.key')` call in the
+  // --insecure-storage branch read a `const` from its temporal dead zone and
+  // threw "Cannot access 'configPath' before initialization". That branch is
+  // the exact recovery the no-keychain error recommends, so `init` dead-ended
+  // for every user without a keychain.
+  const projectConfigPath = join(projectDir, '.cryptoserve.json');
+  if (!existsSync(projectConfigPath)) {
+    writeFileSync(projectConfigPath, JSON.stringify({
       version: 1,
       project: projectDir.split('/').pop(),
       createdAt: new Date().toISOString(),

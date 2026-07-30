@@ -155,7 +155,42 @@ function decryptFromStorage(packed, password) {
 // Password prompting
 // ---------------------------------------------------------------------------
 
-export function promptPassword(prompt = 'Password: ') {
+/**
+ * Raised when a password is needed and there is no terminal to ask on.
+ *
+ * The bin turns this into a plain message and exit 2. It carries a code rather
+ * than being matched on its text so an intermediate catch can re-throw it
+ * without having to recognise the wording.
+ */
+export class NonInteractiveError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NonInteractiveError';
+    this.code = 'ERR_NO_TTY';
+  }
+}
+
+/**
+ * Ask for a password on the terminal.
+ *
+ * With stdin redirected — `</dev/null`, a pipe, any CI runner — the old
+ * implementation registered a `data` listener that would never fire, so the
+ * promise never settled. Node eventually printed its own internals at the user
+ * ("Detected unsettled top-level await at .../bin/cryptoserve.mjs:1287", with
+ * installed file paths) and exited 13. That is a diagnostic about our code, not
+ * an answer to the operator's question, which is "what should I have passed?".
+ *
+ * `hint` names the non-interactive form for the calling command, because the
+ * answer differs: most commands take `--password`, but `init` takes
+ * `--insecure-storage` and `vault set` takes the value as an argument.
+ */
+export function promptPassword(prompt = 'Password: ', { hint = 'Pass --password <value>.' } = {}) {
+  if (!process.stdin.isTTY) {
+    return Promise.reject(new NonInteractiveError(
+      `Cannot prompt for a password: stdin is not a terminal.\n${hint}`
+    ));
+  }
+
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     // Hide input
@@ -193,7 +228,25 @@ export function promptPassword(prompt = 'Password: ') {
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether this process is allowed to touch the OS keychain at all.
+ *
+ * `CRYPTOSERVE_NO_KEYCHAIN=1` turns every keychain path off. Containers and CI
+ * runners have no keychain service, and probing for one there costs a
+ * subprocess and can hang; declaring its absence is better than discovering it.
+ *
+ * It also makes the `--insecure-storage` path reachable on demand. That branch
+ * only executes when no master key is found, so on a developer machine where
+ * `cryptoserve init` has ever run, a regression test for it silently exercises
+ * nothing -- which is how a ReferenceError on that exact branch shipped.
+ */
+function keychainDisabled() {
+  const v = process.env.CRYPTOSERVE_NO_KEYCHAIN;
+  return v !== undefined && v !== '' && v !== '0' && v.toLowerCase() !== 'false';
+}
+
 export async function isKeychainAvailable() {
+  if (keychainDisabled()) return false;
   const os = platform();
   const backend = backends[os];
   if (!backend) return false;
@@ -224,7 +277,7 @@ export async function generateMasterKey() {
 export async function storeMasterKey(keyBase64, { useKeychain = true, fallbackPassword = null } = {}) {
   ensureConfigDir();
 
-  if (useKeychain) {
+  if (useKeychain && !keychainDisabled()) {
     const backend = backends[platform()];
     if (backend) {
       try {
@@ -251,7 +304,7 @@ export async function storeMasterKey(keyBase64, { useKeychain = true, fallbackPa
 
 export async function loadMasterKey({ fallbackPassword = null } = {}) {
   // Try OS keychain first
-  const backend = backends[platform()];
+  const backend = keychainDisabled() ? null : backends[platform()];
   if (backend) {
     try {
       return await backend.get();
@@ -274,7 +327,7 @@ export async function loadMasterKey({ fallbackPassword = null } = {}) {
 }
 
 export async function deleteMasterKey() {
-  const backend = backends[platform()];
+  const backend = keychainDisabled() ? null : backends[platform()];
   if (backend) {
     try { await backend.delete(); } catch { /* OK */ }
   }
