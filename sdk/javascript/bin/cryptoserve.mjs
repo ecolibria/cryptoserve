@@ -846,7 +846,20 @@ async function cmdVault(args) {
   }
 
   if (subcommand === 'reset') {
-    vault.resetVault();
+    if (!vault.vaultExists()) {
+      console.log(warning('No vault to delete.'));
+      return;
+    }
+    // Authenticated like every other vault operation. Destroying every secret
+    // must not be the one action that does not check the password.
+    const pw = flagPassword || await promptPassword('Vault password: ', { hint: HINT_PASSWORD });
+    try {
+      vault.resetVault(pw);
+    } catch (e) {
+      if (e?.code === 'ERR_NO_TTY') throw e;
+      console.error(error('Wrong vault password (or the vault file has been modified). Vault NOT deleted.'));
+      process.exit(1);
+    }
     console.log(success('Vault deleted.'));
     return;
   }
@@ -1218,7 +1231,21 @@ async function cmdGate(args) {
     // direction, so secrets fail the gate unless waived by name.
     const allowSecrets = getFlag(args, '--allow-secrets');
     const secretFindings = scanResults.secrets || [];
+    const privateKeys = scanResults.privateKeyFiles || [];
     if (!allowSecrets) {
+      // Same predicate, one artifact type over: `scan` listed a committed
+      // private key and `gate` passed the tree 100/100. Publishing a
+      // certificate is routine; publishing the key that signs it is not.
+      for (const keyFile of privateKeys) {
+        violations.push({
+          type: 'private-key',
+          algorithm: 'Private key committed to the repository',
+          risk: 'critical',
+          source: keyFile,
+          file: keyFile,
+          reason: 'remove it from the tree and rotate the key',
+        });
+      }
       for (const secret of secretFindings) {
         violations.push({
           type: 'secret',
@@ -1259,6 +1286,7 @@ async function cmdGate(args) {
       vulnerable: violations.filter(v => !v.weak && v.type !== 'secret').length,
       weak: violations.filter(v => v.weak).length,
       secrets: secretFindings.length,
+      privateKeys: privateKeys.length,
     };
 
     const outputPath = getOption(args, '--output');
@@ -1302,12 +1330,19 @@ async function cmdGate(args) {
       if (violations.length > 0) {
         console.log(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
-          const label = v.type === 'secret'
+          const label = v.type === 'private-key'
+            ? error(`[KEY] ${v.algorithm}`)
+            : v.type === 'secret'
             ? error(`[SECRET] ${v.algorithm}`)
             : v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
           const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
           console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
         }
+      }
+
+      if (allowSecrets && (secretFindings.length > 0 || privateKeys.length > 0)) {
+        const waived = secretFindings.length + privateKeys.length;
+        console.log(`\n  ${warning(`${waived} credential finding${waived === 1 ? '' : 's'} waived by --allow-secrets`)}`);
       }
 
       if (scoreFail) {

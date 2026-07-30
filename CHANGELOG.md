@@ -114,6 +114,22 @@ unreachable from the enforcement path:
   now violations, with `file:line`, and `--allow-secrets` waives them by name
   for a documented false positive.
 
+A final re-test found two more, one of them the unswept sibling of the fix
+immediately above:
+
+- **A committed private key passed the gate.** `scan` listed
+  `Certificate/Key Files: server.key` and `gate` on the same tree returned
+  `PASS 100/100`, exit `0`, with no flag that caught it. `-----BEGIN RSA PRIVATE
+  KEY-----` was treated identically to a public `-----BEGIN CERTIFICATE-----`.
+  Publishing a certificate is routine; publishing the key that signs it is the
+  incident. `scan` now reports `privateKeyFiles` separately from `certFiles`,
+  and `gate` fails on them (waivable with the same `--allow-secrets`).
+- **`vault reset` destroyed the vault with a wrong password, or none at all.**
+  It printed `Vault deleted.` and exited `0` either way, while
+  `vault delete KEY` with a wrong password correctly refused. Deleting one
+  secret was authenticated and deleting all of them was not. `reset` now proves
+  it can open the vault first.
+
 Two detection gaps closed while there:
 
 - `AWS_SECRET_ACCESS_KEY` was not detected. Detection was prefix-driven (`AKIA`,
@@ -172,8 +188,8 @@ Two detection gaps closed while there:
   warned, silently fell back to the default threshold, printed `(min: 50)` and
   exited `0`. A typo must not loosen a gate, and an unparseable option *value*
   already exited `2`.
-- **`gate` fails on hardcoded secrets by default**, and refuses a tree it read
-  no files from rather than certifying it `100/100`. A repository with a
+- **`gate` fails on hardcoded secrets and committed private keys by default**,
+  and refuses a tree it read no files from rather than certifying it `100/100`. A repository with a
   committed credential that previously passed will now fail; that is the point.
   `--allow-secrets` opts out explicitly.
 - Exit `2` now means "the command could not run as invoked" across the whole

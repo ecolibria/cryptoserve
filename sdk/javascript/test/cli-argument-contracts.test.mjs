@@ -708,3 +708,73 @@ describe('secret detection coverage', () => {
     assert.deepEqual(scanOf({ '.env.example': 'AWS_ACCESS_KEY_ID=<your-key>\n' }), []);
   });
 });
+
+describe('gate and committed private keys', () => {
+  // The unswept sibling of the secrets defect. `scan` listed
+  // "Certificate/Key Files: server.key" while `gate` on the same tree returned
+  // PASS 100/100 exit 0, and no flag caught it. A private key committed to a
+  // repository is at least as serious as a hardcoded API key; it was invisible
+  // to enforcement for the same reason, one artifact type over.
+  const PRIVATE_KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n';
+  const PUBLIC_CERT = '-----BEGIN CERTIFICATE-----\nMIIBkTCB+wIJAK\n-----END CERTIFICATE-----\n';
+
+  function tree(name, body) {
+    const dir = tempDir('gate-key');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'k' }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, name), body);
+    return dir;
+  }
+
+  it('fails on a committed private key', () => {
+    const { code, stdout } = run(['gate', tree('server.key', PRIVATE_KEY), '--format', 'json']);
+    const g = JSON.parse(stdout);
+    assert.equal(g.status, 'fail', 'a committed private key passed the gate');
+    assert.equal(code, 1);
+    const v = g.violations.find((x) => x.type === 'private-key');
+    assert.ok(v, `no private-key violation in ${JSON.stringify(g.violations)}`);
+    assert.equal(v.file, 'server.key');
+  });
+
+  it('does not fail on a public certificate', () => {
+    // The distinction that makes this useful rather than noisy: publishing a
+    // certificate is normal, publishing the key that signs it is not.
+    const { code } = run(['gate', tree('server.crt', PUBLIC_CERT), '--format', 'json']);
+    assert.equal(code, 0, 'a public certificate was treated as a private key');
+  });
+
+  it('reports private keys separately from certificates in scan', () => {
+    const s = JSON.parse(run(['scan', tree('server.key', PRIVATE_KEY), '--format', 'json']).stdout);
+    assert.ok(Array.isArray(s.privateKeyFiles), 'scan does not distinguish private keys');
+    assert.deepEqual(s.privateKeyFiles, ['server.key']);
+  });
+
+  it('can be waived by the same explicit flag as secrets', () => {
+    const { code } = run(['gate', tree('server.key', PRIVATE_KEY), '--allow-secrets', '--format', 'json']);
+    assert.equal(code, 0);
+  });
+});
+
+describe('vault reset', () => {
+  it('requires the correct password before destroying the vault', () => {
+    // Deleting ONE key was authenticated; deleting ALL of them was not.
+    // `vault reset --password wrong` printed "Vault deleted." and exited 0.
+    const home = tempDir('vault-reset');
+    const env = { CRYPTOSERVE_HOME: home };
+    assert.equal(run(['vault', 'init', '--password', 'right-pw'], { env }).code, 0);
+    assert.equal(run(['vault', 'set', 'K', 'v', '--password', 'right-pw'], { env }).code, 0);
+
+    const wrong = run(['vault', 'reset', '--password', 'wrong-pw'], { env });
+    assert.notEqual(wrong.code, 0, 'a wrong password destroyed the vault');
+    assert.equal(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).stdout.trim(), 'v',
+      'the vault was destroyed despite the wrong password');
+
+    const noPw = run(['vault', 'reset'], { env });
+    assert.notEqual(noPw.code, 0, 'no password destroyed the vault');
+    assert.equal(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).stdout.trim(), 'v');
+
+    const right = run(['vault', 'reset', '--password', 'right-pw'], { env });
+    assert.equal(right.code, 0, `the correct password must still work: ${right.stderr}`);
+    assert.notEqual(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).code, 0);
+  });
+});

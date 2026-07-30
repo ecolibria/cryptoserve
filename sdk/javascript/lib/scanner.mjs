@@ -176,6 +176,7 @@ export function scanProject(projectDir, options = {}) {
     certFiles: [],
     filesScanned: 0,   // source files matched to a language and analyzed
     configFilesScanned: 0, // config/dotenv files read for secrets
+    privateKeyFiles: [], // cert files whose contents are a PRIVATE key
     filesWalked: 0,    // every file the walker examined, analyzed or not
     // New in v0.2.0
     sourceAlgorithms: [],
@@ -257,9 +258,19 @@ export function scanProject(projectDir, options = {}) {
   const seenSourceAlgos = new Set();
   const sourceLibraries = new Map(); // library name -> algorithm set
 
-  // Cert files from walker
+  // Cert files from walker. A public certificate and the private key that
+  // signs it were reported in one undifferentiated list, so a committed
+  // `server.key` looked exactly like a published `server.crt`. Publishing a
+  // certificate is routine; publishing its key is the incident.
   for (const certPath of walked.certFiles) {
-    results.certFiles.push(relative(projectDir, certPath));
+    const rel = relative(projectDir, certPath);
+    results.certFiles.push(rel);
+    let head = '';
+    try { head = readFileSync(certPath, 'utf-8').slice(0, 4096); }
+    catch { continue; }
+    if (/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/.test(head)) {
+      results.privateKeyFiles.push(rel);
+    }
   }
 
   for (const filePath of walked.sourceFiles) {
