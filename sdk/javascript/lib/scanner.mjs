@@ -104,6 +104,37 @@ function lineNumberAt(content, index) {
 // Scanner
 // ---------------------------------------------------------------------------
 
+/**
+ * Record every hardcoded secret in one file's contents.
+ *
+ * Extracted from the source-file loop so config files can be scanned with the
+ * identical rules: one definition, so the two surfaces cannot drift.
+ */
+function collectSecrets(content, relPath, results) {
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.length > 4096) continue; // ReDoS protection
+    // An indirection is not a secret. `.env` files legitimately hold
+    // `KEY=${OTHER}` and source holds `process.env.KEY`.
+    if (/\$\{[A-Z_]+\}/.test(line) || /\$[A-Z_]{2,}/.test(line) || /process\.env\.[A-Z_]+/.test(line)) continue;
+
+    for (const { id, regex, name, envVar } of SECRET_PATTERNS) {
+      regex.lastIndex = 0;
+      if (regex.test(line)) {
+        results.secrets.push({
+          type: id,
+          name,
+          file: relPath,
+          line: i + 1,
+          envVar,
+          severity: 'critical',
+        });
+      }
+    }
+  }
+}
+
 export function scanProject(projectDir, options = {}) {
   const results = {
     libraries: [],
@@ -111,6 +142,7 @@ export function scanProject(projectDir, options = {}) {
     weakPatterns: [],
     certFiles: [],
     filesScanned: 0,   // source files matched to a language and analyzed
+    configFilesScanned: 0, // config/dotenv files read for secrets
     filesWalked: 0,    // every file the walker examined, analyzed or not
     // New in v0.2.0
     sourceAlgorithms: [],
@@ -321,27 +353,20 @@ export function scanProject(projectDir, options = {}) {
     }
 
     // Hardcoded secrets
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.length > 4096) continue; // ReDoS protection
-      // Skip env var references
-      if (/\$\{[A-Z_]+\}/.test(line) || /process\.env\.[A-Z_]+/.test(line)) continue;
+    collectSecrets(content, relPath, results);
+  }
 
-      for (const { id, regex, name, envVar } of SECRET_PATTERNS) {
-        regex.lastIndex = 0;
-        if (regex.test(line)) {
-          results.secrets.push({
-            type: id,
-            name,
-            file: relPath,
-            line: i + 1,
-            envVar,
-            severity: 'critical',
-          });
-        }
-      }
-    }
+  // Config files are scanned for secrets too. They were walked and then used
+  // only for TLS settings, so a committed .env holding a live key reported
+  // "Secrets found: 0" while the SAME literal in a .js file was found. That is
+  // a false negative on the highest-value target the scanner has, on a
+  // capability both help surfaces advertise.
+  for (const filePath of walked.configFiles) {
+    let content;
+    try { content = readFileSync(filePath, 'utf-8'); }
+    catch { continue; }
+    results.configFilesScanned++;
+    collectSecrets(content, relative(projectDir, filePath), results);
   }
 
   // Source-detected libraries (node:crypto, hashlib, openssl, ...) become

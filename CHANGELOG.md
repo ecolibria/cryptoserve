@@ -79,6 +79,30 @@ five more places, all pre-existing:
 - `--min-score 0x10` became 16 and `0b101` became 5, because `Number` accepts
   more shapes than the usage line promises. Only a plain decimal is accepted.
 
+A fresh-user release test then found three more, also pre-existing:
+
+- **`scan` reported no hardcoded secrets in `.env` or any other config file.**
+  An AWS key committed in `.env` produced `Secrets found: 0` while the SAME
+  literal in `config.js` was found. The walker collected `.env` and then used it
+  only for TLS settings; secret detection ran inside the source-file loop,
+  behind a language check `.env` can never satisfy. So the highest-value target
+  the scanner has returned a deliberate-looking all-clear, on a capability both
+  help surfaces advertise. Detection is now one function applied to source and
+  config files alike, and `.env.local` / `.env.production` and the other
+  value-bearing dotenv variants are collected too (templates are not). The
+  report counts source and config files separately, because `Secrets found: 0`
+  means something different when no `.env` was read.
+- **`cryptoserve login` hung with no terminal**, printing a URL and waiting 120
+  seconds on a browser callback that could never arrive, where every other
+  interactive command exits `2` at once. It now refuses immediately. A callback
+  port that is already held is reported by name rather than killing the process
+  with a raw Node `EADDRINUSE` stack trace.
+- **`login --server` is now required.** The built-in default was
+  `https://localhost:8003`, where nothing runs on a user's machine, so the
+  out-of-the-box flow could only ever time out. The CLI cannot know the
+  operator's server, and a guess that is wrong for everyone is worse than an
+  error naming what to pass.
+
 ### Added
 - `--password-stdin` on every command that takes a password. `--password <value>`
   puts the secret in `argv`, where it is readable from `ps`,

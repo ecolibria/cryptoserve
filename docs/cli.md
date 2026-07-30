@@ -33,6 +33,17 @@ cryptoserve scan . --verbose                # Detailed output
 | `--binary` | Include binary file scanning (ELF, PE, Mach-O, .class, .NET) |
 | `--verbose` | Show detailed progress and findings |
 
+Hardcoded secrets are detected in source files AND in config files, including
+`.env`, `.env.local` and `.env.production`. Before 0.5.0 only source files were
+searched, so an AWS key committed in `.env` reported `Secrets found: 0` while the
+same literal in a `.js` file was found. Committed templates (`.env.example`,
+`.env.sample`, `.env.template`, `.env.dist`) hold placeholders and are not
+treated as value-bearing.
+
+The report counts source files and config files separately, because
+`Secrets found: 0` means something different when no `.env` was read than when
+one was read and was clean.
+
 ### `cbom`: CBOM Generation
 
 Generates a Cryptographic Bill of Materials in multiple formats.
@@ -229,13 +240,22 @@ cryptoserve init --insecure-storage         # Skip keychain (not recommended)
 ### `login`: Authenticate with Server
 
 ```bash
-cryptoserve login                           # Login to default server
-cryptoserve login --server https://crypto.company.com  # Custom server
+cryptoserve login --server https://crypto.company.com
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--server <url>` / `-s` | Server URL (default: `http://localhost:8003`) |
+| `--server <url>` | Server URL. Required; there is no default. |
+
+`--server` is required as of 0.5.0. The previous built-in default was
+`https://localhost:8003`, where nothing runs on a user's machine, so the
+out-of-the-box flow could only time out. The CLI cannot know your server, and a
+guess that is wrong for everyone is worse than an error naming what to pass.
+
+`login` opens a browser and waits on a localhost callback, so it needs an
+interactive session. Without a terminal it exits `2` immediately rather than
+printing a URL and blocking for 120 seconds. If the callback port is already
+held it says so, instead of failing with a raw `EADDRINUSE` stack trace.
 
 ### `context`: List Encryption Contexts
 

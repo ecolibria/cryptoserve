@@ -465,3 +465,130 @@ describe('vault positionals', () => {
     assert.equal(run(['vault', 'get', 'K', '--password', 'vp'], { env }).stdout.trim(), 'real-value');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Secrets outside source files
+// ---------------------------------------------------------------------------
+
+// Built at runtime from parts, so this test file never contains a contiguous
+// credential-shaped literal for a repository secret scanner to flag.
+const FAKE_AWS_KEY = 'AKIA' + 'EXAMPLEKEY0000FF';
+
+describe('scan finds hardcoded secrets outside source files', () => {
+  // `.env` is the highest-value target there is, and it reported nothing. The
+  // walker classified it as a config file, but secret detection ran only inside
+  // the sourceFiles loop, behind `if (!language) continue`. So `scan` answered
+  // "Secrets found: 0" for a committed .env holding a live key, while finding
+  // the SAME literal in config.js -- and both help surfaces advertise secrets.
+  function projectWith(files) {
+    const dir = tempDir('secrets');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 's' }));
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    return dir;
+  }
+  const secretsOf = (dir) => JSON.parse(run(['scan', dir, '--format', 'json']).stdout).secrets;
+
+  it('finds a key in .env', () => {
+    const found = secretsOf(projectWith({ '.env': `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` }));
+    assert.equal(found.length, 1, 'a key committed in .env was not reported');
+    assert.equal(found[0].file, '.env');
+    assert.equal(found[0].line, 1, 'the finding must point at a line, not just a file');
+    assert.equal(found[0].envVar, 'AWS_ACCESS_KEY_ID');
+  });
+
+  it('finds a key in the dotenv variants that hold real values', () => {
+    for (const name of ['.env.local', '.env.production', '.env.development']) {
+      const found = secretsOf(projectWith({ [name]: `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` }));
+      assert.equal(found.length, 1, `${name} was not scanned`);
+      assert.equal(found[0].file, name);
+    }
+  });
+
+  it('still finds the same literal in source, and does not double-count', () => {
+    // The control. This passed before the fix; if it stops passing, the fix
+    // moved detection rather than widening it.
+    const found = secretsOf(projectWith({ 'config.js': `const k = "${FAKE_AWS_KEY}";\n` }));
+    assert.equal(found.length, 1);
+    assert.equal(found[0].file, 'config.js');
+  });
+
+  it('does not flag a .env that only references environment variables', () => {
+    // Guards the over-correction: a .env holding indirections, not values.
+    const found = secretsOf(projectWith({ '.env': 'AWS_ACCESS_KEY_ID=${AWS_KEY}\nOTHER=$OTHER\n' }));
+    assert.deepEqual(found, [], `an indirection was reported as a secret: ${JSON.stringify(found)}`);
+  });
+
+  it('does not flag a placeholder in a committed template', () => {
+    const found = secretsOf(projectWith({ '.env.example': 'AWS_ACCESS_KEY_ID=your-key-here\n' }));
+    assert.deepEqual(found, [], 'a template placeholder was reported as a secret');
+  });
+
+  it('reports that it read config files, so the coverage is visible', () => {
+    const dir = projectWith({ '.env': `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` });
+    const { stdout } = run(['scan', dir]);
+    // package.json and .env: both are config files, and both were read.
+    assert.match(stdout, /Config files\s+2/i,
+      `scan did not say it read the config files:\n${stdout}`);
+    // And the count has to track reality, not be a fixed label.
+    const bare = projectWith({});
+    assert.match(run(['scan', bare]).stdout, /Config files\s+1/i,
+      'the config-file count does not change with the tree');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// login
+// ---------------------------------------------------------------------------
+
+describe('login', () => {
+  it('requires --server rather than defaulting to a localhost dev URL', () => {
+    // The shipped default was https://localhost:8003, where nothing runs on a
+    // user's machine. The CLI cannot know the operator's server, and guessing
+    // one produces a login flow that can never succeed.
+    const { code, stdout, stderr } = run(['login'], { env: { CRYPTOSERVE_HOME: tempDir('login') } });
+    assert.equal(code, 2);
+    assert.match(stderr, /--server/);
+    assert.doesNotMatch(stdout + stderr, /localhost:8003/,
+      'the localhost dev default is still being offered');
+  });
+
+  it('refuses without a terminal instead of hanging for two minutes', () => {
+    // login opened a browser and waited 120 seconds on a callback that can
+    // never arrive. Every other interactive command exits 2 immediately; this
+    // one hung the job. Timed, because "it exits" and "it exits promptly" are
+    // different claims and only the second one is useful in CI.
+    const started = Date.now();
+    const { code, stdout, stderr } = run(['login', '--server', 'https://example.invalid'],
+      { env: { CRYPTOSERVE_HOME: tempDir('login2') } });
+    const elapsed = Date.now() - started;
+
+    assert.equal(code, 2, 'login did not refuse a non-interactive run');
+    assert.ok(elapsed < 15000, `login took ${elapsed}ms; it must not wait on a browser callback`);
+    assert.match(stderr, /terminal/i);
+    assert.doesNotMatch(stdout, /Open this URL/,
+      'a browser flow was started in a session with no browser');
+  });
+
+  it('reports a busy callback port instead of crashing', async () => {
+    // With port 9876 already held, the http server emitted an unhandled
+    // 'error' and the process died with a raw Node EADDRINUSE stack trace.
+    const { createServer } = await import('node:http');
+    const { login } = await import('../lib/client.mjs');
+    const blocker = createServer(() => {});
+    await new Promise((res, rej) => { blocker.once('error', rej); blocker.listen(9876, res); });
+    try {
+      await assert.rejects(
+        () => login('https://example.invalid'),
+        (err) => {
+          assert.ok(err instanceof Error, 'a non-Error was thrown');
+          assert.match(err.message, /9876/, `the message must name the port: ${err.message}`);
+          assert.doesNotMatch(err.message, /EADDRINUSE/,
+            'the raw Node error code reached the user unexplained');
+          return true;
+        },
+      );
+    } finally {
+      await new Promise((res) => blocker.close(res));
+    }
+  });
+});

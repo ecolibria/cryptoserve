@@ -237,8 +237,10 @@ async function requireDirectory(pathArg) {
 function scannedSummary(scanResults) {
   const files = scanResults.filesScanned ?? 0;
   const manifests = scanResults.manifestsFound?.length ?? 0;
+  const configs = scanResults.configFilesScanned ?? 0;
   const parts = [`${files} source ${files === 1 ? 'file' : 'files'}`];
   if (manifests > 0) parts.push(`${manifests} ${manifests === 1 ? 'manifest' : 'manifests'}`);
+  if (configs > 0) parts.push(`${configs} config ${configs === 1 ? 'file' : 'files'}`);
   return parts.join(', ');
 }
 
@@ -578,6 +580,9 @@ async function cmdScan(args) {
   console.log(compactHeader('scan'));
   console.log(labelValue('Directory', scanDir));
   console.log(labelValue('Source files', String(results.filesScanned)));
+  // Named separately from source files: "Secrets found: 0" means something
+  // different when no .env was read than when one was read and was clean.
+  console.log(labelValue('Config files', String(results.configFilesScanned ?? 0)));
   if (results.filesWalked > results.filesScanned) {
     console.log(labelValue('Files examined', String(results.filesWalked)));
   }
@@ -1276,7 +1281,26 @@ async function cmdGate(args) {
 
 async function cmdLogin(args) {
   const { login } = await import('../lib/client.mjs');
-  const server = getOption(args, '--server', 'https://localhost:8003');
+
+  // No default server. The old one was https://localhost:8003, where nothing
+  // runs on a user's machine, so the out-of-the-box flow could only time out.
+  const server = optionValue(args, '--server');
+  if (server === undefined || server === null || server === '') {
+    usageError('login requires the server to authenticate against.',
+      'login --server https://cryptoserve.example.com');
+  }
+
+  // login opens a browser and waits on a localhost callback. With no terminal
+  // there is no browser and no one to complete the flow, so it used to print a
+  // URL and block for 120 seconds. Every other interactive command refuses
+  // immediately; this one hung the job.
+  if (!process.stdin.isTTY) {
+    console.error('Cannot log in: stdin is not a terminal, and login needs a browser session.');
+    console.error('Authenticate on a workstation, then copy the credentials file, or use a');
+    console.error('server-issued token in your CI configuration.');
+    process.exit(2);
+  }
+
   try {
     await login(server);
     console.log('Login successful.');

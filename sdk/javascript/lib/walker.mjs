@@ -42,6 +42,24 @@ const CONFIG_NAMES = new Set([
   '.env',
 ]);
 
+// Templates are committed on purpose and hold placeholders, so they are not
+// dotenv files that carry values. Everything else matching `.env.*` is.
+const ENV_TEMPLATE_SUFFIXES = ['example', 'sample', 'template', 'dist', 'defaults'];
+
+/**
+ * Whether a filename is a dotenv file that carries real values.
+ *
+ * `.env` alone was the only name recognised, so `.env.local` and
+ * `.env.production` -- the ones a developer is most likely to have on disk with
+ * live credentials in them -- were not collected at all.
+ */
+export function isDotenvFile(name) {
+  if (name === '.env') return true;
+  if (!name.startsWith('.env.')) return false;
+  const suffix = name.slice('.env.'.length).toLowerCase();
+  return suffix.length > 0 && !ENV_TEMPLATE_SUFFIXES.includes(suffix);
+}
+
 const BINARY_EXTENSIONS = new Set([
   '.exe', '.dll', '.so', '.dylib', '.wasm',
   '.class', '.jar', '.war',
@@ -151,7 +169,7 @@ export function walkProject(dir, options = {}) {
       }
 
       // Classify config files
-      if (CONFIG_EXTENSIONS.has(ext) || CONFIG_NAMES.has(name)) {
+      if (CONFIG_EXTENSIONS.has(ext) || CONFIG_NAMES.has(name) || isDotenvFile(name)) {
         configFiles.push(filePath);
         continue;
       }

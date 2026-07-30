@@ -202,6 +202,33 @@ node $CLI hash-password --password "" </dev/null;  echo "want 2  got $?"
       Nothing may print `unsettled top-level await` or exit 13 -- that is Node
       reporting our internals, with installed file paths, at a user.
 
+## 6c. Secrets and login (manual; fast)
+
+Both traced to a release test, not to a build step.
+
+```bash
+FIX=$(mktemp -d); printf '{"name":"s"}' > "$FIX/package.json"
+printf 'AWS_ACCESS_KEY_ID=%s\n' "AKIA""EXAMPLEKEY0000FF" > "$FIX/.env"
+node $CLI scan "$FIX" --format json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).secrets))'
+
+node $CLI login </dev/null;                        echo "want 2  got $?"
+node $CLI login --server https://x.invalid </dev/null; echo "want 2 fast  got $?"
+```
+
+- [ ] The key in `.env` is REPORTED, with `file: ".env"` and a line number. Until
+      0.5.0 this was `Secrets found: 0` while the same literal in a `.js` file
+      was found. Use a `.env`, not a source file, or the check is vacuous.
+- [ ] `.env.local` and `.env.production` are scanned too; `.env.example` is not
+      treated as value-bearing.
+- [ ] `scan` reports source files and config files as SEPARATE counts.
+      `Secrets found: 0` means something different when no `.env` was read.
+- [ ] `login` with no `--server` exits 2 and names the flag. There is no default;
+      the old one pointed at `https://localhost:8003`.
+- [ ] `login` without a terminal exits 2 IMMEDIATELY. Time it. It used to print a
+      URL and block for 120 seconds on a callback that could never arrive.
+- [ ] With port 9876 already held, the failure names the port rather than
+      printing a raw `EADDRINUSE` stack trace.
+
 ## 7. UX sanity
 
 This is the part a runner can't do. Look at the output as a new user.
