@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [CLI 0.5.0] - 2026-07-29
+## [CLI 0.5.0] - 2026-07-30
 
 A minor rather than a patch because `census --live` is gone. Under 0.x semver a
 breaking change bumps the minor, and a user pinned to `^0.4.0` should not
@@ -15,6 +15,88 @@ silently receive a CLI whose flag was deleted -- even one that was reporting
 rate-limited requests as zero downloads.
 
 ### Fixed
+
+Five defects that shared one shape: an argument the command could not act on was
+carried into the work instead of stopping it, so the command reported a confident
+result about something it had not measured. All five predate 0.5.0.
+
+- `gate --min-score abc` failed OPEN. `parseInt('abc')` is `NaN` and every
+  comparison against `NaN` is false, so the threshold was not lax -- it was
+  absent. A gate that was failing on score printed `min: NaN` and exited `0`,
+  which means a typo in a CI threshold turned a red build green. `--min-score`
+  now requires a number from 0 to 100; `--max-risk` requires one of the five
+  levels (an unknown value scored `-1` in the risk order, making every algorithm
+  a breach); an unknown `--format` no longer falls back to text. Each exits `2`.
+  `Number` rather than `parseInt`, so `--min-score 40abc` is rejected instead of
+  silently becoming 40.
+- `cbom <path that does not exist>` emitted a valid CBOM asserting
+  `quantumReadiness.score: 100, riskLevel: none` and exited `0`, while `scan` and
+  `gate` rejected the same path. A mistyped path produced a compliance artifact
+  certifying a tree nobody had read. It now exits `2`, and both `cbom` and `gate`
+  report how many files they read -- neither showed a count, which is why an
+  empty result and a clean result looked identical.
+- `cryptoserve init --insecure-storage` died with
+  `Cannot access 'configPath' before initialization`. A local `const configPath`
+  shadowed the imported `configPath` for the whole function body, so the
+  plaintext-storage branch read it from its temporal dead zone. That branch is
+  the exact recovery the preceding no-keychain error recommends, so `init`
+  dead-ended for every user without a keychain.
+- Any password prompt with stdin redirected -- `</dev/null`, a pipe, any CI
+  runner -- printed a Node "Detected unsettled top-level await" diagnostic
+  carrying installed file paths, and exited `13`. The prompt registered a `data`
+  listener that could never fire. It now says what to pass and exits `2`; the
+  hint is per-command, because the answer differs (`--password` for most,
+  `--insecure-storage` for `init`, a positional value for `vault set`).
+  `--password ""` and a bare `--password` were both read as "not supplied" and
+  answered with a prompt, so a CI job whose password variable resolved empty
+  blocked on a question it could not answer; both are now rejected by name.
+- `pqc <path>` accepted the path and then discarded it, analysing the current
+  directory instead -- exit `0`, no warning, a confident readiness score for the
+  wrong tree. It now analyses the directory it was given and names it, with
+  `scannedPath` and `filesScanned` added to the JSON report and a `Directory`
+  line in the text report.
+
+An adversarial review of the five fixes above found the same fail-open shape in
+five more places, all pre-existing:
+
+- `scan` and `gate` checked only that a path EXISTED. A file exists, walks to
+  zero source files and reports a clean tree, so `gate ./package.json
+  --min-score 99` certified 100/100 and exited `0` -- the same fail-open as a
+  missing path, in the command whose whole job is to fail closed. All four
+  path-taking commands now require a directory.
+- `pqc --profile helthcare` fell back to `general`, and the warning was
+  SUPPRESSED in JSON mode. A CI job asserting HIPAA posture with one transposed
+  letter got "not vulnerable / medium", exit `0`, and no signal on any stream.
+  `--profile` and `--algorithm` are now validated against the lists their
+  implementations actually switch on, rather than a second copy that can drift.
+- An option given twice was resolved by `indexOf`, silently taking the first.
+  `gate . --min-score 10 $EXTRA_ARGS` therefore discarded a stricter threshold
+  the caller appended and never reported the one it ignored. A repeated option
+  is now refused.
+- `vault set KEY --password PW` read the positional arguments raw and stored the
+  literal string `--password` as the secret, exit `0`. That is the exact
+  non-interactive form the docs recommend for CI.
+- `--min-score 0x10` became 16 and `0b101` became 5, because `Number` accepts
+  more shapes than the usage line promises. Only a plain decimal is accepted.
+
+### Added
+- `--password-stdin` on every command that takes a password. `--password <value>`
+  puts the secret in `argv`, where it is readable from `ps`,
+  `/proc/<pid>/cmdline` and shell history; this is the `docker login
+  --password-stdin` shape and it is now the form the CLI recommends. The two are
+  mutually exclusive.
+- `CRYPTOSERVE_NO_KEYCHAIN=1` to never touch the OS keychain. Containers and CI
+  runners have no keychain service, and probing for one costs a subprocess and
+  can hang. It also makes `--insecure-storage` reachable on demand: that branch
+  runs only when no master key is found, so on any machine where `cryptoserve
+  init` has ever succeeded, a regression test for it silently exercises nothing
+  -- which is how the ReferenceError above shipped in the first place.
+- `gate --format json` reports `summary.manifestsFound` alongside
+  `summary.filesScanned`. The text output could already distinguish a
+  manifest-only project from an empty directory; the JSON that CI actually
+  parses could not, because both reported `filesScanned: 0`.
+
+### Fixed (census)
 - `cryptoserve census` reported collection failures as measurements of zero.
   Every one of the eleven download collectors recorded a failed request as
   `downloads: 0`: 24 sites, plus 6 more in the inline copy behind `--live`.
@@ -36,6 +118,13 @@ rate-limited requests as zero downloads.
   reached it.
 
 ### Changed
+- Exit `2` now means "the command could not run as invoked" across the whole
+  CLI, not just `gate`; one condition should not have two codes. `1` keeps its
+  meaning: the command ran and reported a failure. Moved from `1` to `2`: `scan`
+  on a bad path, an unknown command, an unknown subcommand, an unknown context
+  name, an invalid `--algorithm`, and a missing required argument.
+  The Python CLI is unchanged and its `scan` still exits `1` on a missing path,
+  so the two SDKs disagree on that one case until Python is brought in line.
 - `cryptoserve census` renders the published snapshot from
   census.cryptoserve.dev rather than collecting its own. The census publishes
   dated snapshots, so there is now one definition of the measurement and the

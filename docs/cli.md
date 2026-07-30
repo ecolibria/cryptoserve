@@ -38,7 +38,8 @@ cryptoserve scan . --verbose                # Detailed output
 Generates a Cryptographic Bill of Materials in multiple formats.
 
 ```bash
-cryptoserve cbom                            # Default JSON output
+cryptoserve cbom                            # Default JSON output, current directory
+cryptoserve cbom ./services/api             # A specific directory
 cryptoserve cbom --format cyclonedx -o cbom.json  # CycloneDX format
 cryptoserve cbom --format spdx              # SPDX format
 ```
@@ -48,12 +49,19 @@ cryptoserve cbom --format spdx              # SPDX format
 | `--format <fmt>` | Output format: `json` (default), `cyclonedx`, `spdx` |
 | `--output <file>` / `-o` | Write output to file |
 
+The document goes to stdout; how much was read goes to stderr, so a piped CBOM
+stays clean while the file and component counts stay visible. A path that does
+not exist exits `2`. Before 0.5.0 it produced a CBOM asserting
+`quantumReadiness.score: 100, riskLevel: none` and exited `0`, so a typo
+certified a tree nobody had read.
+
 ### `pqc`: PQC Migration Recommendations
 
 Analyzes cryptographic exposure and provides post-quantum readiness assessment.
 
 ```bash
-cryptoserve pqc                             # General profile
+cryptoserve pqc                             # Current directory, general profile
+cryptoserve pqc ./services/api              # A specific directory
 cryptoserve pqc --profile healthcare        # HIPAA-focused
 cryptoserve pqc --profile financial         # PCI-DSS-focused
 cryptoserve pqc --verbose                   # Detailed breakdown
@@ -64,6 +72,15 @@ cryptoserve pqc --verbose                   # Detailed breakdown
 | `--profile <p>` | Sensitivity profile: `general` (default), `healthcare`, `financial`, `national_security`, `short_lived` |
 | `--format <fmt>` | Output format: `text` (default), `json` |
 | `--verbose` | Show detailed analysis |
+
+An unknown `--profile` exits `2`. It used to fall back to `general` with the
+warning suppressed in JSON mode, so `--profile helthcare` returned a confident
+"not vulnerable / medium" instead of the HIPAA assessment that was asked for.
+
+The report names the directory it analyzed and how many files it read, in both
+formats (`scannedPath` and `filesScanned` in JSON). Before 0.5.0 the path
+argument was accepted and then discarded: `pqc ./services/api` scored the current
+directory instead, exit `0`, no warning.
 
 ### `gate`: CI/CD Policy Gate
 
@@ -85,25 +102,45 @@ cryptoserve gate . --format sarif           # SARIF output
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
 | `--verbose` | Show detailed violations |
 
+`--min-score` must be a number from 0 to 100 and `--max-risk` one of the five
+levels; anything else exits `2` rather than running. This matters because an
+unenforceable threshold is not a lax gate but an absent one. Before 0.5.0
+`--min-score abc` parsed to `NaN`, `score < NaN` was false, and a gate failing on
+score printed `min: NaN` and exited `0`.
+
+The report shows the directory and the file count, so a gate that passed because
+it scanned nothing is distinguishable from one that passed on a clean tree.
+
 ### `census`: Ecosystem Census
 
 Analyze cryptographic library adoption across package ecosystems.
 
+Renders the published census from census.cryptoserve.dev: 11 ecosystems, NVD and
+GitHub advisories, carrying the date the snapshot was collected. The snapshot is
+cached for a day.
+
+This command reports the published measurement and does not collect its own, so
+its figures match the site exactly rather than approximately.
+
 ```bash
-cryptoserve census                          # Offline census from bundled data
-cryptoserve census --live                   # Fetch real-time data from registries
-cryptoserve census --live --ecosystems npm  # Query only npm
+cryptoserve census                            # Render the published snapshot
+cryptoserve census --no-cache                 # Re-fetch rather than use the day-old cache
 cryptoserve census --format json -o out.json  # JSON output
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--live` | Fetch real-time download counts from package registries (npm, PyPI, crates.io) |
-| `--ecosystems <list>` | Comma-separated list: `npm`, `pypi`, `crates` (default: all three) |
 | `--format <fmt>` | Output format: `text` (default), `json`, `html` |
 | `--output <file>` | Write output to a file |
-| `--no-cache` | Skip cached data |
+| `--no-cache` | Re-fetch the snapshot instead of using the cached copy |
 | `--verbose` | Show detailed progress |
+
+`--live` was removed in 0.5.0. It collected three of the eleven ecosystems from
+its own copy of the fetch logic while the help text advertised all eleven, and
+it recorded a rate-limited request as zero downloads -- so `cryptography`, which
+really exceeds a billion downloads a month, could print as none, and two runs
+hours apart disagreed by hundreds of millions. Running it now explains this and
+exits non-zero.
 
 ---
 
@@ -229,21 +266,67 @@ Displays SDK configuration, identity, and server connection status.
 |---|---|
 | `CRYPTOSERVE_HOME` | Absolute path to the state directory holding the master key, vault, credentials and census cache. Overrides everything else. |
 | `XDG_CONFIG_HOME` | Used as `$XDG_CONFIG_HOME/cryptoserve` when `CRYPTOSERVE_HOME` is unset. |
+| `CRYPTOSERVE_NO_KEYCHAIN` | Set to `1` to never touch the OS keychain. Containers and CI runners have no keychain service, and probing for one costs a subprocess and can hang. |
 
 Default is `~/.cryptoserve`. Set `CRYPTOSERVE_HOME` in CI and in containers so
 runs do not write into the invoking user's home directory:
 
 ```bash
-CRYPTOSERVE_HOME=/run/cryptoserve cryptoserve vault init --password "$VAULT_PW"
+CRYPTOSERVE_HOME=/run/cryptoserve cryptoserve vault init --password-stdin < pw.txt
 ```
+
+## Passing a password
+
+Three forms, in descending order of safety:
+
+```bash
+printf %s "$VAULT_PW" | cryptoserve vault get KEY --password-stdin   # preferred
+cryptoserve vault get KEY --password "$VAULT_PW"                     # visible in ps
+cryptoserve vault get KEY                                            # interactive prompt
+```
+
+`--password-stdin` was added in 0.5.0. Prefer it: `--password <value>` puts the
+secret in `argv`, where it is readable from `ps`, `/proc/<pid>/cmdline` and shell
+history for as long as the process runs. The two are mutually exclusive.
+
+Without a terminal and without either flag, every command that needs a password
+exits `2` and names what to pass. Before 0.5.0 it printed a Node
+"Detected unsettled top-level await" diagnostic, with installed file paths, and
+exited `13`.
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success (scan clean, gate passed) |
-| `1` | Failure (gate failed, crypto issues found, invalid input) |
-| `2` | The gate could not run (path missing or unreadable). Distinct from `1` so a mistyped path in CI cannot be mistaken for a clean pass. |
+| `1` | The command ran and reported a failure (gate failed, decryption failed, login failed) |
+| `2` | The command could not run as invoked |
+
+Code `2` covers every case where the command could not do the work it was asked
+to do, so a result is never reported for something that was not measured:
+
+- a path that does not exist, or exists but is not a directory
+  (`scan`, `pqc`, `cbom`, `gate`)
+- an option value the command cannot act on: `--min-score abc`, `--min-score 500`,
+  `--max-risk bogus`, `--profile helthcare`, `--algorithm BOGUS`, an unknown
+  `--format`, an empty `--password`
+- the same option given twice
+- a required argument that is missing: `encrypt` with no text, `vault set` with
+  no value, `context show` with no name
+- an unknown command, subcommand or context name
+- a password prompt with no terminal to prompt on
+
+Keeping this distinct from `1` is what stops a mistyped CI argument being read as
+a clean pass. Before 0.5.0 `gate --min-score abc` parsed to `NaN`, every
+comparison against `NaN` was false, and a gate that was failing on score exited
+`0`; `gate ./package.json` walked zero source files and certified 100/100.
+
+Changed in 0.5.0: `scan` on a bad path, an unknown command, an unknown context
+and an invalid `--algorithm` all exited `1` and now exit `2`.
+
+**The Python CLI (`python -m cryptoserve`) has not been changed.** Its `scan`
+still exits `1` on a missing path, so the two SDKs disagree on that one case
+until the Python side is brought in line. `gate` already used `2` in both.
 
 ---
 

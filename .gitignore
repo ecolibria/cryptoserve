@@ -75,3 +75,6 @@ sdk/*/.cryptoserve.json
 # Internal docs
 docs/plans/
 backend/docs/plans/
+
+# Node build artifacts
+sdk/javascript/*.tgz

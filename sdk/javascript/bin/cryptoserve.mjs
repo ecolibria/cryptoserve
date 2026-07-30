@@ -7,7 +7,7 @@
  *   cryptoserve help
  *   cryptoserve version
  *   cryptoserve init [--insecure-storage]
- *   cryptoserve pqc [--profile P] [--format json] [--verbose]
+ *   cryptoserve pqc [path] [--profile P] [--format json] [--verbose]
  *   cryptoserve scan [path] [--format json]
  *   cryptoserve encrypt "text" [--context C | --algorithm A] [--password P]
  *   cryptoserve decrypt "blob" [--password P]
@@ -42,7 +42,7 @@ const OPTIONS_WITH_VALUES = new Set([
 
 const KNOWN_FLAGS = new Set([
   '--insecure-storage', '--verbose', '--binary', '--fail-on-weak',
-  '--help', '--version', '--no-cache', '--live',
+  '--help', '--version', '--no-cache', '--live', '--password-stdin',
 ]);
 
 /**
@@ -63,6 +63,183 @@ function getOption(args, name, defaultValue = null) {
   const idx = args.indexOf(name);
   if (idx === -1 || idx + 1 >= args.length) return defaultValue;
   return args[idx + 1];
+}
+
+/**
+ * Three outcomes rather than two, because `getOption` collapses "you did not
+ * pass this" and "you passed it with nothing after it" into the same default —
+ * which is how `--min-score` with no value quietly became 50 and `--password ""`
+ * quietly became an interactive prompt.
+ *
+ * Returns `undefined` when absent, `null` when present with no value.
+ */
+function optionValue(args, name) {
+  const idx = args.indexOf(name);
+  if (idx === -1) return undefined;
+  // Two occurrences are ambiguous, and `indexOf` silently picked the first --
+  // so `gate . --min-score 10 $EXTRA_ARGS` discarded a stricter threshold the
+  // caller appended, and never reported the one it ignored. Neither first-wins
+  // nor last-wins is guessable; refusing is.
+  if (args.indexOf(name, idx + 1) !== -1) {
+    usageError(`${name} was given more than once.`, `${name} <value>  (exactly once)`);
+  }
+  if (idx + 1 >= args.length) return null;
+  return args[idx + 1];
+}
+
+/**
+ * Stop on an argument the command cannot act on. Exit 2 throughout: 1 means the
+ * command ran and reported a failure, 2 means it could not run as invoked, so a
+ * mistyped flag in CI can never be read as a result.
+ */
+function usageError(message, usage) {
+  console.error(`Error: ${message}`);
+  if (usage) console.error(`Usage: ${usage}`);
+  process.exit(2);
+}
+
+/**
+ * A numeric option, or a stop.
+ *
+ * `parseInt` is the wrong tool twice over: `parseInt('abc')` is NaN, and every
+ * comparison against NaN is false — so an unchecked threshold is not a lax
+ * threshold, it is no threshold at all. `parseInt('40abc')` is 40, which reads
+ * a prefix off a value the user did not mean. `Number` rejects both.
+ */
+function numericOption(args, name, defaultValue, { min, max, onError = usageError }) {
+  const raw = optionValue(args, name);
+  if (raw === undefined) return defaultValue;
+  if (raw === null || String(raw).trim() === '') {
+    return onError(`${name} expects a number, but no value followed it.`,
+      `${name} <number between ${min} and ${max}>`);
+  }
+  // A plain decimal only. `Number` alone accepts 0x10 (=16), 0b101 (=5) and
+  // 1e-3, silently reinterpreting a value the usage line says is a number
+  // between 0 and 100 -- the same class of quiet reinterpretation this
+  // validation exists to end.
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(String(raw).trim())) {
+    return onError(`${name} expects a number, but received "${raw}".`,
+      `${name} <number between ${min} and ${max}>`);
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return onError(`${name} expects a number, but received "${raw}".`,
+      `${name} <number between ${min} and ${max}>`);
+  }
+  if (value < min || value > max) {
+    return onError(`${name} must be between ${min} and ${max}, but received ${value}.`,
+      `${name} <number between ${min} and ${max}>`);
+  }
+  return value;
+}
+
+/**
+ * One of a fixed set, or a stop. An unrecognised value used to fall through to
+ * a default — `--format xml` silently produced text, and `--max-risk bogus`
+ * scored -1 in the risk order so every algorithm counted as a breach.
+ */
+function choiceOption(args, name, defaultValue, allowed, { onError = usageError } = {}) {
+  const raw = optionValue(args, name);
+  if (raw === undefined) return defaultValue;
+  if (raw === null || !allowed.includes(raw)) {
+    return onError(`${name} expects one of: ${allowed.join(', ')}. Received ${raw === null ? 'no value' : `"${raw}"`}.`,
+      `${name} <${allowed.join('|')}>`);
+  }
+  return raw;
+}
+
+/** What to do instead of typing a password, for every command that takes one. */
+const HINT_PASSWORD =
+  'Pass --password-stdin and pipe it in (printf %s "$PW" | cryptoserve ...), '
+  + 'or --password <value>, or run the command in an interactive terminal.';
+
+/**
+ * Read a password from stdin, for `--password-stdin`.
+ *
+ * This exists because the alternative the CLI used to offer was worse:
+ * `--password <value>` puts the secret in argv, where it is visible in `ps`,
+ * /proc/<pid>/cmdline and shell history. `docker login --password-stdin` is the
+ * established shape for exactly this reason, and a tool whose job is keeping
+ * credentials out of places they should not be ought not to insist on the one
+ * place they are most exposed.
+ *
+ * A trailing newline is stripped -- `printf '%s\n'` and `echo` both add one and
+ * neither user means it to be part of the password.
+ */
+async function readPasswordFromStdin() {
+  if (process.stdin.isTTY) {
+    usageError(
+      '--password-stdin expects a password on stdin, but stdin is a terminal.',
+      'printf %s "$PASSWORD" | cryptoserve <command> --password-stdin'
+    );
+  }
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const value = Buffer.concat(chunks).toString('utf-8').replace(/\r?\n$/, '');
+  if (value === '') {
+    usageError(
+      '--password-stdin was given nothing on stdin.',
+      'printf %s "$PASSWORD" | cryptoserve <command> --password-stdin'
+    );
+  }
+  return value;
+}
+
+/**
+ * The password from `--password`, or null to prompt for it.
+ *
+ * `--password ""` and a bare `--password` are both falsy, and the old code read
+ * falsy as "not supplied" and answered with an interactive prompt. A CI job
+ * whose password variable resolved empty therefore blocked on a prompt that
+ * could never be answered instead of saying the value was empty.
+ */
+async function passwordOption(args) {
+  const fromStdin = getFlag(args, '--password-stdin');
+  const raw = optionValue(args, '--password');
+  if (fromStdin && raw !== undefined) {
+    usageError('--password and --password-stdin are mutually exclusive.',
+      '--password <value>  OR  --password-stdin');
+  }
+  if (fromStdin) return readPasswordFromStdin();
+  if (raw === undefined) return null;
+  if (raw === null || raw === '') {
+    usageError('--password was given no value.', '--password <value>');
+  }
+  return raw;
+}
+
+/**
+ * A directory this command is willing to work on, or a stop. Reporting a
+ * confident result about a path that does not exist is the defect this closes:
+ * `cbom ./typo` emitted a CBOM asserting perfect quantum readiness, and
+ * `pqc ./typo` scored the current directory instead.
+ */
+async function requireDirectory(pathArg) {
+  const { existsSync, statSync } = await import('node:fs');
+  const target = pathArg ? resolve(pathArg) : process.cwd();
+  if (!existsSync(target)) {
+    usageError(`Path does not exist: ${target}`);
+  }
+  if (!statSync(target).isDirectory()) {
+    usageError(`Not a directory: ${target}`);
+  }
+  return target;
+}
+
+/**
+ * What was actually read, in one line.
+ *
+ * "Files scanned: 0" beside a confident readiness score reads as a broken run
+ * when it is often correct: a project whose crypto is declared in package.json
+ * and nowhere else has no source files to count. Naming both populations keeps
+ * an empty tree distinguishable from a manifest-only one.
+ */
+function scannedSummary(scanResults) {
+  const files = scanResults.filesScanned ?? 0;
+  const manifests = scanResults.manifestsFound?.length ?? 0;
+  const parts = [`${files} source ${files === 1 ? 'file' : 'files'}`];
+  if (manifests > 0) parts.push(`${manifests} ${manifests === 1 ? 'manifest' : 'manifests'}`);
+  return parts.join(', ');
 }
 
 function getPositional(args) {
@@ -97,10 +274,10 @@ async function cmdHelp() {
   console.log(`  ${bold('CryptoServe CLI')} v${PKG.version}`);
   console.log(`  ${dim('Cryptographic scanning, PQC analysis, encryption, and key management')}\n`);
   console.log(`  ${bold('Scanning & Analysis')}`);
-  console.log(`    ${info('pqc [--profile P] [--format json]')}     Post-quantum readiness analysis`);
+  console.log(`    ${info('pqc [path] [--profile P] [--format json]')} Post-quantum readiness analysis`);
   console.log(`    ${info('scan [path] [--format json]')}           Scan project for crypto & secrets`);
   console.log(`    ${info('cbom [path] [--format F] [--output O]')} Generate Crypto Bill of Materials`);
-  console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (exit 0=pass, 1=fail)`);
+  console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (0=pass, 1=fail, 2=cannot run)`);
   console.log();
   console.log(`  ${bold('Research')}`);
   console.log(`    ${info('census [--format json|html]')}           Published crypto census (11 ecosystems + NVD)`);
@@ -190,24 +367,21 @@ async function cmdPqc(args) {
   const { compactHeader, section, labelValue, tableHeader, tableRow, progressBar, statusBadge, divider, success, warning, error, info, dim, bold } = await import('../lib/cli-style.mjs');
   const { analyzeOffline, DATA_PROFILES } = await import('../lib/pqc-engine.mjs');
 
-  const profile = getOption(args, '--profile', 'general');
-  const format = getOption(args, '--format', 'text');
+  const profile = choiceOption(args, '--profile', 'general', Object.keys(DATA_PROFILES));
+  const format = choiceOption(args, '--format', 'text', ['text', 'json']);
   const verbose = getFlag(args, '--verbose');
 
-  // Validate profile name
-  if (!DATA_PROFILES[profile]) {
-    const valid = Object.keys(DATA_PROFILES).join(', ');
-    if (format !== 'json') {
-      console.error(warning(`Unknown profile "${profile}", using default. Valid: ${valid}`));
-    }
-  }
+  // `pqc <path>` used to discard the path and analyse the current directory,
+  // exit 0, and say nothing — a confident readiness score for the wrong tree.
+  const positional = getPositional(args);
+  const scanDir = await requireDirectory(positional[0]);
 
   // Use scanner results if available, otherwise use example libraries
   let libraries = [];
   let scanMeta = {};
   try {
     const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
-    const scanResults = scanProject(process.cwd());
+    const scanResults = scanProject(scanDir);
     libraries = toLibraryInventory(scanResults);
     scanMeta = {
       filesScanned: scanResults.filesScanned,
@@ -219,11 +393,19 @@ async function cmdPqc(args) {
   const result = analyzeOffline(libraries, profile, scanMeta);
 
   if (format === 'json') {
-    console.log(JSON.stringify(result, null, 2));
+    // Additive: what was analysed, alongside the analysis. A consumer reading
+    // only the score cannot otherwise tell which tree it describes.
+    console.log(JSON.stringify({
+      ...result,
+      scannedPath: scanDir,
+      filesScanned: scanMeta.filesScanned ?? 0,
+    }, null, 2));
     return;
   }
 
   console.log(compactHeader('pqc'));
+  console.log(labelValue('Directory', scanDir));
+  console.log(labelValue('Files scanned', scannedSummary(scanMeta)));
 
   // Data profile
   console.log(section('Data Profile'));
@@ -339,14 +521,14 @@ async function cmdScan(args) {
   const { existsSync } = await import('node:fs');
 
   const positional = getPositional(args);
-  const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
-  const format = getOption(args, '--format', 'text');
+  const format = choiceOption(args, '--format', 'text', ['text', 'json', 'sarif']);
   const binaryFlag = getFlag(args, '--binary');
 
-  if (!existsSync(scanDir)) {
-    console.error(`Error: Path does not exist: ${scanDir}`);
-    process.exit(1);
-  }
+  // requireDirectory, not existsSync: a path that EXISTS but is a file walks to
+  // zero source files and reports a clean tree, so `scan ./package.json` looked
+  // like a scan of a project with no crypto in it. Existing is not scannable.
+  // Exit 2 throughout: one condition, one code across scan/gate/cbom/pqc.
+  const scanDir = await requireDirectory(positional[0]);
 
   const results = scanProject(scanDir);
 
@@ -501,14 +683,14 @@ async function cmdScan(args) {
 
 async function cmdEncrypt(args) {
   const { promptPassword } = await import('../lib/keychain.mjs');
-  const { encryptString, encryptFile } = await import('../lib/local-crypto.mjs');
+  const { encryptString, encryptFile, ALGORITHMS } = await import('../lib/local-crypto.mjs');
 
   const file = getOption(args, '--file');
   const output = getOption(args, '--output');
-  let password = getOption(args, '--password');
+  let password = await passwordOption(args);
   const contextName = getOption(args, '--context');
   const verbose = getFlag(args, '--verbose');
-  let algorithm = getOption(args, '--algorithm', 'AES-256-GCM');
+  let algorithm = choiceOption(args, '--algorithm', 'AES-256-GCM', Object.keys(ALGORITHMS));
 
   // Context-aware algorithm selection
   if (contextName) {
@@ -516,7 +698,7 @@ async function cmdEncrypt(args) {
     const resolved = resolveContext(contextName);
     if (resolved.error) {
       console.error(`${resolved.error}\nValid contexts: ${resolved.validContexts.join(', ')}`);
-      process.exit(1);
+      process.exit(2);
     }
     algorithm = resolved.algorithm;
 
@@ -530,7 +712,7 @@ async function cmdEncrypt(args) {
 
   // Interactive password prompt if not provided
   if (!password) {
-    password = await promptPassword('Encryption password: ');
+    password = await promptPassword('Encryption password: ', { hint: HINT_PASSWORD });
     if (!password) { console.error('Password required.'); process.exit(1); }
   }
 
@@ -541,7 +723,7 @@ async function cmdEncrypt(args) {
   } else {
     const positional = getPositional(args);
     const text = positional[0];
-    if (!text) { console.error('Provide text to encrypt or use --file.'); process.exit(1); }
+    if (!text) { usageError('Provide text to encrypt, or use --file.', 'encrypt "text" | encrypt --file F --output O'); }
     console.log(encryptString(text, password, algorithm, contextName || 'cli'));
   }
 }
@@ -552,10 +734,10 @@ async function cmdDecrypt(args) {
 
   const file = getOption(args, '--file');
   const output = getOption(args, '--output');
-  let password = getOption(args, '--password');
+  let password = await passwordOption(args);
 
   if (!password) {
-    password = await promptPassword('Decryption password: ');
+    password = await promptPassword('Decryption password: ', { hint: HINT_PASSWORD });
     if (!password) { console.error('Password required.'); process.exit(1); }
   }
 
@@ -567,7 +749,7 @@ async function cmdDecrypt(args) {
     } else {
       const positional = getPositional(args);
       const blob = positional[0];
-      if (!blob) { console.error('Provide encrypted text or use --file.'); process.exit(1); }
+      if (!blob) { usageError('Provide encrypted text, or use --file.', 'decrypt "blob" | decrypt --file F --output O'); }
       console.log(decryptString(blob, password));
     }
   } catch (e) {
@@ -578,17 +760,17 @@ async function cmdDecrypt(args) {
 
 async function cmdHashPassword(args) {
   const { promptPassword } = await import('../lib/keychain.mjs');
-  const { hashPassword } = await import('../lib/local-crypto.mjs');
+  const { hashPassword, HASH_ALGORITHMS } = await import('../lib/local-crypto.mjs');
 
-  const algorithm = getOption(args, '--algorithm', 'scrypt');
-  let password = getOption(args, '--password');
+  const algorithm = choiceOption(args, '--algorithm', 'scrypt', HASH_ALGORITHMS);
+  let password = await passwordOption(args);
   if (!password) {
     const positional = getPositional(args);
     password = positional[0];
   }
 
   if (!password) {
-    password = await promptPassword('Password to hash: ');
+    password = await promptPassword('Password to hash: ', { hint: HINT_PASSWORD });
     if (!password) { console.error('Password required.'); process.exit(1); }
   }
 
@@ -601,6 +783,11 @@ async function cmdVault(args) {
 
   const subcommand = args[0];
   const restArgs = args.slice(1);
+  // Options filtered out before positionals are read. `vault set KEY --password PW`
+  // used to take restArgs[1] literally and store the string "--password" as the
+  // secret, exit 0 -- silent corruption through the very form the docs recommend
+  // for CI. getPositional already knows which flags carry a value.
+  const vaultPositionals = getPositional(restArgs);
 
   if (!subcommand || subcommand === 'help') {
     console.log(compactHeader('vault'));
@@ -620,16 +807,16 @@ async function cmdVault(args) {
   const vault = await import('../lib/vault.mjs');
 
   // Support --password flag for non-interactive/CI usage
-  const flagPassword = getOption(restArgs, '--password');
+  const flagPassword = await passwordOption(restArgs);
 
   if (subcommand === 'init') {
     if (vault.vaultExists()) {
       console.log(warning('Vault already exists.'));
       return;
     }
-    const pw = flagPassword || await promptPassword('Set vault password: ');
+    const pw = flagPassword || await promptPassword('Set vault password: ', { hint: HINT_PASSWORD });
     if (!flagPassword) {
-      const pw2 = await promptPassword('Confirm password: ');
+      const pw2 = await promptPassword('Confirm password: ', { hint: HINT_PASSWORD });
       if (pw !== pw2) { console.error('Passwords do not match.'); process.exit(1); }
     }
     vault.initVault(pw);
@@ -645,25 +832,27 @@ async function cmdVault(args) {
   }
 
   // All other commands need the vault password
-  const pw = flagPassword || await promptPassword('Vault password: ');
+  const pw = flagPassword || await promptPassword('Vault password: ', { hint: HINT_PASSWORD });
 
   try {
     switch (subcommand) {
       case 'set': {
-        const key = restArgs[0];
-        let value = restArgs[1];
-        if (!key) { console.error('Usage: vault set KEY VALUE'); process.exit(1); }
+        const key = vaultPositionals[0];
+        let value = vaultPositionals[1];
+        if (!key) { console.error('Usage: vault set KEY VALUE'); process.exit(2); }
         if (!value) {
           // Read from stdin if no value provided
-          value = await promptPassword(`Value for ${key}: `);
+          value = await promptPassword(`Value for ${key}: `, {
+            hint: `Pass the value as an argument: cryptoserve vault set ${key} <value>`,
+          });
         }
         vault.setSecret(pw, key, value);
         console.log(success(`Stored: ${key}`));
         break;
       }
       case 'get': {
-        const key = restArgs[0];
-        if (!key) { console.error('Usage: vault get KEY'); process.exit(1); }
+        const key = vaultPositionals[0];
+        if (!key) { console.error('Usage: vault get KEY'); process.exit(2); }
         const val = vault.getSecret(pw, key);
         if (val === null) { console.error(`Not found: ${key}`); process.exit(1); }
         console.log(val);
@@ -683,8 +872,8 @@ async function cmdVault(args) {
         break;
       }
       case 'delete': {
-        const key = restArgs[0];
-        if (!key) { console.error('Usage: vault delete KEY'); process.exit(1); }
+        const key = vaultPositionals[0];
+        if (!key) { console.error('Usage: vault delete KEY'); process.exit(2); }
         if (vault.deleteSecret(pw, key)) {
           console.log(success(`Deleted: ${key}`));
         } else {
@@ -705,7 +894,7 @@ async function cmdVault(args) {
         break;
       }
       case 'import': {
-        const envFile = restArgs[0] || '.env';
+        const envFile = vaultPositionals[0] || '.env';
         const count = vault.importEnvFile(pw, envFile);
         console.log(success(`Imported ${count} secrets from ${envFile}`));
         break;
@@ -717,9 +906,12 @@ async function cmdVault(args) {
       }
       default:
         console.error(`Unknown vault command: ${subcommand}`);
-        process.exit(1);
+        process.exit(2);
     }
   } catch (e) {
+    // "There is no terminal to prompt on" is not a vault error and must not be
+    // reported as one. It carries its own message and its own exit code.
+    if (e?.code === 'ERR_NO_TTY') throw e;
     // node:crypto surfaces a failed GCM tag check as "Unsupported state or
     // unable to authenticate data", which tells a user nothing. For a vault
     // read there is exactly one ordinary cause.
@@ -762,12 +954,12 @@ async function cmdContext(args) {
 
   if (subcommand === 'show') {
     const name = args[1];
-    if (!name) { console.error('Usage: context show NAME [--verbose]'); process.exit(1); }
+    if (!name) { usageError('context show needs a context name.', 'context show NAME [--verbose]'); }
 
     const resolved = resolveContext(name);
     if (resolved.error) {
       console.error(`${resolved.error}\nValid contexts: ${resolved.validContexts.join(', ')}`);
-      process.exit(1);
+      process.exit(2);
     }
 
     if (format === 'json') {
@@ -841,7 +1033,7 @@ async function cmdContext(args) {
 
   console.error(`Unknown context command: ${subcommand}`);
   console.error('Usage: context list | context show NAME');
-  process.exit(1);
+  process.exit(2);
 }
 
 async function cmdCbom(args) {
@@ -851,9 +1043,14 @@ async function cmdCbom(args) {
   const { generateCbom, toCycloneDx, toSpdx, toNativeJson } = await import('../lib/cbom.mjs');
 
   const positional = getPositional(args);
-  const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
-  const format = getOption(args, '--format', 'json');
+  const format = choiceOption(args, '--format', 'json', ['json', 'cyclonedx', 'spdx']);
   const output = getOption(args, '--output');
+
+  // `scan` and `gate` already refuse a path that does not exist; `cbom` did
+  // not, and answered a typo with a valid CBOM asserting quantumReadiness 100
+  // and riskLevel "none". A compliance artifact certifying a tree nobody read
+  // is worse than no artifact.
+  const scanDir = await requireDirectory(positional[0]);
 
   const scanResults = scanProject(scanDir);
   const libraries = toLibraryInventory(scanResults);
@@ -873,11 +1070,20 @@ async function cmdCbom(args) {
     writeFileSync(output, formatted + '\n');
     console.log(success(`CBOM written to ${output}`));
     console.log(labelValue('Format', format));
+    console.log(labelValue('Directory', scanDir));
+    console.log(labelValue('Files scanned', scannedSummary(scanResults)));
     console.log(labelValue('Components', String(cbom.components.length)));
     console.log(labelValue('Quantum readiness', `${cbom.quantumReadiness.score}/100`));
     console.log(labelValue('Risk level', cbom.quantumReadiness.riskLevel));
   } else {
     console.log(formatted);
+    // To stderr, so the document on stdout stays pipeable. An empty CBOM from a
+    // real but wrong directory is indistinguishable from one from a clean
+    // project until you can see how much was read.
+    console.error(
+      `Scanned ${scannedSummary(scanResults)} under ${scanDir}: ` +
+      `${cbom.components.length} ${cbom.components.length === 1 ? 'component' : 'components'}.`
+    );
   }
 }
 
@@ -889,24 +1095,49 @@ async function cmdGate(args) {
 
   const positional = getPositional(args);
   const scanDir = positional.length > 0 ? resolve(positional[0]) : process.cwd();
-  const maxRisk = getOption(args, '--max-risk', 'high');
-  const minScore = parseInt(getOption(args, '--min-score', '50'), 10);
   const failOnWeak = getFlag(args, '--fail-on-weak');
-  const format = getOption(args, '--format', 'text');
+  const { statSync } = await import('node:fs');
 
   const riskOrder = ['none', 'low', 'medium', 'high', 'critical'];
+
+  // --format decides how every later error is rendered, so it is validated
+  // first, and against plain stderr because there is not yet a format to honour.
+  const format = choiceOption(args, '--format', 'text', ['text', 'json', 'sarif']);
+
+  /**
+   * A gate that cannot run must say so in the caller's own format. A CI job
+   * parsing JSON should not have to read stderr to learn that its threshold
+   * was rejected.
+   */
+  function refuse(message, usage) {
+    if (format === 'json') {
+      console.log(JSON.stringify({ status: 'error', error: message }, null, 2));
+    } else {
+      console.error(`Error: ${message}`);
+      if (usage) console.error(`Usage: ${usage}`);
+    }
+    process.exit(2);
+  }
+
+  // Both thresholds are validated BEFORE any scanning. An unusable threshold is
+  // not a weaker gate, it is an absent one: `parseInt('abc')` is NaN and
+  // `score < NaN` is false, so a typo'd `--min-score` in CI turned a failing
+  // gate green while the report printed `min: NaN`. An unknown `--max-risk`
+  // scored -1 in the risk order, which made every algorithm a breach.
+  const maxRisk = choiceOption(args, '--max-risk', 'high', riskOrder, { onError: refuse });
+  const minScore = numericOption(args, '--min-score', 50, { min: 0, max: 100, onError: refuse });
 
   // A missing path is an error class (exit 2), not a clean pass. Without this
   // a typo in CI (`cryptoserve gate ./srcc`) silently scores 100 and lets the
   // build through.
   if (!existsSync(scanDir)) {
-    const msg = `Path does not exist: ${scanDir}`;
-    if (format === 'json') {
-      console.log(JSON.stringify({ status: 'error', error: msg }, null, 2));
-    } else {
-      console.error(`Error: ${msg}`);
-    }
-    process.exit(2);
+    refuse(`Path does not exist: ${scanDir}`);
+  }
+  // Existing is not the same as scannable. `gate ./package.json --min-score 99`
+  // walked zero source files, found zero violations and certified 100/100 --
+  // the same fail-open as a missing path, in the CI enforcement command.
+  if (!statSync(scanDir).isDirectory()) {
+    refuse(`Not a directory: ${scanDir}`);
   }
 
   try {
@@ -964,6 +1195,11 @@ async function cmdGate(args) {
     const pass = violations.length === 0 && !scoreFail;
 
     const summary = {
+      // How much was actually looked at. A gate that scanned nothing and a gate
+      // that scanned a clean tree both report zero violations; only the count
+      // tells them apart, which is what makes a wrong path visible.
+      filesScanned: scanResults.filesScanned,
+      manifestsFound: scanResults.manifestsFound?.length ?? 0,
       total: libraries.reduce((sum, l) => sum + l.algorithms.length, 0),
       safe: libraries.reduce((sum, l) => sum + l.algorithms.filter(a => {
         const e = lookupAlgorithm(a);
@@ -1006,6 +1242,8 @@ async function cmdGate(args) {
       const { compactHeader, success, error, warning, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
       console.log(compactHeader('gate'));
       console.log(labelValue('Status', pass ? success('PASS') : error('FAIL')));
+      console.log(labelValue('Directory', scanDir));
+      console.log(labelValue('Files scanned', scannedSummary(scanResults)));
       console.log(labelValue('Score', `${score}/100 (min: ${minScore})`));
       console.log(labelValue('Max risk', maxRisk));
 
@@ -1130,7 +1368,7 @@ async function cmdCensus(args) {
     warning, info, dim, bold, divider, progressBar,
   } = await import('../lib/cli-style.mjs');
 
-  const format = getOption(args, '--format', 'text');
+  const format = choiceOption(args, '--format', 'text', ['text', 'json', 'html']);
   const output = getOption(args, '--output', null);
   const verbose = getFlag(args, '--verbose');
   const noCache = getFlag(args, '--no-cache');
@@ -1201,14 +1439,14 @@ async function cmdCensus(args) {
 
 const COMMAND_HELP = {
   init: 'cryptoserve init [--insecure-storage]\n\n  Set up master key and AI tool protection for the current project.',
-  pqc: 'cryptoserve pqc [--profile P] [--format json] [--verbose]\n\n  Analyze post-quantum cryptography readiness.',
+  pqc: 'cryptoserve pqc [path] [--profile P] [--format text|json] [--verbose]\n\n  Analyze post-quantum cryptography readiness of a directory (default: the\n  current one). The report names the directory it analyzed.',
   scan: 'cryptoserve scan [path] [--format text|json|sarif] [--output file] [--binary] [--emit-findings file]\n\n  Scan a project directory for crypto libraries, hardcoded secrets, weak patterns, and certificates.\n  --emit-findings writes unlabeled corpus records (JSONL) for the CryptoServe triage model.\n  Records include source context from the scanned tree and are written locally only.',
   encrypt: 'cryptoserve encrypt "text" [--context C | --algorithm A] [--password P]\ncryptoserve encrypt --file F --output O [--context C | --algorithm A] [--password P]\n\n  Encrypt text or a file with context-aware algorithm selection.',
   decrypt: 'cryptoserve decrypt "blob" [--password P]\ncryptoserve decrypt --file F --output O [--password P]\n\n  Decrypt text or a file.',
   'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',
   context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
-  cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials.',
-  gate: 'cryptoserve gate [path] [--max-risk R] [--min-score N] [--fail-on-weak] [--format json]\n\n  CI/CD gate: exit 0 on pass, 1 on fail.',
+  cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials. Reports how many files it read, and\n  refuses a path that does not exist rather than certifying an empty tree.',
+  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--min-score 0-100] [--fail-on-weak] [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.',
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',
@@ -1309,9 +1547,16 @@ try {
       break;
     default:
       console.error(`Unknown command: ${command}\nRun "cryptoserve help" for usage.`);
-      process.exit(1);
+      process.exit(2);
   }
 } catch (e) {
+  // A prompt with no terminal to prompt on is a usage problem, not a runtime
+  // one: the message already says what to pass, so it is printed as written and
+  // exits 2 like every other "could not run as invoked" case.
+  if (e?.code === 'ERR_NO_TTY') {
+    console.error(e.message);
+    process.exit(2);
+  }
   console.error(`Error: ${e.message}`);
   process.exit(1);
 }
