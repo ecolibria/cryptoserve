@@ -95,11 +95,33 @@ export async function getStatus(server = null) {
 // Login flow (browser OAuth with localhost callback)
 // ---------------------------------------------------------------------------
 
-export async function login(serverUrl = DEFAULT_SERVER) {
+/**
+ * Browser login against an explicit server.
+ *
+ * No default. It used to fall back to https://localhost:8003, so a new user
+ * running `cryptoserve login` was sent to an address where nothing runs on
+ * their machine, and the flow could only ever time out. The CLI cannot know
+ * the operator's server, and a guess that is wrong for everyone is worse than
+ * an error that names what to pass.
+ */
+export async function login(serverUrl) {
+  if (!serverUrl) {
+    throw new Error('login requires a server URL. Pass --server <url>.');
+  }
   const server = validateServerUrl(serverUrl);
 
   // Start local callback server
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { httpServer.close(); } catch { /* already closed */ }
+      fn(arg);
+    };
+
     const httpServer = createServer((req, res) => {
       const url = new URL(req.url, `http://localhost:${CALLBACK_PORT}`);
       const token = url.searchParams.get('token') || url.searchParams.get('session');
@@ -108,12 +130,22 @@ export async function login(serverUrl = DEFAULT_SERVER) {
         saveToken(token, server);
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end('<html><body><h2>Login successful</h2><p>You can close this tab.</p></body></html>');
-        httpServer.close();
-        resolve({ success: true, server });
+        finish(resolve, { success: true, server });
       } else {
         res.writeHead(400);
         res.end('Missing token');
       }
+    });
+
+    // Without this the http server emits an unhandled 'error' and the process
+    // dies with a raw Node stack trace. EADDRINUSE is the ordinary case: a
+    // previous login left the port held.
+    httpServer.on('error', (err) => {
+      const message = err.code === 'EADDRINUSE'
+        ? `The login callback port ${CALLBACK_PORT} is already in use. `
+          + 'Another cryptoserve login is probably still running; close it and try again.'
+        : `Could not start the login callback listener on port ${CALLBACK_PORT}: ${err.message}`;
+      finish(reject, new Error(message));
     });
 
     httpServer.listen(CALLBACK_PORT, () => {
@@ -130,9 +162,8 @@ export async function login(serverUrl = DEFAULT_SERVER) {
     });
 
     // Timeout after 120 seconds
-    setTimeout(() => {
-      httpServer.close();
-      reject(new Error('Login timed out after 120 seconds'));
+    timer = setTimeout(() => {
+      finish(reject, new Error('Login timed out after 120 seconds'));
     }, 120000);
   });
 }

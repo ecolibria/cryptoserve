@@ -43,6 +43,7 @@ const OPTIONS_WITH_VALUES = new Set([
 const KNOWN_FLAGS = new Set([
   '--insecure-storage', '--verbose', '--binary', '--fail-on-weak',
   '--help', '--version', '--no-cache', '--live', '--password-stdin',
+  '--allow-secrets',
 ]);
 
 /**
@@ -237,8 +238,10 @@ async function requireDirectory(pathArg) {
 function scannedSummary(scanResults) {
   const files = scanResults.filesScanned ?? 0;
   const manifests = scanResults.manifestsFound?.length ?? 0;
+  const configs = scanResults.configFilesScanned ?? 0;
   const parts = [`${files} source ${files === 1 ? 'file' : 'files'}`];
   if (manifests > 0) parts.push(`${manifests} ${manifests === 1 ? 'manifest' : 'manifests'}`);
+  if (configs > 0) parts.push(`${configs} config ${configs === 1 ? 'file' : 'files'}`);
   return parts.join(', ');
 }
 
@@ -254,13 +257,27 @@ function getPositional(args) {
   return result;
 }
 
-function warnUnknownFlags(args) {
+/**
+ * Stop on a flag this CLI does not know.
+ *
+ * This used to warn and continue, which is a fail-open in flag-name form:
+ * `gate . --min-scoree 95` warned, silently fell back to the default threshold,
+ * printed "(min: 50)" and exited 0. A typo must not loosen a gate. An
+ * unparseable option VALUE already exits 2; an unknown option NAME is the same
+ * class of mistake and now does too.
+ */
+function rejectUnknownFlags(args) {
+  const unknown = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--') && !OPTIONS_WITH_VALUES.has(arg) && !KNOWN_FLAGS.has(arg)) {
-      console.error(`Warning: unknown flag "${arg}"`);
+      unknown.push(arg);
     }
     if (OPTIONS_WITH_VALUES.has(arg)) i++; // skip value
+  }
+  if (unknown.length > 0) {
+    usageError(`unknown ${unknown.length === 1 ? 'flag' : 'flags'}: ${unknown.join(', ')}`,
+      'run "cryptoserve help <command>" for the flags this command accepts');
   }
 }
 
@@ -578,6 +595,9 @@ async function cmdScan(args) {
   console.log(compactHeader('scan'));
   console.log(labelValue('Directory', scanDir));
   console.log(labelValue('Source files', String(results.filesScanned)));
+  // Named separately from source files: "Secrets found: 0" means something
+  // different when no .env was read than when one was read and was clean.
+  console.log(labelValue('Config files', String(results.configFilesScanned ?? 0)));
   if (results.filesWalked > results.filesScanned) {
     console.log(labelValue('Files examined', String(results.filesWalked)));
   }
@@ -826,7 +846,20 @@ async function cmdVault(args) {
   }
 
   if (subcommand === 'reset') {
-    vault.resetVault();
+    if (!vault.vaultExists()) {
+      console.log(warning('No vault to delete.'));
+      return;
+    }
+    // Authenticated like every other vault operation. Destroying every secret
+    // must not be the one action that does not check the password.
+    const pw = flagPassword || await promptPassword('Vault password: ', { hint: HINT_PASSWORD });
+    try {
+      vault.resetVault(pw);
+    } catch (e) {
+      if (e?.code === 'ERR_NO_TTY') throw e;
+      console.error(error('Wrong vault password (or the vault file has been modified). Vault NOT deleted.'));
+      process.exit(1);
+    }
     console.log(success('Vault deleted.'));
     return;
   }
@@ -1191,6 +1224,79 @@ async function cmdGate(args) {
 
     const violations = [...byAlgorithm.values()];
 
+    // A hardcoded secret is the highest-severity thing the scanner reports, and
+    // the gate used to ignore it entirely: `scan` printed
+    // "[CRIT] AWS Access Key .env:1" while `gate` on the same tree returned
+    // PASS 100/100. Two commands reading one tree must not disagree on
+    // direction, so secrets fail the gate unless waived by name.
+    // A severe weakness the scanner reported must be reachable by the gate.
+    //
+    // Deduplication is against the violations ALREADY raised, not against the
+    // presence of an `algorithm` field. Those are different sets: AES-ECB is
+    // structurally broken rather than quantum-broken, so its quantumRisk is
+    // correctly `none`, it breaches no --max-risk level including `none`, and
+    // it therefore raised no violation above. Skipping it because it merely
+    // HAD an algorithm name meant a finding scan rates `high` passed the gate
+    // at every setting. A weak algorithm that DID raise one is still counted
+    // once -- the double-emit bug fixed in 0.4.0.
+    for (const wp of scanResults.weakPatterns || []) {
+      if (wp.severity !== 'critical' && wp.severity !== 'high') continue;
+      if (wp.algorithm && byAlgorithm.has(wp.algorithm.toLowerCase())) continue;
+      violations.push({
+        type: 'misuse',
+        algorithm: wp.issue,
+        risk: wp.severity,
+        source: wp.file,
+        file: wp.file,
+        line: wp.line,
+        reason: wp.fix,
+      });
+    }
+
+    // --allow-secrets waives CREDENTIALS. It deliberately does not reach the
+    // misuse findings above: a flag that quietly switches off
+    // TLS-verification-bypass detection is an enforcement kill switch, which is
+    // worse than never having had the check.
+    const allowSecrets = getFlag(args, '--allow-secrets');
+    const secretFindings = scanResults.secrets || [];
+    const privateKeys = scanResults.privateKeyFiles || [];
+    if (!allowSecrets) {
+      // Same predicate, one artifact type over: `scan` listed a committed
+      // private key and `gate` passed the tree 100/100. Publishing a
+      // certificate is routine; publishing the key that signs it is not.
+      for (const keyFile of privateKeys) {
+        violations.push({
+          type: 'private-key',
+          algorithm: 'Private key committed to the repository',
+          risk: 'critical',
+          source: keyFile,
+          file: keyFile,
+          reason: 'remove it from the tree and rotate the key',
+        });
+      }
+      for (const secret of secretFindings) {
+        violations.push({
+          type: 'secret',
+          algorithm: secret.name,
+          risk: 'critical',
+          source: secret.file,
+          file: secret.file,
+          line: secret.line,
+          reason: secret.envVar ? `read it from $${secret.envVar} instead` : 'hardcoded credential',
+        });
+      }
+    }
+
+    // A gate that read nothing cannot certify anything. An empty tree scored
+    // 100/100 PASS, which is a verdict about something never measured -- the
+    // same shape as certifying a path that does not exist.
+    const readSomething = (scanResults.filesScanned ?? 0) > 0
+      || (scanResults.configFilesScanned ?? 0) > 0
+      || (scanResults.manifestsFound?.length ?? 0) > 0;
+    if (!readSomething) {
+      refuse(`Found no files to scan under ${scanDir}. A gate cannot pass a tree it did not read.`);
+    }
+
     const scoreFail = score < minScore;
     const pass = violations.length === 0 && !scoreFail;
 
@@ -1205,15 +1311,24 @@ async function cmdGate(args) {
         const e = lookupAlgorithm(a);
         return e && (e.quantumRisk === 'none' || e.quantumRisk === 'low');
       }).length, 0),
-      vulnerable: violations.filter(v => !v.weak).length,
+      vulnerable: violations.filter(v => !v.weak && !v.type).length,
+      misuse: violations.filter(v => v.type === 'misuse').length,
       weak: violations.filter(v => v.weak).length,
+      secrets: secretFindings.length,
+      privateKeys: privateKeys.length,
     };
 
     const outputPath = getOption(args, '--output');
 
     if (format === 'sarif') {
       const { collectFindings, toSarif } = await import('../lib/sarif.mjs');
-      const document = JSON.stringify(toSarif(collectFindings(scanResults)), null, 2);
+      // The waiver has to reach every surface. Text said "waived", JSON dropped
+      // the violation, and SARIF still emitted it at level "error" -- so a gate
+      // that exited 0 uploaded alerts to code scanning for findings it had just
+      // declared waived. Three surfaces must not give two answers.
+      const findings = collectFindings(scanResults)
+        .filter((f) => !(allowSecrets && (f.kind === 'secret' || f.kind === 'private-key')));
+      const document = JSON.stringify(toSarif(findings), null, 2);
       if (outputPath) {
         const { writeFileSync } = await import('node:fs');
         writeFileSync(outputPath, document + '\n');
@@ -1250,10 +1365,21 @@ async function cmdGate(args) {
       if (violations.length > 0) {
         console.log(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
-          const label = v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
+          const label = v.type === 'misuse'
+            ? error(`[MISUSE] ${v.algorithm}`)
+            : v.type === 'private-key'
+            ? error(`[KEY] ${v.algorithm}`)
+            : v.type === 'secret'
+            ? error(`[SECRET] ${v.algorithm}`)
+            : v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
           const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
           console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
         }
+      }
+
+      if (allowSecrets && (secretFindings.length > 0 || privateKeys.length > 0)) {
+        const waived = secretFindings.length + privateKeys.length;
+        console.log(`\n  ${warning(`${waived} credential finding${waived === 1 ? '' : 's'} waived by --allow-secrets`)}`);
       }
 
       if (scoreFail) {
@@ -1276,7 +1402,26 @@ async function cmdGate(args) {
 
 async function cmdLogin(args) {
   const { login } = await import('../lib/client.mjs');
-  const server = getOption(args, '--server', 'https://localhost:8003');
+
+  // No default server. The old one was https://localhost:8003, where nothing
+  // runs on a user's machine, so the out-of-the-box flow could only time out.
+  const server = optionValue(args, '--server');
+  if (server === undefined || server === null || server === '') {
+    usageError('login requires the server to authenticate against.',
+      'login --server https://cryptoserve.example.com');
+  }
+
+  // login opens a browser and waits on a localhost callback. With no terminal
+  // there is no browser and no one to complete the flow, so it used to print a
+  // URL and block for 120 seconds. Every other interactive command refuses
+  // immediately; this one hung the job.
+  if (!process.stdin.isTTY) {
+    console.error('Cannot log in: stdin is not a terminal, and login needs a browser session.');
+    console.error('Authenticate on a workstation, then copy the credentials file, or use a');
+    console.error('server-issued token in your CI configuration.');
+    process.exit(2);
+  }
+
   try {
     await login(server);
     console.log('Login successful.');
@@ -1446,7 +1591,7 @@ const COMMAND_HELP = {
   'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',
   context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
   cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials. Reports how many files it read, and\n  refuses a path that does not exist rather than certifying an empty tree.',
-  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--min-score 0-100] [--fail-on-weak] [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.',
+  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--min-score 0-100] [--fail-on-weak] [--allow-secrets]\n        [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.\n\n  Fails on hardcoded secrets, committed private keys, weak algorithms and\n  critical API misuse such as a disabled TLS certificate check.\n\n  --max-risk bounds QUANTUM risk, not security severity: a weak algorithm\n  fails the gate regardless of it.\n  --allow-secrets waives credential findings only (secrets and private\n  keys). It does not reach weak algorithms or misuse findings.',
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',
@@ -1480,7 +1625,7 @@ if (command && !['help', '--help', '-h', 'version', '--version', '-v', undefined
 
 // Warn about unknown flags (skip for vault/context which have subcommands)
 if (command && !['vault', 'context', 'help', '--help', '-h', 'version', '--version', '-v'].includes(command)) {
-  warnUnknownFlags(commandArgs);
+  rejectUnknownFlags(commandArgs);
 }
 
 try {

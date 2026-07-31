@@ -79,6 +79,125 @@ five more places, all pre-existing:
 - `--min-score 0x10` became 16 and `0b101` became 5, because `Number` accepts
   more shapes than the usage line promises. Only a plain decimal is accepted.
 
+A fresh-user release test then found three more, also pre-existing:
+
+- **`scan` reported no hardcoded secrets in `.env` or any other config file.**
+  An AWS key committed in `.env` produced `Secrets found: 0` while the SAME
+  literal in `config.js` was found. The walker collected `.env` and then used it
+  only for TLS settings; secret detection ran inside the source-file loop,
+  behind a language check `.env` can never satisfy. So the highest-value target
+  the scanner has returned a deliberate-looking all-clear, on a capability both
+  help surfaces advertise. Detection is now one function applied to source and
+  config files alike, and `.env.local` / `.env.production` and the other
+  value-bearing dotenv variants are collected too (templates are not). The
+  report counts source and config files separately, because `Secrets found: 0`
+  means something different when no `.env` was read.
+- **`cryptoserve login` hung with no terminal**, printing a URL and waiting 120
+  seconds on a browser callback that could never arrive, where every other
+  interactive command exits `2` at once. It now refuses immediately. A callback
+  port that is already held is reported by name rather than killing the process
+  with a raw Node `EADDRINUSE` stack trace.
+- **`login --server` is now required.** The built-in default was
+  `https://localhost:8003`, where nothing runs on a user's machine, so the
+  out-of-the-box flow could only ever time out. The CLI cannot know the
+  operator's server, and a guess that is wrong for everyone is worse than an
+  error naming what to pass.
+
+A re-test after those fixes found one more, and it made the `.env` fix
+unreachable from the enforcement path:
+
+- **`gate` ignored hardcoded secrets entirely.** `scan` printed
+  `[CRIT] AWS Access Key .env:1` and `gate` on the identical tree returned
+  `PASS 100/100`, exit `0`, `violations: []`. The gate evaluated algorithm risk
+  only, so the highest-severity finding the scanner produces had no path into
+  CI. Two commands reading one tree must not disagree on direction. Secrets are
+  now violations, with `file:line`, and `--allow-secrets` waives them by name
+  for a documented false positive.
+
+A final re-test found two more, one of them the unswept sibling of the fix
+immediately above:
+
+- **A committed private key passed the gate.** `scan` listed
+  `Certificate/Key Files: server.key` and `gate` on the same tree returned
+  `PASS 100/100`, exit `0`, with no flag that caught it. `-----BEGIN RSA PRIVATE
+  KEY-----` was treated identically to a public `-----BEGIN CERTIFICATE-----`.
+  Publishing a certificate is routine; publishing the key that signs it is the
+  incident. `scan` now reports `privateKeyFiles` separately from `certFiles`,
+  and `gate` fails on them (waivable with the same `--allow-secrets`).
+- **`vault reset` destroyed the vault with a wrong password, or none at all.**
+  It printed `Vault deleted.` and exited `0` either way, while
+  `vault delete KEY` with a wrong password correctly refused. Deleting one
+  secret was authenticated and deleting all of them was not. `reset` now proves
+  it can open the vault first.
+
+A systematic sweep of every finding class `scan` can produce against `gate`
+then found the third instance of the same defect, before another review had to:
+
+- **`gate` ignored API-misuse findings.** `scan` reported
+  `TLS certificate verification disabled` at severity CRITICAL and `gate`
+  exited `0`, because violations were derived from the algorithm inventory and
+  a misuse finding carries no algorithm. Disabling certificate verification is
+  precisely what a CI gate exists to stop. Misuse findings at `critical` or
+  `high` are violations now; a weak ALGORITHM still produces exactly one
+  violation rather than two.
+
+A final pre-publish check then caught two defects in that very fix:
+
+- **`--allow-secrets` waived the TLS-verification-bypass finding too**, silently,
+  turning a credential waiver into an enforcement kill switch. It waives
+  credentials only: a committed secret and a committed private key. Weak
+  algorithms, AES-ECB, 3DES and a disabled certificate check are unaffected by
+  it, and any waiver is now stated in the human output.
+- **AES-ECB and 3DES passed the gate at every `--max-risk` level, including
+  `none`.** Deduplication skipped any weak-pattern finding that carried an
+  algorithm name, on the assumption it had already produced a violation. Those
+  are different sets: ECB is structurally broken rather than quantum-broken, so
+  its `quantumRisk` is correctly `none`, it breaches no risk level, and it had
+  raised no violation to be deduplicated against. `scan` rated the same line
+  `severity: high`. Deduplication is now against the violations actually
+  raised, so a HIGH finding is always reachable and a weak algorithm is still
+  counted exactly once.
+
+A final check found three more, two of them about surfaces disagreeing:
+
+- **Private-key detection was gated on the file EXTENSION**, so `server.key`
+  was found and a byte-identical `id_rsa` was not. `id_rsa` is the most common
+  name a committed private key actually has; `id_ed25519`, `deploy_key` and
+  `key.txt` were missed the same way. A key's evidence is its first line, so
+  small unclassified files are now sniffed for a PEM private-key header. A
+  public `-----BEGIN CERTIFICATE-----` is deliberately not a match.
+- **`--allow-secrets` did not filter SARIF.** Text said "waived", JSON dropped
+  the violation, and SARIF still emitted it at `level: "error"`, so a gate that
+  exited `0` uploaded alerts to code scanning for findings it had just declared
+  waived. And private keys never reached SARIF at all, so a CI job saw no alert
+  for the finding that failed its build. All three surfaces agree now.
+- `--allow-secrets` was undocumented on every help surface. A switch that turns
+  exit `1` into exit `0` has to be visible in a CI config review.
+
+`gate --help` now also states plainly that `--max-risk` bounds QUANTUM risk
+rather than security severity, which is why a weak algorithm fails the gate
+regardless of it.
+
+The full sweep now agrees in both directions. Fails by default: a committed
+secret, a committed private key (whatever it is named), MD5, SHA-1, RC4,
+AES-ECB, 3DES, RSA-1024, and a disabled certificate check. Passes: a public
+certificate and a clean SHA-256 tree. `--allow-secrets` moves only the
+credential findings, on every output format.
+
+Two detection gaps closed while there:
+
+- `AWS_SECRET_ACCESS_KEY` was not detected. Detection was prefix-driven (`AKIA`,
+  `ghp_`, `sk-`), which catches an access key ID and misses its more sensitive
+  other half, because a 40-character secret has no prefix to key on. The
+  variable it is assigned to is the signal, so the value's length and alphabet
+  now qualify it. Verified against three real trees for false positives: the
+  only hits were this repository's own deliberate fixtures.
+- Placeholder suppression was by FILENAME, so any value in `.env.example` was
+  ignored. That is backwards: a template is the file that actually gets
+  committed while `.env` is usually gitignored, so a real key pasted into a
+  template is the higher-risk case. Templates are scanned, and placeholders are
+  filtered by their value (`your-key-here`, `<your-key>`, `changeme`).
+
 ### Added
 - `--password-stdin` on every command that takes a password. `--password <value>`
   puts the secret in `argv`, where it is readable from `ps`,
@@ -118,6 +237,15 @@ five more places, all pre-existing:
   reached it.
 
 ### Changed
+- **An unknown flag now stops the command (exit `2`) rather than warning and
+  continuing.** That was a fail-open in flag-name form: `gate . --min-scoree 95`
+  warned, silently fell back to the default threshold, printed `(min: 50)` and
+  exited `0`. A typo must not loosen a gate, and an unparseable option *value*
+  already exited `2`.
+- **`gate` fails on hardcoded secrets and committed private keys by default**,
+  and refuses a tree it read no files from rather than certifying it `100/100`. A repository with a
+  committed credential that previously passed will now fail; that is the point.
+  `--allow-secrets` opts out explicitly.
 - Exit `2` now means "the command could not run as invoked" across the whole
   CLI, not just `gate`; one condition should not have two codes. `1` keeps its
   meaning: the command ran and reported a failure. Moved from `1` to `2`: `scan`

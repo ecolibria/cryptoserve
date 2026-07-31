@@ -137,8 +137,22 @@ export function deleteSecret(password, key, path = defaultVaultPath()) {
   return true;
 }
 
-export function resetVault(path = defaultVaultPath()) {
-  if (existsSync(path)) unlinkSync(path);
+/**
+ * Delete the vault, after proving the caller can open it.
+ *
+ * This used to unlink unconditionally, so `vault reset --password wrong` and
+ * `vault reset` with no password both printed "Vault deleted." and exited 0.
+ * Deleting ONE secret was authenticated and deleting ALL of them was not, which
+ * is the wrong way round: an attacker with filesystem access could already
+ * remove the file, but a CLI that answers a wrong password by destroying the
+ * data is a footgun pointed at its owner.
+ */
+export function resetVault(password, path = defaultVaultPath()) {
+  if (!existsSync(path)) return false;
+  // Throws on a wrong password, exactly as every other vault read does.
+  loadVault(password, path);
+  unlinkSync(path);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

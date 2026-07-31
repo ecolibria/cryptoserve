@@ -33,6 +33,17 @@ cryptoserve scan . --verbose                # Detailed output
 | `--binary` | Include binary file scanning (ELF, PE, Mach-O, .class, .NET) |
 | `--verbose` | Show detailed progress and findings |
 
+Hardcoded secrets are detected in source files AND in config files, including
+`.env`, `.env.local` and `.env.production`. Before 0.5.0 only source files were
+searched, so an AWS key committed in `.env` reported `Secrets found: 0` while the
+same literal in a `.js` file was found. Committed templates (`.env.example`,
+`.env.sample`, `.env.template`, `.env.dist`) hold placeholders and are not
+treated as value-bearing.
+
+The report counts source files and config files separately, because
+`Secrets found: 0` means something different when no `.env` was read than when
+one was read and was clean.
+
 ### `cbom`: CBOM Generation
 
 Generates a Cryptographic Bill of Materials in multiple formats.
@@ -99,6 +110,7 @@ cryptoserve gate . --format sarif           # SARIF output
 | `--max-risk <level>` | Maximum allowed risk level: `none`, `low`, `medium`, `high` (default), `critical` |
 | `--min-score <n>` | Minimum quantum readiness score (default: `50`) |
 | `--fail-on-weak` | Fail on weak algorithms (MD5, DES, RC4, ECB) |
+| `--allow-secrets` | Do not fail on hardcoded secrets or committed private keys (both still reported) |
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
 | `--verbose` | Show detailed violations |
 
@@ -109,7 +121,21 @@ unenforceable threshold is not a lax gate but an absent one. Before 0.5.0
 score printed `min: NaN` and exited `0`.
 
 The report shows the directory and the file count, so a gate that passed because
-it scanned nothing is distinguishable from one that passed on a clean tree.
+it scanned nothing is distinguishable from one that passed on a clean tree. A
+gate that read no files at all exits `2` rather than reporting `100/100`.
+
+Hardcoded secrets, committed private keys, and critical API-misuse findings
+(such as `rejectUnauthorized: false`) fail the gate. Before 0.5.0 `scan`
+reported `[CRIT] AWS Access Key .env:1` while `gate` on the same tree returned
+`PASS 100/100`, so the highest-severity findings the scanner produces had no path
+into CI. A public certificate does not fail the gate; the private key that signs
+it does. `--allow-secrets` waives the credential findings explicitly, states how many,
+and does NOT reach weak algorithms, AES-ECB, 3DES or a disabled certificate
+check. A flag that quietly stops enforcing a security check is worse than not
+having the check.
+
+An unknown flag exits `2` rather than warning and continuing, because
+`gate . --min-scoree 95` used to fall back to the default threshold and pass.
 
 ### `census`: Ecosystem Census
 
@@ -229,13 +255,22 @@ cryptoserve init --insecure-storage         # Skip keychain (not recommended)
 ### `login`: Authenticate with Server
 
 ```bash
-cryptoserve login                           # Login to default server
-cryptoserve login --server https://crypto.company.com  # Custom server
+cryptoserve login --server https://crypto.company.com
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--server <url>` / `-s` | Server URL (default: `http://localhost:8003`) |
+| `--server <url>` | Server URL. Required; there is no default. |
+
+`--server` is required as of 0.5.0. The previous built-in default was
+`https://localhost:8003`, where nothing runs on a user's machine, so the
+out-of-the-box flow could only time out. The CLI cannot know your server, and a
+guess that is wrong for everyone is worse than an error naming what to pass.
+
+`login` opens a browser and waits on a localhost callback, so it needs an
+interactive session. Without a terminal it exits `2` immediately rather than
+printing a URL and blocking for 120 seconds. If the callback port is already
+held it says so, instead of failing with a raw `EADDRINUSE` stack trace.
 
 ### `context`: List Encryption Contexts
 

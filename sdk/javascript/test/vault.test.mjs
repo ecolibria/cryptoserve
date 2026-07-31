@@ -103,9 +103,22 @@ describe('vault reset', () => {
   beforeEach(() => { setup(); initVault(PW, VAULT_PATH); });
   afterEach(cleanup);
 
-  it('deletes vault file', () => {
-    resetVault(VAULT_PATH);
+  it('deletes the vault file when given the right password', () => {
+    assert.equal(resetVault(PW, VAULT_PATH), true);
     assert.ok(!existsSync(VAULT_PATH));
+  });
+
+  it('refuses a wrong password and leaves the vault intact', () => {
+    // This test used to call resetVault(VAULT_PATH) with no password at all and
+    // assert the file was gone. It restated the code rather than judging it:
+    // deleting ONE secret was authenticated and deleting ALL of them was not.
+    assert.throws(() => resetVault('wrong-password', VAULT_PATH));
+    assert.ok(existsSync(VAULT_PATH), 'the vault was destroyed by a wrong password');
+  });
+
+  it('reports rather than throws when there is no vault to delete', () => {
+    resetVault(PW, VAULT_PATH);
+    assert.equal(resetVault(PW, VAULT_PATH), false);
   });
 });
 

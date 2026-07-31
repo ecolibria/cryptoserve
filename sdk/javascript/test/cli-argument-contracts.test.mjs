@@ -175,10 +175,15 @@ describe('gate other option values', () => {
     assert.equal(m.summary.filesScanned, 0);
     assert.equal(m.summary.manifestsFound, 1, 'a manifest-only tree must be distinguishable from an empty one');
 
-    const empty = tempDir('gate-empty');
-    const e = JSON.parse(run(['gate', empty, '--min-score', '0', '--format', 'json']).stdout);
-    assert.equal(e.summary.filesScanned, 0);
-    assert.equal(e.summary.manifestsFound, 0);
+    // A source file with no manifest: the mirror image of the case above, so
+    // the two counts are shown to move independently rather than together.
+    // (An entirely empty tree is refused outright; see 'refuses a tree it read
+    // nothing from'.)
+    const sourceOnly = tempDir('gate-source-only');
+    writeFileSync(join(sourceOnly, 'a.js'), 'const crypto = require("crypto");\n');
+    const so = JSON.parse(run(['gate', sourceOnly, '--min-score', '0', '--format', 'json']).stdout);
+    assert.equal(so.summary.filesScanned, 1);
+    assert.equal(so.summary.manifestsFound, 0);
   });
 });
 
@@ -463,5 +468,487 @@ describe('vault positionals', () => {
 
     assert.equal(run(['vault', 'set', 'K', 'real-value', '--password', 'vp'], { env }).code, 0);
     assert.equal(run(['vault', 'get', 'K', '--password', 'vp'], { env }).stdout.trim(), 'real-value');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Secrets outside source files
+// ---------------------------------------------------------------------------
+
+// Built at runtime from parts, so this test file never contains a contiguous
+// credential-shaped literal for a repository secret scanner to flag.
+const FAKE_AWS_KEY = 'AKIA' + 'EXAMPLEKEY0000FF';
+
+describe('scan finds hardcoded secrets outside source files', () => {
+  // `.env` is the highest-value target there is, and it reported nothing. The
+  // walker classified it as a config file, but secret detection ran only inside
+  // the sourceFiles loop, behind `if (!language) continue`. So `scan` answered
+  // "Secrets found: 0" for a committed .env holding a live key, while finding
+  // the SAME literal in config.js -- and both help surfaces advertise secrets.
+  function projectWith(files) {
+    const dir = tempDir('secrets');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 's' }));
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    return dir;
+  }
+  const secretsOf = (dir) => JSON.parse(run(['scan', dir, '--format', 'json']).stdout).secrets;
+
+  it('finds a key in .env', () => {
+    const found = secretsOf(projectWith({ '.env': `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` }));
+    assert.equal(found.length, 1, 'a key committed in .env was not reported');
+    assert.equal(found[0].file, '.env');
+    assert.equal(found[0].line, 1, 'the finding must point at a line, not just a file');
+    assert.equal(found[0].envVar, 'AWS_ACCESS_KEY_ID');
+  });
+
+  it('finds a key in the dotenv variants that hold real values', () => {
+    for (const name of ['.env.local', '.env.production', '.env.development']) {
+      const found = secretsOf(projectWith({ [name]: `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` }));
+      assert.equal(found.length, 1, `${name} was not scanned`);
+      assert.equal(found[0].file, name);
+    }
+  });
+
+  it('still finds the same literal in source, and does not double-count', () => {
+    // The control. This passed before the fix; if it stops passing, the fix
+    // moved detection rather than widening it.
+    const found = secretsOf(projectWith({ 'config.js': `const k = "${FAKE_AWS_KEY}";\n` }));
+    assert.equal(found.length, 1);
+    assert.equal(found[0].file, 'config.js');
+  });
+
+  it('does not flag a .env that only references environment variables', () => {
+    // Guards the over-correction: a .env holding indirections, not values.
+    const found = secretsOf(projectWith({ '.env': 'AWS_ACCESS_KEY_ID=${AWS_KEY}\nOTHER=$OTHER\n' }));
+    assert.deepEqual(found, [], `an indirection was reported as a secret: ${JSON.stringify(found)}`);
+  });
+
+  it('does not flag a placeholder in a committed template', () => {
+    const found = secretsOf(projectWith({ '.env.example': 'AWS_ACCESS_KEY_ID=your-key-here\n' }));
+    assert.deepEqual(found, [], 'a template placeholder was reported as a secret');
+  });
+
+  it('reports that it read config files, so the coverage is visible', () => {
+    const dir = projectWith({ '.env': `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` });
+    const { stdout } = run(['scan', dir]);
+    // package.json and .env: both are config files, and both were read.
+    assert.match(stdout, /Config files\s+2/i,
+      `scan did not say it read the config files:\n${stdout}`);
+    // And the count has to track reality, not be a fixed label.
+    const bare = projectWith({});
+    assert.match(run(['scan', bare]).stdout, /Config files\s+1/i,
+      'the config-file count does not change with the tree');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// login
+// ---------------------------------------------------------------------------
+
+describe('login', () => {
+  it('requires --server rather than defaulting to a localhost dev URL', () => {
+    // The shipped default was https://localhost:8003, where nothing runs on a
+    // user's machine. The CLI cannot know the operator's server, and guessing
+    // one produces a login flow that can never succeed.
+    const { code, stdout, stderr } = run(['login'], { env: { CRYPTOSERVE_HOME: tempDir('login') } });
+    assert.equal(code, 2);
+    assert.match(stderr, /--server/);
+    assert.doesNotMatch(stdout + stderr, /localhost:8003/,
+      'the localhost dev default is still being offered');
+  });
+
+  it('refuses without a terminal instead of hanging for two minutes', () => {
+    // login opened a browser and waited 120 seconds on a callback that can
+    // never arrive. Every other interactive command exits 2 immediately; this
+    // one hung the job. Timed, because "it exits" and "it exits promptly" are
+    // different claims and only the second one is useful in CI.
+    const started = Date.now();
+    const { code, stdout, stderr } = run(['login', '--server', 'https://example.invalid'],
+      { env: { CRYPTOSERVE_HOME: tempDir('login2') } });
+    const elapsed = Date.now() - started;
+
+    assert.equal(code, 2, 'login did not refuse a non-interactive run');
+    assert.ok(elapsed < 15000, `login took ${elapsed}ms; it must not wait on a browser callback`);
+    assert.match(stderr, /terminal/i);
+    assert.doesNotMatch(stdout, /Open this URL/,
+      'a browser flow was started in a session with no browser');
+  });
+
+  it('reports a busy callback port instead of crashing', async () => {
+    // With port 9876 already held, the http server emitted an unhandled
+    // 'error' and the process died with a raw Node EADDRINUSE stack trace.
+    const { createServer } = await import('node:http');
+    const { login } = await import('../lib/client.mjs');
+    const blocker = createServer(() => {});
+    await new Promise((res, rej) => { blocker.once('error', rej); blocker.listen(9876, res); });
+    try {
+      await assert.rejects(
+        () => login('https://example.invalid'),
+        (err) => {
+          assert.ok(err instanceof Error, 'a non-Error was thrown');
+          assert.match(err.message, /9876/, `the message must name the port: ${err.message}`);
+          assert.doesNotMatch(err.message, /EADDRINUSE/,
+            'the raw Node error code reached the user unexplained');
+          return true;
+        },
+      );
+    } finally {
+      await new Promise((res) => blocker.close(res));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The gate must act on what the scanner found
+// ---------------------------------------------------------------------------
+
+describe('gate and hardcoded secrets', () => {
+  // `scan` reported `[CRIT] AWS Access Key .env:1` and `gate` on the identical
+  // tree returned PASS 100/100 exit 0 with `violations: []`. The gate evaluated
+  // algorithm risk only, so the highest-severity finding the scanner produces
+  // had no path into CI enforcement at all. Two commands reading one tree must
+  // not disagree on direction.
+  function treeWithSecret() {
+    const dir = tempDir('gate-secret');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'g' }));
+    writeFileSync(join(dir, '.env'), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+    return dir;
+  }
+
+  it('scan and gate agree that a committed key is a problem', () => {
+    const dir = treeWithSecret();
+    const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+    assert.equal(scanned.secrets.length, 1, 'precondition: scan must find it');
+
+    const { code, stdout } = run(['gate', dir, '--format', 'json']);
+    const gated = JSON.parse(stdout);
+    assert.equal(gated.status, 'fail',
+      'gate passed a tree whose scan reports a CRITICAL hardcoded secret');
+    assert.equal(code, 1);
+    assert.equal(gated.summary.secrets, 1);
+    const v = gated.violations.find((x) => x.type === 'secret');
+    assert.ok(v, `no secret violation in ${JSON.stringify(gated.violations)}`);
+    assert.equal(v.file, '.env');
+    assert.equal(v.line, 1, 'a violation must point at a line');
+  });
+
+  it('names the secret in its text output too', () => {
+    const { stdout } = run(['gate', treeWithSecret()]);
+    assert.match(stdout, /AWS Access Key/);
+    assert.match(stdout, /\.env:1/, 'the violation must be openable');
+  });
+
+  it('can be opted out of explicitly, and says so', () => {
+    // An escape hatch for a documented false positive. Explicit, never implied.
+    const { code, stdout } = run(['gate', treeWithSecret(), '--allow-secrets', '--format', 'json']);
+    assert.equal(code, 0);
+    assert.equal(JSON.parse(stdout).summary.secrets, 1,
+      'the count must still be reported even when it does not fail the gate');
+  });
+
+  it('refuses a tree it read nothing from', () => {
+    // PASS 100/100 on an empty directory is the same shape as certifying a
+    // missing path: a verdict about something that was never measured.
+    const empty = tempDir('gate-empty-tree');
+    const { code, stdout, stderr } = run(['gate', empty, '--format', 'json']);
+    assert.equal(code, 2, 'an empty tree was certified rather than refused');
+    assert.doesNotMatch(stdout, /"status":\s*"pass"/);
+    assert.match(stdout + stderr, /no files|nothing to scan/i);
+  });
+});
+
+describe('an unknown flag', () => {
+  it('stops the command instead of warning and continuing', () => {
+    // `gate . --min-scoree 95` warned, silently reverted to the default
+    // threshold, printed "(min: 50)" and exited 0. A typo must not loosen a
+    // gate: that is the same fail-open as an unparseable value, which already
+    // exits 2.
+    const dir = scoreOnlyFixture();
+    const { code, stderr } = run(['gate', dir, '--min-scoree', '95']);
+    assert.equal(code, 2);
+    assert.match(stderr, /--min-scoree/);
+    // A known flag must still be accepted.
+    assert.equal(run(['gate', dir, '--min-score', '10', '--format', 'json']).code, 0);
+  });
+});
+
+describe('secret detection coverage', () => {
+  function scanOf(files) {
+    const dir = tempDir('coverage');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'c' }));
+    for (const [n, b] of Object.entries(files)) writeFileSync(join(dir, n), b);
+    return JSON.parse(run(['scan', dir, '--format', 'json']).stdout).secrets;
+  }
+
+  it('finds the AWS secret key, not only the access key id', () => {
+    // Detection was prefix-driven (AKIA, ghp_, sk-), so the access key ID was
+    // caught and its more sensitive other half was not. A 40-character secret
+    // has no distinguishing prefix; the variable it is assigned to is the
+    // signal.
+    const secret = 'wJalrXUtnFEMI' + '/K7MDENG/bPxRfiCYEXAMPLEKEY';   // 40 chars, AWS docs shape
+    const found = scanOf({ '.env': `AWS_SECRET_ACCESS_KEY=${secret}\n` });
+    assert.equal(found.length, 1, 'the AWS secret access key was not detected');
+    assert.equal(found[0].file, '.env');
+  });
+
+  it('does not flag a short or placeholder value on the same variable', () => {
+    // The guard against turning the variable name into the whole signal.
+    assert.deepEqual(scanOf({ '.env': 'AWS_SECRET_ACCESS_KEY=changeme\n' }), []);
+    assert.deepEqual(scanOf({ '.env': 'AWS_SECRET_ACCESS_KEY=\n' }), []);
+    assert.deepEqual(scanOf({ '.env': 'AWS_SECRET_ACCESS_KEY=${AWS_SECRET}\n' }), []);
+  });
+
+  it('flags a real key committed in a template, and still ignores placeholders', () => {
+    // Suppression was by FILENAME, so any value in .env.example was ignored.
+    // Templates are the files that actually get committed, so a real key there
+    // is the higher-risk case, not the lower-risk one. Judge the value.
+    assert.equal(scanOf({ '.env.example': `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n` }).length, 1,
+      'a real key committed in a template was ignored because of its filename');
+    assert.deepEqual(scanOf({ '.env.example': 'AWS_ACCESS_KEY_ID=your-key-here\n' }), []);
+    assert.deepEqual(scanOf({ '.env.example': 'AWS_ACCESS_KEY_ID=<your-key>\n' }), []);
+  });
+});
+
+describe('gate and committed private keys', () => {
+  // The unswept sibling of the secrets defect. `scan` listed
+  // "Certificate/Key Files: server.key" while `gate` on the same tree returned
+  // PASS 100/100 exit 0, and no flag caught it. A private key committed to a
+  // repository is at least as serious as a hardcoded API key; it was invisible
+  // to enforcement for the same reason, one artifact type over.
+  const PRIVATE_KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n';
+  const PUBLIC_CERT = '-----BEGIN CERTIFICATE-----\nMIIBkTCB+wIJAK\n-----END CERTIFICATE-----\n';
+
+  function tree(name, body) {
+    const dir = tempDir('gate-key');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'k' }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, name), body);
+    return dir;
+  }
+
+  it('fails on a committed private key', () => {
+    const { code, stdout } = run(['gate', tree('server.key', PRIVATE_KEY), '--format', 'json']);
+    const g = JSON.parse(stdout);
+    assert.equal(g.status, 'fail', 'a committed private key passed the gate');
+    assert.equal(code, 1);
+    const v = g.violations.find((x) => x.type === 'private-key');
+    assert.ok(v, `no private-key violation in ${JSON.stringify(g.violations)}`);
+    assert.equal(v.file, 'server.key');
+  });
+
+  it('does not fail on a public certificate', () => {
+    // The distinction that makes this useful rather than noisy: publishing a
+    // certificate is normal, publishing the key that signs it is not.
+    const { code } = run(['gate', tree('server.crt', PUBLIC_CERT), '--format', 'json']);
+    assert.equal(code, 0, 'a public certificate was treated as a private key');
+  });
+
+  it('reports private keys separately from certificates in scan', () => {
+    const s = JSON.parse(run(['scan', tree('server.key', PRIVATE_KEY), '--format', 'json']).stdout);
+    assert.ok(Array.isArray(s.privateKeyFiles), 'scan does not distinguish private keys');
+    assert.deepEqual(s.privateKeyFiles, ['server.key']);
+  });
+
+  it('can be waived by the same explicit flag as secrets', () => {
+    const { code } = run(['gate', tree('server.key', PRIVATE_KEY), '--allow-secrets', '--format', 'json']);
+    assert.equal(code, 0);
+  });
+});
+
+describe('vault reset', () => {
+  it('requires the correct password before destroying the vault', () => {
+    // Deleting ONE key was authenticated; deleting ALL of them was not.
+    // `vault reset --password wrong` printed "Vault deleted." and exited 0.
+    const home = tempDir('vault-reset');
+    const env = { CRYPTOSERVE_HOME: home };
+    assert.equal(run(['vault', 'init', '--password', 'right-pw'], { env }).code, 0);
+    assert.equal(run(['vault', 'set', 'K', 'v', '--password', 'right-pw'], { env }).code, 0);
+
+    const wrong = run(['vault', 'reset', '--password', 'wrong-pw'], { env });
+    assert.notEqual(wrong.code, 0, 'a wrong password destroyed the vault');
+    assert.equal(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).stdout.trim(), 'v',
+      'the vault was destroyed despite the wrong password');
+
+    const noPw = run(['vault', 'reset'], { env });
+    assert.notEqual(noPw.code, 0, 'no password destroyed the vault');
+    assert.equal(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).stdout.trim(), 'v');
+
+    const right = run(['vault', 'reset', '--password', 'right-pw'], { env });
+    assert.equal(right.code, 0, `the correct password must still work: ${right.stderr}`);
+    assert.notEqual(run(['vault', 'get', 'K', '--password', 'right-pw'], { env }).code, 0);
+  });
+});
+
+describe('gate and API misuse findings', () => {
+  // The third artifact class with the same defect. `scan` reported
+  // "TLS certificate verification disabled" at severity CRITICAL and `gate`
+  // exited 0, because gate derived violations from the algorithm inventory and
+  // a misuse finding carries no algorithm. Found by sweeping every finding
+  // class scan can produce against gate, rather than waiting for the next
+  // review to surface it.
+  function tree(body) {
+    const dir = tempDir('gate-misuse');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'm' }));
+    writeFileSync(join(dir, 'tls.js'), body);
+    return dir;
+  }
+
+  it('fails on a critical misuse finding that carries no algorithm', () => {
+    const dir = tree('const https=require("https");https.request({rejectUnauthorized:false});\n');
+    const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+    assert.equal(scanned.weakPatterns.length, 1, 'precondition: scan must report it');
+    assert.equal(scanned.weakPatterns[0].severity, 'critical');
+
+    const { code, stdout } = run(['gate', dir, '--min-score', '0', '--format', 'json']);
+    const g = JSON.parse(stdout);
+    assert.equal(g.status, 'fail',
+      'gate passed a tree whose scan reports a CRITICAL misuse finding');
+    assert.equal(code, 1);
+    const v = g.violations.find((x) => x.type === 'misuse');
+    assert.ok(v, `no misuse violation in ${JSON.stringify(g.violations)}`);
+    assert.equal(v.file, 'tls.js');
+    assert.equal(v.line, 1);
+  });
+
+  it('does not double-count a weak algorithm that already has a violation', () => {
+    // md5 produces BOTH a weakPattern and an algorithm violation. It must
+    // appear once, or the violation count inflates.
+    const dir = tree('const c=require("crypto");c.createHash("md5").update("x");\n');
+    const g = JSON.parse(run(['gate', dir, '--min-score', '0', '--fail-on-weak', '--format', 'json']).stdout);
+    const md5 = g.violations.filter((v) => /md5/i.test(v.algorithm || v.issue || ''));
+    assert.equal(md5.length, 1, `md5 counted ${md5.length} times: ${JSON.stringify(g.violations)}`);
+  });
+
+  it('still passes a clean tree', () => {
+    const dir = tree('const c=require("crypto");c.createHash("sha256").update("x");\n');
+    assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 0);
+  });
+});
+
+describe('gate waivers and severity, corrected', () => {
+  function tree(body, name = 'code.js') {
+    const dir = tempDir('gate-sev');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(dir, name), body);
+    return dir;
+  }
+  const TLS_OFF = 'const https=require("https");https.request({rejectUnauthorized:false});\n';
+  const ECB = 'const c=require("crypto");c.createCipheriv("aes-256-ecb",k,null);\n';
+  const DES3 = 'const c=require("crypto");c.createCipheriv("des-ede3-cbc",k,iv);\n';
+
+  it('--allow-secrets waives credentials only, never a security check', () => {
+    // The flag exists to waive a false-positive CREDENTIAL. Letting it also
+    // switch off TLS-verification-bypass detection makes it a silent
+    // enforcement kill switch, which is worse than not having the check.
+    const dir = tree(TLS_OFF);
+    assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 1,
+      'precondition: the TLS bypass must fail the gate');
+    const { code, stdout } = run(['gate', dir, '--min-score', '0', '--allow-secrets', '--format', 'json']);
+    assert.equal(code, 1, '--allow-secrets silently waived a TLS verification bypass');
+    assert.ok(JSON.parse(stdout).violations.some((v) => v.type === 'misuse'));
+  });
+
+  it('still waives an actual credential, and says how many', () => {
+    const dir = tempDir('gate-waive');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'w' }));
+    writeFileSync(join(dir, '.env'), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+    const { code, stdout } = run(['gate', dir, '--min-score', '0', '--allow-secrets']);
+    assert.equal(code, 0);
+    assert.match(stdout, /waived/i, 'a waiver must be stated, not silent');
+  });
+
+  it('fails on a HIGH-severity weakness the quantum-risk ladder rates none', () => {
+    // AES-ECB is structurally broken, not quantum-broken, so its quantumRisk is
+    // correctly `none` and it never breached --max-risk at ANY level, including
+    // `none`. scan called the same line severity `high`. A finding the scanner
+    // rates HIGH must be reachable by the gate.
+    for (const [name, body] of [['ECB', ECB], ['3DES', DES3]]) {
+      const dir = tree(body);
+      const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+      assert.equal(scanned.weakPatterns[0].severity, 'high', `precondition for ${name}`);
+      const { code, stdout } = run(['gate', dir, '--min-score', '0', '--format', 'json']);
+      assert.equal(code, 1, `${name} passed the gate at the default --max-risk`);
+      assert.ok(JSON.parse(stdout).violations.length > 0, `${name} produced no violation`);
+    }
+  });
+
+  it('counts a weak algorithm once, not twice', () => {
+    // md5 produces BOTH a weakPattern and an algorithm violation.
+    const dir = tree('const c=require("crypto");c.createHash("md5").update("x");\n');
+    const g = JSON.parse(run(['gate', dir, '--min-score', '0', '--fail-on-weak', '--format', 'json']).stdout);
+    const md5 = g.violations.filter((v) => /md5/i.test(v.algorithm || ''));
+    assert.equal(md5.length, 1, `md5 counted ${md5.length} times: ${JSON.stringify(g.violations)}`);
+  });
+
+  it('still passes a project using modern crypto correctly', () => {
+    const dir = tree('const c=require("crypto");c.createCipheriv("aes-256-gcm",k,iv);c.createHash("sha256");\n');
+    assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 0);
+  });
+});
+
+describe('private keys without a recognised extension', () => {
+  // Detection was gated on the file EXTENSION, so `server.key` was found and a
+  // byte-identical `id_rsa` was not -- and `id_rsa` is the single most common
+  // name for a committed private key. The evidence is in the file's first line,
+  // not in its name.
+  const PEM = (kind) => `-----BEGIN ${kind}-----\nMIIBOgIBAAJBAK\n-----END ${kind}-----\n`;
+
+  function tree(name, body) {
+    const dir = tempDir('bare-key');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'b' }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, name), body);
+    return dir;
+  }
+
+  for (const name of ['id_rsa', 'id_ed25519', 'deploy_key', 'key.txt', 'id_rsa.bak']) {
+    it(`finds a private key committed as ${name}`, () => {
+      const dir = tree(name, PEM('RSA PRIVATE KEY'));
+      const scanned = JSON.parse(run(['scan', dir, '--format', 'json']).stdout);
+      assert.deepEqual(scanned.privateKeyFiles, [name],
+        `${name} was not recognised as a private key`);
+      assert.equal(run(['gate', dir, '--min-score', '0', '--format', 'json']).code, 1,
+        `a committed ${name} passed the gate`);
+    });
+  }
+
+  it('does not treat a public certificate or an ordinary file as a key', () => {
+    assert.equal(run(['gate', tree('server.crt', PEM('CERTIFICATE')), '--min-score', '0']).code, 0);
+    assert.equal(run(['gate', tree('notes.txt', 'just some notes\n'), '--min-score', '0']).code, 0);
+    assert.equal(run(['gate', tree('README', '# hello\n'), '--min-score', '0']).code, 0);
+  });
+});
+
+describe('every output format agrees on what the gate decided', () => {
+  it('--allow-secrets removes the finding from SARIF as well as JSON', () => {
+    // Text said "waived", JSON dropped the violation, and SARIF still emitted
+    // it at level "error". Uploaded to code scanning, that raises alerts for a
+    // gate that exited 0 -- three surfaces, two answers.
+    const dir = tempDir('sarif-waive');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 's' }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, '.env'), `AWS_ACCESS_KEY_ID=${FAKE_AWS_KEY}\n`);
+
+    const on = run(['gate', dir, '--min-score', '0', '--allow-secrets', '--format', 'sarif']);
+    assert.equal(on.code, 0, 'precondition: the waiver must make the gate pass');
+    const results = JSON.parse(on.stdout).runs[0].results;
+    assert.equal(results.filter((r) => /secret/i.test(r.ruleId || '')).length, 0,
+      'SARIF still reports a secret the gate declared waived');
+
+    // Without the waiver it must still be there, or this test would pass on a
+    // SARIF emitter that reports nothing at all.
+    const off = run(['gate', dir, '--min-score', '0', '--format', 'sarif']);
+    assert.equal(off.code, 1);
+    assert.ok(JSON.parse(off.stdout).runs[0].results.some((r) => /secret/i.test(r.ruleId || '')),
+      'SARIF does not report the secret even without the waiver');
+  });
+});
+
+describe('gate help', () => {
+  it('documents the flag that can turn a failure into a pass', () => {
+    // An undocumented switch that turns exit 1 into exit 0 is not auditable in
+    // a CI config review.
+    const { stdout } = run(['gate', '--help']);
+    assert.match(stdout, /--allow-secrets/);
   });
 });
