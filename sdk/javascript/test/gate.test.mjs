@@ -705,3 +705,109 @@ describe('gate reports every place an algorithm is used', () => {
     }
   });
 });
+
+/**
+ * A library must not be named as the source of a call it cannot have made.
+ *
+ * The gate indexed sites on the algorithm NAME alone, dropping the language the
+ * scanner recorded, then paired every inventory library with every site of any
+ * algorithm it declares. `crypto-js` declares MD5, so a Python `hashlib.md5()`
+ * was reported with `source: crypto-js@3.1.9` -- and manifest libraries are
+ * pushed before source ones, so the wrong owner won the first-writer race.
+ * SHA-1 stayed correct only because `crypto-js` does not declare it.
+ *
+ * Barring foreign-ecosystem claims is not sufficient on its own: a C site has no
+ * owning library at all, so the language check alone would leave it unclaimed
+ * and silently drop the violation. The synthetic owner is what keeps it, which
+ * is why both halves are pinned here together.
+ */
+describe('gate attributes a site to a library of that language', () => {
+  let DIR;
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-attr-')); });
+  afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
+
+  const CRYPTO_JS = JSON.stringify({ name: 'attr', dependencies: { 'crypto-js': '^3.1.9' } });
+
+  function run(args) {
+    try {
+      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
+        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+    } catch (e) {
+      return { exitCode: e.status, output: e.stdout || '' };
+    }
+  }
+  const asJson = (args = '') => JSON.parse(run(`${args} --format json`).output);
+  const at = (violations, file) => violations.filter(v => v.file === file);
+
+  it('does not name an npm package as the source of a Python call', () => {
+    writeFileSync(join(DIR, 'package.json'), CRYPTO_JS);
+    writeFileSync(join(DIR, 'auth.py'),
+      'import hashlib\nh = hashlib.md5(b"pw")\ns = hashlib.sha1(b"pw")\n');
+
+    const violations = asJson('--min-score 0').violations;
+    const md5 = at(violations, 'auth.py').filter(v => /md5/i.test(v.algorithm));
+    assert.equal(md5.length, 1, JSON.stringify(violations, null, 1));
+    assert.equal(md5[0].source, 'hashlib@builtin', JSON.stringify(md5[0]));
+
+    // The asymmetry that made the real cause hard to see: SHA-1 was already
+    // right, because `crypto-js` does not declare it. It stays right.
+    const sha1 = at(violations, 'auth.py').filter(v => /sha1/i.test(v.algorithm));
+    assert.equal(sha1.length, 1, JSON.stringify(violations, null, 1));
+    assert.equal(sha1[0].source, 'hashlib@builtin');
+  });
+
+  it('keeps the dependency violation the manifest declares', () => {
+    // Barring the foreign claim must not lose the dependency finding: crypto-js
+    // still declares MD5, and with no JavaScript site to point at, the manifest
+    // that declares it is where the violation belongs.
+    writeFileSync(join(DIR, 'package.json'), CRYPTO_JS);
+    writeFileSync(join(DIR, 'auth.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
+
+    const violations = asJson('--min-score 0').violations;
+    const declared = violations.filter(v => v.source === 'crypto-js@3.1.9'
+      && /md5/i.test(v.algorithm));
+    assert.equal(declared.length, 1, JSON.stringify(violations, null, 1));
+    assert.equal(declared[0].manifest, 'package.json');
+    assert.equal(declared[0].file, undefined);
+
+    // And it says what a dependency finding says. A manifest has no scanner
+    // finding of its own, so the only way this row could carry "Replace with
+    // SHA-256" is by borrowing the fix from a Python call site in another
+    // file -- the same cross-attribution by algorithm name, one field over.
+    // The user has no line in `package.json` to apply that to.
+    assert.match(declared[0].reason, /declared by this dependency/,
+      JSON.stringify(declared[0]));
+  });
+
+  it('still raises a violation for a site no library owns', () => {
+    // `#include <openssl/md5.h>` produces no source library, and `crypto/md5`
+    // is Go. Nothing in the inventory is a C library, so this site is the one a
+    // language check alone would silently drop.
+    writeFileSync(join(DIR, 'package.json'), CRYPTO_JS);
+    writeFileSync(join(DIR, 'hash.c'), '#include <openssl/md5.h>\nvoid f(void){MD5_CTX c;MD5_Init(&c);}\n');
+    writeFileSync(join(DIR, 'main.go'), 'package main\n\nimport "crypto/md5"\n\nfunc main(){ _ = md5.New() }\n');
+
+    const result = asJson('--min-score 0');
+    assert.equal(result.status, 'fail');
+
+    const c = at(result.violations, 'hash.c');
+    assert.equal(c.length, 1, `C site lost its violation: ${JSON.stringify(result.violations, null, 1)}`);
+    assert.notEqual(c[0].source, 'crypto-js@3.1.9', 'an npm package cannot own a C call');
+
+    const go = at(result.violations, 'main.go');
+    assert.equal(go.length, 1, JSON.stringify(result.violations, null, 1));
+    assert.equal(go[0].source, 'crypto/md5@builtin', JSON.stringify(go[0]));
+  });
+
+  it('lets a JavaScript library keep its own JavaScript site', () => {
+    // The change must not overshoot: an npm package does own the JS call.
+    writeFileSync(join(DIR, 'package.json'), CRYPTO_JS);
+    writeFileSync(join(DIR, 'app.js'),
+      'const CryptoJS = require("crypto-js");\nconst h = CryptoJS.MD5("pw");\n');
+
+    const violations = asJson('--min-score 0').violations;
+    const js = at(violations, 'app.js').filter(v => /md5/i.test(v.algorithm));
+    assert.equal(js.length, 1, JSON.stringify(violations, null, 1));
+    assert.equal(js[0].source, 'crypto-js@3.1.9', JSON.stringify(js[0]));
+  });
+});

@@ -75,6 +75,46 @@ describe('generateCbom', () => {
     assert.ok(cbom.metadata.contentHash);
     assert.equal(cbom.metadata.contentHash.length, 64); // SHA-256 hex
   });
+
+  it('does not let a foreign-language library absorb a source algorithm', () => {
+    // Same name-only match that misattributed a Python `hashlib.md5()` to
+    // `crypto-js` in the gate (#67): an `md5` read from a .c file was dropped
+    // from the CBOM entirely because an npm package in the same tree listed it.
+    // A component that exists in the tree must not disappear from the bill of
+    // materials because something in another ecosystem shares the name.
+    const scan = {
+      libraries: [
+        { name: 'crypto-js', version: '3.1.9', algorithms: ['md5'], quantumRisk: 'critical', category: 'general', ecosystem: 'npm' },
+      ],
+      sourceAlgorithms: [
+        { algorithm: 'md5', category: 'hashing', language: 'c', quantumRisk: 'critical' },
+      ],
+      tlsFindings: [],
+    };
+    const cbom = generateCbom(scan, MOCK_PQC, 'test');
+    const algoComponents = cbom.components.filter(c => c.type === 'algorithm');
+    assert.ok(algoComponents.some(c => c.name === 'md5'),
+      `C md5 dropped from the CBOM: ${JSON.stringify(cbom.components.map(c => `${c.type}:${c.name}`))}`);
+  });
+
+  it('still folds a source algorithm into a library of the same language', () => {
+    // The other direction: an npm package DOES own the JavaScript call, so the
+    // algorithm is not standalone and must not be duplicated as its own
+    // component beside the library that provides it.
+    const scan = {
+      libraries: [
+        { name: 'crypto-js', version: '3.1.9', algorithms: ['md5'], quantumRisk: 'critical', category: 'general', ecosystem: 'npm' },
+      ],
+      sourceAlgorithms: [
+        { algorithm: 'md5', category: 'hashing', language: 'javascript', quantumRisk: 'critical' },
+      ],
+      tlsFindings: [],
+    };
+    const cbom = generateCbom(scan, MOCK_PQC, 'test');
+    const algoComponents = cbom.components.filter(c => c.type === 'algorithm');
+    assert.equal(algoComponents.length, 0,
+      `duplicated an owned algorithm: ${JSON.stringify(algoComponents.map(c => c.name))}`);
+  });
 });
 
 describe('toCycloneDx', () => {

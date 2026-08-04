@@ -13,6 +13,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { VERSION } from './version.mjs';
+import { libraryCoversLanguage } from './scanner.mjs';
 
 // ---------------------------------------------------------------------------
 // Package URL generation
@@ -88,10 +89,23 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
     });
   }
 
-  // Add standalone algorithms detected in source code (not tied to a library)
-  const libAlgos = new Set(components.flatMap(c => c.algorithms));
+  // Add standalone algorithms detected in source code (not tied to a library).
+  //
+  // "Tied to a library" means a library OF THAT LANGUAGE declares it. The same
+  // name-only match that misattributed a Python `hashlib.md5()` to `crypto-js`
+  // in the gate (#67) is here too: an `md5` in a .c file was dropped from the
+  // CBOM because some npm package in the same tree happened to list MD5. The
+  // language predicate is shared with the scanner so the two cannot drift.
+  //
+  // The name comparison stays case-sensitive, deliberately. Making it
+  // case-insensitive here would REMOVE components (a `md5` site beside a
+  // library declaring `MD5`), and an attribution fix should not quietly shrink
+  // the bill of materials. Tracked separately.
   for (const algo of (scanResults.sourceAlgorithms || [])) {
-    if (!libAlgos.has(algo.algorithm)) {
+    const ownedByLibrary = (scanResults.libraries || []).some(lib =>
+      libraryCoversLanguage(lib, algo.language) && (lib.algorithms || []).includes(algo.algorithm)
+    );
+    if (!ownedByLibrary) {
       components.push({
         bomRef: randomUUID(),
         type: 'algorithm',

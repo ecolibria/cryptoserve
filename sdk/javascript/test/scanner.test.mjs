@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   scanProject, toLibraryInventory, weakAlgorithmSeverity, exceedsSeverity, SEVERITY_ORDER,
+  libraryCoversLanguage, ECOSYSTEM_LANGUAGES,
 } from '../lib/scanner.mjs';
+import { LANGUAGE_PATTERNS } from '../lib/scanner-languages.mjs';
 
 const TEST_DIR = join(tmpdir(), 'cryptoserve-scanner-test-' + Date.now());
 
@@ -131,6 +133,114 @@ describe('toLibraryInventory', () => {
     assert.equal(inventory.length, 1);
     assert.equal(inventory[0].name, 'jsonwebtoken');
     assert.equal(inventory[0].isDeprecated, false);
+  });
+});
+
+describe('library language attribution', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('records the language a source library was seen in', () => {
+    // `sourceLibraries` is keyed by name and used to drop the language of the
+    // file the import was read from, so nothing downstream could tell that
+    // `hashlib` is a Python library and `crypto-js` is not.
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'auth.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
+
+    const results = scanProject(TEST_DIR);
+    const hashlib = results.libraries.find(l => l.name === 'hashlib');
+    assert.ok(hashlib, 'hashlib should be inventoried from source');
+    assert.deepEqual(hashlib.languages, ['python']);
+  });
+
+  it('records every language a source library name appears in', () => {
+    // `sourceLibraries` merges by name across files, so one language is not
+    // enough: recording only the first would make the second file's sites
+    // unclaimable and mint a synthetic owner beside a library that does own
+    // them.
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'a.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
+    mkdirSync(join(TEST_DIR, 'sub'), { recursive: true });
+    writeFileSync(join(TEST_DIR, 'sub', 'b.py'), 'import hashlib\nh = hashlib.sha1(b"pw")\n');
+
+    const results = scanProject(TEST_DIR);
+    const hashlib = results.libraries.find(l => l.name === 'hashlib');
+    assert.deepEqual([...hashlib.languages].sort(), ['python']);
+  });
+
+  it('covers a language only when the ecosystem produces it', () => {
+    assert.equal(libraryCoversLanguage({ ecosystem: 'npm' }, 'javascript'), true);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'npm' }, 'python'), false);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'pypi' }, 'python'), true);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'pypi' }, 'javascript'), false);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'go' }, 'go'), true);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'cargo' }, 'rust'), true);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'maven' }, 'java'), true);
+    // No manifest ecosystem produces C. That is exactly why an unclaimed site
+    // still needs a synthetic owner.
+    for (const eco of Object.keys(ECOSYSTEM_LANGUAGES)) {
+      if (eco === 'source') continue;
+      assert.equal(libraryCoversLanguage({ ecosystem: eco }, 'c'), false,
+        `${eco} must not claim a C site`);
+    }
+  });
+
+  it('covers only the recorded languages for a source library', () => {
+    const hashlib = { ecosystem: 'source', languages: ['python'] };
+    assert.equal(libraryCoversLanguage(hashlib, 'python'), true);
+    assert.equal(libraryCoversLanguage(hashlib, 'javascript'), false);
+    assert.equal(libraryCoversLanguage(hashlib, 'c'), false);
+  });
+
+  it('maps every ecosystem the manifest scanner emits', () => {
+    // An unmapped ecosystem would claim nothing, and every site it should own
+    // would get a synthetic owner beside the real library. Same shape as the
+    // severity-ladder guard: the table has to cover what the scanner produces.
+    for (const eco of ['npm', 'go', 'pypi', 'cargo', 'maven', 'source']) {
+      assert.ok(eco in ECOSYSTEM_LANGUAGES, `ECOSYSTEM_LANGUAGES is missing ${eco}`);
+    }
+    // And every language it maps to has to be one the scanner can detect.
+    const detectable = new Set(Object.keys(LANGUAGE_PATTERNS));
+    for (const [eco, langs] of Object.entries(ECOSYSTEM_LANGUAGES)) {
+      for (const lang of langs) {
+        assert.ok(detectable.has(lang), `${eco} maps to unknown language ${lang}`);
+      }
+    }
+  });
+});
+
+describe('toLibraryInventory language-aware dedup', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('keeps a synthetic owner for a site no same-language library declares', () => {
+    // crypto-js declares MD5 and is npm. The MD5 in hash.c is not its MD5, and
+    // the C include produces no source library at all, so suppressing the
+    // synthetic entry leaves the site with no owner anywhere in the inventory
+    // -- and the gate then raises nothing for it.
+    writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({
+      dependencies: { 'crypto-js': '^3.1.9' },
+    }));
+    writeFileSync(join(TEST_DIR, 'hash.c'), '#include <openssl/md5.h>\nvoid f(void){MD5_CTX c;MD5_Init(&c);}\n');
+
+    const inventory = toLibraryInventory(scanProject(TEST_DIR));
+    const owner = inventory.find(l => l.name !== 'crypto-js'
+      && l.algorithms.some(a => a.toLowerCase() === 'md5'));
+    assert.ok(owner, 'a C md5 site must keep an owner of its own language');
+    assert.deepEqual(owner.languages, ['c']);
+  });
+
+  it('does not duplicate an algorithm a same-language library already declares', () => {
+    // The other direction. `hashlib` is Python and declares md5, so the Python
+    // md5 site is already owned and must not also mint `python:md5`.
+    writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({
+      dependencies: { 'crypto-js': '^3.1.9' },
+    }));
+    writeFileSync(join(TEST_DIR, 'auth.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
+
+    const inventory = toLibraryInventory(scanProject(TEST_DIR));
+    assert.equal(inventory.filter(l => l.name === 'python:md5').length, 0);
+    assert.ok(inventory.some(l => l.name === 'hashlib'));
   });
 });
 

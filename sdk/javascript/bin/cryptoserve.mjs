@@ -1121,7 +1121,7 @@ async function cmdCbom(args) {
 }
 
 async function cmdGate(args) {
-  const { scanProject, toLibraryInventory, weakAlgorithmSeverity, exceedsSeverity } = await import('../lib/scanner.mjs');
+  const { scanProject, toLibraryInventory, weakAlgorithmSeverity, exceedsSeverity, libraryCoversLanguage } = await import('../lib/scanner.mjs');
   const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
   const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
   const { existsSync } = await import('node:fs');
@@ -1221,6 +1221,14 @@ async function cmdGate(args) {
     // of that: MD5 in a.js, b.js and c.js was one violation naming a.js, so a
     // CI user fixed one file per run and `scan` reported three findings the
     // gate said were one.
+    //
+    // The LANGUAGE the scanner recorded is kept on every place. Dropping it
+    // here is what let `crypto-js` -- an npm package -- be reported as the
+    // source of a Python `hashlib.md5()` (#67): the index was keyed on the
+    // algorithm name alone, so every library declaring MD5 claimed every md5
+    // site in the tree, and `byLocation` below kept whichever wrote first.
+    // Manifest libraries are pushed to `results.libraries` before source ones,
+    // so the wrong owner won that race every time.
     const sites = new Map();
     for (const site of scanResults.algorithmSites || []) {
       if (!site.file) continue;
@@ -1228,7 +1236,7 @@ async function cmdGate(args) {
       if (!sites.has(key)) sites.set(key, []);
       const places = sites.get(key);
       if (!places.some(p => p.file === site.file && p.line === site.line)) {
-        places.push({ file: site.file, line: site.line });
+        places.push({ file: site.file, line: site.line, language: site.language });
       }
     }
 
@@ -1283,14 +1291,30 @@ async function cmdGate(args) {
         if (!entry) continue;
 
         const key = algoName.toLowerCase();
-        // One violation per place the algorithm is used. With no source site
-        // the manifest stands in, so every violation names somewhere.
-        const places = sites.get(key)?.length
-          ? sites.get(key)
+        // One violation per place the algorithm is used, restricted to the
+        // places this library could have produced. With no source site of its
+        // own the manifest stands in, so a dependency that merely DECLARES the
+        // algorithm still reports somewhere -- barring the foreign claim must
+        // not lose that finding, only move it off a file it does not own.
+        const owned = (sites.get(key) || [])
+          .filter(p => libraryCoversLanguage(lib, p.language));
+        const places = owned.length
+          ? owned
           : [declaredIn ? { manifest: declaredIn } : {}];
 
         for (const place of places) {
-          const scanned = scannedAt.get(placeKey(key, place)) || scannedByAlgorithm.get(key);
+          // A manifest has no scanner finding of its own: the scanner reads
+          // source lines, not dependency declarations. Falling back to the
+          // tree-wide index by algorithm NAME would hand this row a fix written
+          // for a call site in some other file -- and now that a library keeps
+          // only the sites of its own language, a manifest place routinely
+          // coexists with a source finding of the same name in another one.
+          // That is the same cross-attribution this change removes, one field
+          // over: "Replace with SHA-256" is not something a reader can apply to
+          // a line of `package.json`.
+          const scanned = place.manifest
+            ? null
+            : (scannedAt.get(placeKey(key, place)) || scannedByAlgorithm.get(key));
           // From the scanner where a source line was actually read; from the
           // shared rule where the algorithm is only known from a manifest and
           // no weakPattern exists. Null means the scanner reports no security

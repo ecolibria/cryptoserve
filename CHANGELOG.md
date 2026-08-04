@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+A library is no longer named as the source of a call it cannot have made
+([#67](https://github.com/ecolibria/cryptoserve/issues/67)).
+
+`gate` indexed call sites on the algorithm NAME alone and dropped the language
+the scanner had recorded, then paired every inventory library with every site of
+any algorithm it declares. `crypto-js` declares MD5, so a Python
+`hashlib.md5()` was reported with `source: crypto-js@3.1.9`. Manifest libraries
+are inventoried before source ones, so the wrong owner won the first-writer
+race every time; SHA-1 stayed correct only because `crypto-js` does not declare
+it. A library now claims a site only in a language its ecosystem produces, and
+`source` libraries carry the languages the import was actually read in.
+
+The same name-only match was in two more consumers and is fixed in all three
+against one shared predicate:
+
+- the inventory, which suppressed the owner of an `md5` in a `.c` file because
+  an npm package elsewhere in the tree listed MD5, and
+- the CBOM, which dropped that algorithm from the bill of materials for the
+  same reason.
+
+Barring foreign claims on its own would have DELETED those violations rather
+than re-attributing them: a `#include <openssl/md5.h>` site has no owning
+library in any ecosystem. The inventory now mints a synthetic owner for a site
+no same-language library claims, which is what keeps it a violation.
+
+**This can lower `quantumReadinessScore` on a tree that mixes languages.**
+Sites that were hidden behind a foreign library are now counted, and the score
+subtracts per deprecated inventory entry. Measured on this repo: single-language
+trees did not move (`backend` 40, `sdk/javascript` 37.9, and two unrelated
+projects at 90 all unchanged), while the mixed JS+Python repo root moved 29.6 to
+0 as four previously-invisible weak-algorithm entries appeared. A CI job pinned
+to `gate --min-score N` on a multi-language tree may newly fail, and the
+findings it fails on are real.
+
+A dependency violation also no longer borrows its remediation from an unrelated
+file. `MD5 crypto-js@3.1.9` at `package.json` said "Replace with SHA-256", a fix
+written for a call site in another language, which a reader has no line of
+`package.json` to apply. It now says what the other dependency-only violations
+say.
+
 ## [CLI 0.6.0] - 2026-08-03
 
 A minor rather than a patch because the shape of a `gate` violation changed. A

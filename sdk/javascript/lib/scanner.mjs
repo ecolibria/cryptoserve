@@ -102,6 +102,57 @@ export function exceedsSeverity(severity, threshold) {
   return idx > SEVERITY_ORDER.indexOf(threshold);
 }
 
+// ---------------------------------------------------------------------------
+// Which languages a library can own a call site in
+// ---------------------------------------------------------------------------
+
+/**
+ * The source languages each manifest ecosystem can produce call sites in.
+ *
+ * A library must not be named as the source of a call it cannot have made.
+ * `crypto-js` declares MD5, so a Python `hashlib.md5()` was reported with
+ * `source: crypto-js@3.1.9` (#67): every consumer paired libraries with sites on
+ * the algorithm NAME alone and dropped the language the scanner had recorded.
+ *
+ * `source` libraries have no ecosystem to derive this from, so they carry the
+ * languages of the files their import was actually read in -- see the
+ * `languages` field `scanProject` records.
+ *
+ * No manifest ecosystem produces C, and that gap is load-bearing rather than an
+ * omission: a `#include <openssl/md5.h>` site has no owning library at all, so
+ * it depends on the synthetic owner `toLibraryInventory` mints for it. Narrowing
+ * the claim without that fallback would delete the violation instead of
+ * re-attributing it.
+ */
+export const ECOSYSTEM_LANGUAGES = {
+  npm: ['javascript'],
+  go: ['go'],
+  pypi: ['python'],
+  cargo: ['rust'],
+  maven: ['java'],
+  source: [], // recorded per library, from the files the import was seen in
+};
+
+/** The languages a library can own a call site in. */
+export function libraryLanguages(lib) {
+  if (!lib) return [];
+  if (Array.isArray(lib.languages)) return lib.languages;
+  return ECOSYSTEM_LANGUAGES[lib.ecosystem] || [];
+}
+
+/**
+ * One predicate, because three consumers ask this question and disagreeing
+ * answers are what the fail-open is made of: the gate pairing libraries with
+ * sites, the inventory deciding whether a site already has an owner, and the
+ * CBOM deciding whether an algorithm is standalone. If the gate stops letting a
+ * library claim a site but the inventory still counts it as claimed, the site
+ * loses its only claimant and the violation disappears.
+ */
+export function libraryCoversLanguage(lib, language) {
+  if (!language) return false;
+  return libraryLanguages(lib).includes(language);
+}
+
 // Modes that are not weak on their own but carry a caveat worth surfacing.
 const MODE_ADVISORIES = {
   'aes-cbc': {
@@ -305,7 +356,10 @@ export function scanProject(projectDir, options = {}) {
   });
   results.filesWalked = walked.totalFiles;
   const seenSourceAlgos = new Set();
-  const sourceLibraries = new Map(); // library name -> algorithm set
+  // library name -> { algorithms: Set, languages: Set }. Keyed by name across
+  // the whole tree, so the languages are a set: `openssl` read from a .c file
+  // and a .py file is one entry that owns sites in both.
+  const sourceLibraries = new Map();
 
   // Cert files from walker. A public certificate and the private key that
   // signs it were reported in one undifferentiated list, so a committed
@@ -404,12 +458,20 @@ export function scanProject(projectDir, options = {}) {
     // exactly one crypto library. With two or more, which call belongs to which
     // import is not decidable without dataflow analysis, and a guess here would
     // print a wrong algorithm list next to a real package name.
+    //
+    // The LANGUAGE is recorded for every import, not only the unambiguous ones.
+    // Which algorithm belongs to which of two imports is undecidable here, but
+    // which language the file is written in is not, and it is what stops a
+    // library from being named as the source of a call in another language.
     for (const imp of langResult.imports) {
-      if (!sourceLibraries.has(imp.library)) sourceLibraries.set(imp.library, new Set());
+      if (!sourceLibraries.has(imp.library)) {
+        sourceLibraries.set(imp.library, { algorithms: new Set(), languages: new Set() });
+      }
+      sourceLibraries.get(imp.library).languages.add(language);
     }
     if (langResult.imports.length === 1) {
       const only = sourceLibraries.get(langResult.imports[0].library);
-      for (const algo of langResult.algorithms) only.add(algo.algorithm);
+      for (const algo of langResult.algorithms) only.algorithms.add(algo.algorithm);
     }
 
     // Keys generated below the current minimum size.
@@ -482,9 +544,9 @@ export function scanProject(projectDir, options = {}) {
   // Source-detected libraries (node:crypto, hashlib, openssl, ...) become
   // inventory entries carrying the algorithms actually observed in that file
   // set, rather than a hardcoded guess derived from which helper was imported.
-  for (const [name, algoSet] of sourceLibraries) {
+  for (const [name, seen] of sourceLibraries) {
     if (seenPkgs.has(name)) continue; // already inventoried from a manifest
-    const algorithms = [...algoSet];
+    const algorithms = [...seen.algorithms];
     const risks = algorithms.map(a => lookupAlgorithm(a)?.quantumRisk).filter(Boolean);
     const quantumRisk = risks.includes('critical') ? 'critical'
       : risks.includes('high') ? 'high'
@@ -502,6 +564,10 @@ export function scanProject(projectDir, options = {}) {
       category: hasAsymmetric ? 'asymmetric' : 'symmetric',
       source: 'source-code',
       ecosystem: 'source',
+      // A source library has no ecosystem to derive its languages from, so it
+      // carries the ones it was actually read in. Without this every consumer
+      // has to fall back to matching on the algorithm name alone.
+      languages: [...seen.languages],
     });
   }
 
@@ -529,6 +595,10 @@ export function toLibraryInventory(scanResults) {
       algorithms: lib.algorithms,
       quantumRisk: lib.quantumRisk,
       category: lib.category,
+      // Carried through because the gate pairs libraries with call sites from
+      // the INVENTORY, and `ecosystem` does not survive this mapping. Without it
+      // the gate has nothing to decide ownership on but the algorithm name.
+      languages: libraryLanguages(lib),
       isDeprecated: lib.isDeprecated || false,
     };
     // Enrich with algorithm-db data
@@ -541,16 +611,29 @@ export function toLibraryInventory(scanResults) {
     return entry;
   });
 
-  // Also add source-detected algorithms as synthetic library entries
+  // Also add source-detected algorithms as synthetic library entries.
+  //
+  // Suppressed only when a library of THAT LANGUAGE declares the algorithm.
+  // Matching on the name alone made `crypto-js` -- npm, and declaring MD5 --
+  // suppress the owner of an `md5` in a .c file, leaving that site with no
+  // entry in the inventory at all. Every consumer that pairs a site with a
+  // library then had nothing correct to pair it with, and the gate reported the
+  // site against whichever foreign library happened to be listed first.
+  //
+  // This is the fail-open guard for the whole change: it is what guarantees
+  // every site has at least one owner, so barring foreign claims elsewhere
+  // re-attributes a violation instead of deleting it.
   for (const algo of (scanResults.sourceAlgorithms || [])) {
     const alreadyInLib = inventory.some(lib =>
-      lib.algorithms.some(a => a.toLowerCase() === algo.algorithm.toLowerCase())
+      libraryCoversLanguage(lib, algo.language)
+      && lib.algorithms.some(a => a.toLowerCase() === algo.algorithm.toLowerCase())
     );
     if (!alreadyInLib) {
       inventory.push({
         name: `${algo.language}:${algo.algorithm}`,
         version: 'source-code',
         algorithms: [algo.algorithm],
+        languages: algo.language ? [algo.language] : [],
         quantumRisk: algo.quantumRisk || 'unknown',
         category: algo.category,
         isDeprecated: algo.isWeak || false,
