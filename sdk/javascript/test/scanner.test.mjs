@@ -4,7 +4,8 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  scanProject, toLibraryInventory, weakAlgorithmSeverity, exceedsSeverity, SEVERITY_ORDER,
+  scanProject, toLibraryInventory, toOwnershipInventory,
+  weakAlgorithmSeverity, exceedsSeverity, SEVERITY_ORDER,
   libraryCoversLanguage, ECOSYSTEM_LANGUAGES,
 } from '../lib/scanner.mjs';
 import { LANGUAGE_PATTERNS } from '../lib/scanner-languages.mjs';
@@ -154,18 +155,68 @@ describe('library language attribution', () => {
   });
 
   it('records every language a source library name appears in', () => {
-    // `sourceLibraries` merges by name across files, so one language is not
-    // enough: recording only the first would make the second file's sites
-    // unclaimable and mint a synthetic owner beside a library that does own
-    // them.
+    // `sourceLibraries` merges by name across the whole tree, so one language is
+    // not enough: recording only the first would make the other language's
+    // sites unclaimable and mint a synthetic owner beside a library that does
+    // own them.
+    //
+    // The fixture needs TWO languages to say anything. An earlier version of
+    // this test used two PYTHON files and asserted `['python']`, where "first"
+    // and "every" give the same answer -- it could not fail. `bcrypt` is the
+    // one library name the import tables carry in more than one language.
     writeFileSync(join(TEST_DIR, 'package.json'), '{}');
-    writeFileSync(join(TEST_DIR, 'a.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
-    mkdirSync(join(TEST_DIR, 'sub'), { recursive: true });
-    writeFileSync(join(TEST_DIR, 'sub', 'b.py'), 'import hashlib\nh = hashlib.sha1(b"pw")\n');
+    writeFileSync(join(TEST_DIR, 'a.js'), 'const b = require("bcryptjs");\nconst h = b.hashSync("x");\n');
+    writeFileSync(join(TEST_DIR, 'b.py'), 'import bcrypt\nh = bcrypt.hashpw(b"x", bcrypt.gensalt())\n');
 
     const results = scanProject(TEST_DIR);
-    const hashlib = results.libraries.find(l => l.name === 'hashlib');
-    assert.deepEqual([...hashlib.languages].sort(), ['python']);
+    const bcrypt = results.libraries.find(l => l.name === 'bcrypt');
+    assert.ok(bcrypt, 'bcrypt should be inventoried from source');
+    assert.deepEqual([...bcrypt.languages].sort(), ['javascript', 'python']);
+  });
+
+  it('records the language even when the file imports two crypto libraries', () => {
+    // Which algorithm belongs to which of two imports is undecidable without
+    // dataflow, so neither library gets the algorithms. Which LANGUAGE the file
+    // is written in is not undecidable, and it is the whole basis of ownership:
+    // recording it only for unambiguous files would leave these libraries
+    // unable to claim anything.
+    // Both imports must be ones the table actually recognises, or the file has
+    // one import, the ambiguous branch is never taken, and the test cannot
+    // fail. `from cryptography` is the recognised spelling; `import
+    // cryptography` is not, and an earlier version of this fixture used it and
+    // measured nothing.
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'both.py'),
+      'import hashlib\nfrom cryptography.hazmat.primitives import hashes\nh = hashlib.md5(b"pw")\n');
+
+    const results = scanProject(TEST_DIR);
+    const names = results.libraries.map(l => l.name).sort();
+    assert.deepEqual(names, ['cryptography', 'hashlib'],
+      `fixture must produce two ambiguous imports, got ${JSON.stringify(names)}`);
+    for (const name of names) {
+      const lib = results.libraries.find(l => l.name === name);
+      assert.deepEqual(lib.languages, ['python'], `${name} lost its language`);
+      assert.deepEqual(lib.algorithms, [],
+        `${name} should get no algorithms from an ambiguous file`);
+    }
+  });
+
+  it('refuses to cover a site whose language is unknown', () => {
+    // The one line that decides malformed input. If this returned true, any
+    // site with no recorded language would be claimable by every library and
+    // #67 would be back for exactly those sites.
+    assert.equal(libraryCoversLanguage({ ecosystem: 'npm' }, undefined), false);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'npm' }, null), false);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'npm' }, ''), false);
+  });
+
+  it('covers nothing when the ecosystem is unknown or absent', () => {
+    // Fails CLOSED. An ecosystem the table does not know claims no sites, and
+    // the ownership inventory then mints a synthetic owner for them, so the
+    // violation survives with an honest owner rather than a guessed one.
+    assert.equal(libraryCoversLanguage({ ecosystem: 'nuget' }, 'javascript'), false);
+    assert.equal(libraryCoversLanguage({}, 'javascript'), false);
+    assert.equal(libraryCoversLanguage({ ecosystem: 'source', languages: null }, 'python'), false);
   });
 
   it('covers a language only when the ecosystem produces it', () => {
@@ -209,22 +260,23 @@ describe('library language attribution', () => {
   });
 });
 
-describe('toLibraryInventory language-aware dedup', () => {
+describe('ownership inventory is separate from the scored census', () => {
   beforeEach(setup);
   afterEach(cleanup);
 
-  it('keeps a synthetic owner for a site no same-language library declares', () => {
+  const cryptoJs = () => writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({
+    dependencies: { 'crypto-js': '^3.1.9' },
+  }));
+
+  it('mints an owner for a site no same-language library declares', () => {
     // crypto-js declares MD5 and is npm. The MD5 in hash.c is not its MD5, and
-    // the C include produces no source library at all, so suppressing the
-    // synthetic entry leaves the site with no owner anywhere in the inventory
-    // -- and the gate then raises nothing for it.
-    writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({
-      dependencies: { 'crypto-js': '^3.1.9' },
-    }));
+    // the C include produces no source library at all, so without a synthetic
+    // owner the site has no claimant anywhere and the gate raises nothing.
+    cryptoJs();
     writeFileSync(join(TEST_DIR, 'hash.c'), '#include <openssl/md5.h>\nvoid f(void){MD5_CTX c;MD5_Init(&c);}\n');
 
-    const inventory = toLibraryInventory(scanProject(TEST_DIR));
-    const owner = inventory.find(l => l.name !== 'crypto-js'
+    const owners = toOwnershipInventory(scanProject(TEST_DIR));
+    const owner = owners.find(l => l.name !== 'crypto-js'
       && l.algorithms.some(a => a.toLowerCase() === 'md5'));
     assert.ok(owner, 'a C md5 site must keep an owner of its own language');
     assert.deepEqual(owner.languages, ['c']);
@@ -233,14 +285,52 @@ describe('toLibraryInventory language-aware dedup', () => {
   it('does not duplicate an algorithm a same-language library already declares', () => {
     // The other direction. `hashlib` is Python and declares md5, so the Python
     // md5 site is already owned and must not also mint `python:md5`.
-    writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({
-      dependencies: { 'crypto-js': '^3.1.9' },
-    }));
+    cryptoJs();
     writeFileSync(join(TEST_DIR, 'auth.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
 
-    const inventory = toLibraryInventory(scanProject(TEST_DIR));
-    assert.equal(inventory.filter(l => l.name === 'python:md5').length, 0);
-    assert.ok(inventory.some(l => l.name === 'hashlib'));
+    const owners = toOwnershipInventory(scanProject(TEST_DIR));
+    assert.equal(owners.filter(l => l.name === 'python:md5').length, 0);
+    assert.ok(owners.some(l => l.name === 'hashlib'));
+  });
+
+  it('does NOT add that owner to the scored census', () => {
+    // The census counts ROWS and `calculateQuantumScore` subtracts per
+    // deprecated row, uncapped, while `classifyAlgorithms` deduplicates by
+    // algorithm name. So an ownership row for an algorithm already present
+    // moves the score without the set of algorithms having changed. The two
+    // lists must stay separate, and this is the assertion that keeps them so.
+    cryptoJs();
+    writeFileSync(join(TEST_DIR, 'hash.c'), '#include <openssl/md5.h>\nvoid f(void){MD5_CTX c;MD5_Init(&c);}\n');
+
+    const scan = scanProject(TEST_DIR);
+    const census = toLibraryInventory(scan);
+    const owners = toOwnershipInventory(scan);
+
+    assert.equal(census.filter(l => l.name === 'c:md5').length, 0,
+      `census gained an attribution row: ${JSON.stringify(census.map(l => l.name))}`);
+    assert.equal(owners.filter(l => l.name === 'c:md5').length, 1);
+    assert.ok(owners.length > census.length,
+      'ownership must be the longer list, or the split has collapsed');
+  });
+
+  it('keeps the census identical whichever language the site is in', () => {
+    // The upward direction of the same defect, which is the dangerous one: a
+    // library declaring `AES-GCM` beside a Python `aes-gcm` site would add a
+    // second SAFE classification (the spellings differ and that dedup is
+    // case-sensitive), RAISING safe/total and turning a failing gate green.
+    cryptoJs();
+    writeFileSync(join(TEST_DIR, 'a.py'), 'import hashlib\nh = hashlib.md5(b"pw")\n');
+    const withPython = toLibraryInventory(scanProject(TEST_DIR)).map(l => l.name).sort();
+
+    cleanup(); setup();
+    cryptoJs();
+    writeFileSync(join(TEST_DIR, 'a.js'), 'const C = require("crypto-js");\nconst h = C.MD5("pw");\n');
+    const withJs = toLibraryInventory(scanProject(TEST_DIR)).map(l => l.name).sort();
+
+    assert.ok(!withPython.some(n => n.startsWith('python:')),
+      `census gained a per-language row: ${JSON.stringify(withPython)}`);
+    assert.ok(!withJs.some(n => n.startsWith('javascript:')),
+      `census gained a per-language row: ${JSON.stringify(withJs)}`);
   });
 });
 
@@ -267,6 +357,43 @@ describe('TLS verification disabled in source', () => {
     const wp = misuseIn('app.js', "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n");
     assert.equal(found(wp, /certificate verification/i).length, 1, JSON.stringify(wp));
     assert.equal(found(wp, /certificate verification/i)[0].severity, 'critical');
+  });
+
+  it('flags the bracket and ||= spellings of the same override', () => {
+    for (const body of [
+      "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';\n",
+      'process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;\n',
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED ||= '0';\n",
+      "process . env . NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('app.js', body);
+      assert.equal(found(wp, /certificate verification/i).length, 1, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('does not flag prose that merely names the anti-pattern', () => {
+    // A guide, a linter rule, or this scanner's own pattern table names these
+    // strings without doing them. Matching the bare name made `gate` report a
+    // critical finding against the definition of its own check, and there is no
+    // per-finding waiver to clear it with.
+    for (const body of [
+      '// never set NODE_TLS_REJECT_UNAUTHORIZED=0 in production\n',
+      "const RULES = [{ bad: 'NODE_TLS_REJECT_UNAUTHORIZED=0', why: 'disables TLS' }];\n",
+      "const issue = 'TLS disabled process-wide (NODE_TLS_REJECT_UNAUTHORIZED=0)';\n",
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('guide.js', body);
+      assert.equal(found(wp, /certificate verification/i).length, 0, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('flags the assignment form of _create_unverified_context', () => {
+    // The canonical process-wide Python bypass. It never CALLS the function, so
+    // requiring the opening parenthesis missed the worst spelling of all.
+    const wp = misuseIn('app.py',
+      'import ssl\nssl._create_default_https_context = ssl._create_unverified_context\n');
+    assert.equal(found(wp, /certificate verification/i).length, 1, JSON.stringify(wp));
   });
 
   it('does not flag NODE_TLS_REJECT_UNAUTHORIZED restored to 1', () => {
@@ -393,6 +520,43 @@ describe('deprecated TLS protocol pinned in source', () => {
 
   it('does not flag secureProtocol: TLSv1_2_method', () => {
     assert.deepEqual(tlsIn('app.js', "const a = new https.Agent({ secureProtocol: 'TLSv1_2_method' });\n"), []);
+  });
+
+  it('flags every deprecated constant in the alternation, not just TLSv1', () => {
+    // Half the alternation was untested. A dropped branch is a silent hole.
+    for (const [constant, protocol, risk] of [
+      ['SSLv2', 'SSLv2', 'critical'],
+      ['SSLv3', 'SSLv3', 'critical'],
+      ['TLSv1', 'TLSv1', 'critical'],
+      ['TLSv1_1', 'TLSv1.1', 'high'],
+    ]) {
+      cleanup(); setup();
+      const tls = tlsIn('app.py', `import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_${constant})\n`);
+      assert.equal(tls.length, 1, `PROTOCOL_${constant}: ${JSON.stringify(tls)}`);
+      assert.equal(tls[0].protocol, protocol);
+      assert.equal(tls[0].risk, risk);
+    }
+  });
+
+  it('reads secureProtocol in every extension the scanner calls JavaScript', () => {
+    // `.tsx` got the misuse findings but not this one, so the two new surfaces
+    // disagreed about what a JavaScript file is.
+    for (const ext of ['js', 'ts', 'mjs', 'cjs', 'jsx', 'tsx']) {
+      cleanup(); setup();
+      const tls = tlsIn(`app.${ext}`, "const a = new https.Agent({ secureProtocol: 'SSLv3_method' });\n");
+      assert.equal(tls.length, 1, `.${ext} was not read: ${JSON.stringify(tls)}`);
+      assert.equal(tls[0].protocol, 'SSLv3');
+    }
+  });
+
+  it('reads a backtick-quoted secureProtocol', () => {
+    const tls = tlsIn('app.js', 'const a = new https.Agent({ secureProtocol: `TLSv1_method` });\n');
+    assert.equal(tls.length, 1, JSON.stringify(tls));
+  });
+
+  it('requires the _method suffix rather than any TLS-shaped string', () => {
+    // Without the anchor this matches version strings that are not a pin.
+    assert.deepEqual(tlsIn('app.js', "const label = { secureProtocol: 'TLSv1' };\n"), []);
   });
 });
 

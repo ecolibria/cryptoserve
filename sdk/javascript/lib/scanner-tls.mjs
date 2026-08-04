@@ -108,9 +108,13 @@ const PATTERNS = [
     },
   },
   // Node.js: secureProtocol pins one version, where minVersion sets a floor.
+  //
+  // Extensions match `LANGUAGE_PATTERNS.javascript` exactly. Listing a subset
+  // made the two new surfaces disagree about what a JavaScript file is: a
+  // `.tsx` file got the misuse findings but not this one.
   {
-    extensions: ['.js', '.ts', '.mjs', '.cjs'],
-    regex: /secureProtocol\s*:\s*['"](SSLv2|SSLv3|TLSv1_2|TLSv1_1|TLSv1)_method['"]/g,
+    extensions: ['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx'],
+    regex: /secureProtocol\s*:\s*['"`](SSLv2|SSLv3|TLSv1_2|TLSv1_1|TLSv1)_method['"`]/g,
     extract: (match) => {
       const versionMap = {
         'SSLv2': 'SSLv2',

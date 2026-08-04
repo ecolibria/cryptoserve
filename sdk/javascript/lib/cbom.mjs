@@ -95,12 +95,17 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
   // name-only match that misattributed a Python `hashlib.md5()` to `crypto-js`
   // in the gate (#67) is here too: an `md5` in a .c file was dropped from the
   // CBOM because some npm package in the same tree happened to list MD5. The
-  // language predicate is shared with the scanner so the two cannot drift.
+  // LANGUAGE half of the question is answered by the predicate the scanner
+  // exports, so that half cannot drift.
   //
-  // The name comparison stays case-sensitive, deliberately. Making it
-  // case-insensitive here would REMOVE components (a `md5` site beside a
-  // library declaring `MD5`), and an attribution fix should not quietly shrink
-  // the bill of materials. Tracked separately.
+  // The NAME half still can, and does. This comparison is case-sensitive while
+  // the inventory's is not, so `crypto-js` declaring `MD5` beside a JavaScript
+  // `md5` site suppresses the synthetic inventory entry but still emits a
+  // standalone CBOM component. That disagreement is pre-existing. It is left
+  // alone here because aligning it means REMOVING components, and an
+  // attribution fix should not quietly shrink a bill of materials; the
+  // direction wants deciding on its own. Tracked in
+  // `todo/roadmap/gate-algorithm-site-attribution.md`.
   for (const algo of (scanResults.sourceAlgorithms || [])) {
     const ownedByLibrary = (scanResults.libraries || []).some(lib =>
       libraryCoversLanguage(lib, algo.language) && (lib.algorithms || []).includes(algo.algorithm)

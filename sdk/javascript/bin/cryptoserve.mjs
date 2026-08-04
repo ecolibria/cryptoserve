@@ -1121,7 +1121,7 @@ async function cmdCbom(args) {
 }
 
 async function cmdGate(args) {
-  const { scanProject, toLibraryInventory, weakAlgorithmSeverity, exceedsSeverity, libraryCoversLanguage } = await import('../lib/scanner.mjs');
+  const { scanProject, toLibraryInventory, toOwnershipInventory, weakAlgorithmSeverity, exceedsSeverity, libraryCoversLanguage } = await import('../lib/scanner.mjs');
   const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
   const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
   const { existsSync } = await import('node:fs');
@@ -1210,7 +1210,14 @@ async function cmdGate(args) {
 
   try {
     const scanResults = scanProject(scanDir);
+    // The census decides the SCORE, ownership decides WHO each violation names.
+    // One list cannot do both: the synthetic owners that keep an unclaimed site
+    // reportable are extra ROWS, and the score is computed per row, so folding
+    // them into the scored list moves the score in both directions without the
+    // set of algorithms present having changed at all. It once turned a
+    // `--min-score 30` gate from 25/100 FAIL into 40/100 PASS.
     const libraries = toLibraryInventory(scanResults);
+    const owners = toOwnershipInventory(scanResults);
     const pqcResult = analyzeOffline(libraries);
     const score = pqcResult.quantumReadinessScore;
 
@@ -1283,7 +1290,7 @@ async function cmdGate(args) {
       if (lib.source && lib.source !== 'source-code') declaredBy.set(lib.name, lib.source);
     }
 
-    for (const lib of libraries) {
+    for (const lib of owners) {
       const declaredIn = declaredBy.get(lib.name) || null;
 
       for (const algoName of lib.algorithms) {

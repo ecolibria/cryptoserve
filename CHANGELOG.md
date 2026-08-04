@@ -46,27 +46,28 @@ race every time; SHA-1 stayed correct only because `crypto-js` does not declare
 it. A library now claims a site only in a language its ecosystem produces, and
 `source` libraries carry the languages the import was actually read in.
 
-The same name-only match was in two more consumers and is fixed in all three
-against one shared predicate:
+The same name-only match was in the CBOM, which dropped an `md5` read from a
+`.c` file out of the bill of materials because an npm package elsewhere in the
+tree listed MD5. Both now use one shared language predicate.
 
-- the inventory, which suppressed the owner of an `md5` in a `.c` file because
-  an npm package elsewhere in the tree listed MD5, and
-- the CBOM, which dropped that algorithm from the bill of materials for the
-  same reason.
+Ownership is now answered by its own list, separate from the inventory that
+feeds scoring. A site no same-language library claims gets a synthetic owner —
+without which barring a foreign claim would leave a `#include <openssl/md5.h>`
+site with no claimant at all, since a C include produces no library entry in
+any ecosystem. Keeping that list separate is what makes this change score-neutral:
 
-Barring foreign claims on its own would have DELETED those violations rather
-than re-attributing them: a `#include <openssl/md5.h>` site has no owning
-library in any ecosystem. The inventory now mints a synthetic owner for a site
-no same-language library claims, which is what keeps it a violation.
-
-**This can lower `quantumReadinessScore` on a tree that mixes languages.**
-Sites that were hidden behind a foreign library are now counted, and the score
-subtracts per deprecated inventory entry. Measured on this repo: single-language
-trees did not move (`backend` 40, `sdk/javascript` 37.9, and two unrelated
-projects at 90 all unchanged), while the mixed JS+Python repo root moved 29.6 to
-0 as four previously-invisible weak-algorithm entries appeared. A CI job pinned
-to `gate --min-score N` on a multi-language tree may newly fail, and the
-findings it fails on are real.
+**No score changes.** `quantumReadinessScore` is byte-identical to 0.6.0 on
+every tree measured, including mixed-language ones. That is deliberate and is
+regression-tested. `calculateQuantumScore` counts inventory ROWS —
+`deprecatedCount * 10`, uncapped — while `classifyAlgorithms` deduplicates by
+algorithm name, so one row per language for the same algorithm moves the score
+without the set of algorithms present having changed. It moves it in both
+directions, and the upward one is the dangerous one: a tree with `jose`
+(declaring `AES-GCM`) and a Python `aes-gcm` site went from 25/100 FAIL to
+40/100 PASS at `--min-score 30`, because the second spelling added a SAFE
+classification. A security gate must not turn green because attribution got
+more precise. The row-counting itself is a pre-existing property of the scoring
+model and is unchanged here.
 
 A dependency violation also no longer borrows its remediation from an unrelated
 file. `MD5 crypto-js@3.1.9` at `package.json` said "Replace with SHA-256", a fix
@@ -74,7 +75,27 @@ written for a call site in another language, which a reader has no line of
 `package.json` to apply. It now says what the other dependency-only violations
 say.
 
-## [CLI 0.6.0] - 2026-08-03
+A dependency violation also no longer borrows its remediation from an unrelated
+file. `MD5 crypto-js@3.1.9` at `package.json` said "Replace with SHA-256", a fix
+written for a call site in another language, which a reader has no line of
+`package.json` to apply. It now says what the other dependency-only violations
+say.
+
+### Known limitations
+
+The disabled-verification patterns match code, not prose, but they cannot tell
+code from a test fixture that contains code. A repository whose own sources
+carry these strings — a linter, a security guide, this scanner's test suite —
+will see critical findings on those files, and there is no per-finding waiver:
+`--max-severity` only tightens and refuses `high`/`critical` by name,
+`--allow-secrets` does not reach misuse, and `.cryptoserve.json` offers only
+`skipDirs`. This is not new (`createCipher` and `rejectUnauthorized: false`
+behave the same way today) but there are now more patterns that can hit it.
+
+These spellings are not yet detected: `from ssl import CERT_NONE` and
+`from ssl import PROTOCOL_TLSv1` (unqualified after a `from` import), and the
+method-shorthand, `async`, quoted-key and commented-body forms of a no-op
+`checkServerIdentity`.
 
 A minor rather than a patch because the shape of a `gate` violation changed. A
 CI job that filters the JSON on `.risk` will read different values after this

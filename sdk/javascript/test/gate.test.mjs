@@ -879,11 +879,34 @@ describe('gate attributes a site to a library of that language', () => {
 
     const c = at(result.violations, 'hash.c');
     assert.equal(c.length, 1, `C site lost its violation: ${JSON.stringify(result.violations, null, 1)}`);
-    assert.notEqual(c[0].source, 'crypto-js@3.1.9', 'an npm package cannot own a C call');
+    // The EXACT owner, not merely "not the wrong one". Asserting the negative
+    // let the gate fall through to the weak-pattern sweep, which raises a
+    // `misuse` row named after the file itself -- a different finding shape,
+    // with no risk and no CWE, that happens to satisfy `!== crypto-js`.
+    assert.equal(c[0].source, 'c:md5', JSON.stringify(c[0]));
+    assert.equal(c[0].risk, 'critical', JSON.stringify(c[0]));
+    assert.equal(c[0].cwe, 'CWE-328', JSON.stringify(c[0]));
 
     const go = at(result.violations, 'main.go');
     assert.equal(go.length, 1, JSON.stringify(result.violations, null, 1));
     assert.equal(go[0].source, 'crypto/md5@builtin', JSON.stringify(go[0]));
+  });
+
+  it('does not turn a failing gate green by attributing more precisely', () => {
+    // The dangerous direction, and the one an attribution change is least
+    // expected to reach. `jose` declares `AES-GCM`; the Python site is
+    // `aes-gcm`. Counting the Python site as its own inventory row adds a
+    // second SAFE classification -- the two spellings differ and that
+    // deduplication is case-sensitive -- which RAISES `safe / total`. This tree
+    // scored 25/100 and failed; it must not start passing because the gate got
+    // better at naming owners.
+    writeFileSync(join(DIR, 'package.json'),
+      JSON.stringify({ name: 'flip', dependencies: { jose: '^5.0.0' } }));
+    writeFileSync(join(DIR, 'a.py'), 'c = AESGCM(key)\n');
+
+    const { exitCode, output } = run('--min-score 30 --format json');
+    assert.equal(exitCode, 1, `gate went green on a tree that was failing: ${output}`);
+    assert.equal(JSON.parse(output).score, 25, output);
   });
 
   it('lets a JavaScript library keep its own JavaScript site', () => {
