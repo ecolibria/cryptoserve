@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+`gate` now fails a tree that disables TLS certificate verification
+([#66](https://github.com/ecolibria/cryptoserve/issues/66)).
+
+`gate --help` promises it fails on "critical API misuse such as a disabled TLS
+certificate check". It knew one spelling of that, `rejectUnauthorized: false`,
+so a project turning verification off in JavaScript AND in Python scored 100/100
+and exited 0. `scan` was equally blind, so the two commands agreed with each
+other and were both wrong. Reproduced on released 0.5.0 as well: pre-existing,
+not a regression.
+
+Now reported, each in both languages:
+
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` and a no-op `checkServerIdentity`
+- `ssl.CERT_NONE` (as `verify_mode=` and `cert_reqs=`), `check_hostname = False`
+  and `ssl._create_unverified_context()`
+- `ssl.PROTOCOL_TLSv1` and `secureProtocol: 'TLSv1_method'`, which go through
+  the same TLS version table `nginx.conf` uses. A deprecated protocol was
+  critical in a config file and invisible in source; one defect keeps one
+  severity whatever file type it is written in.
+
+Restoring verification passes the same tree, and each spelling on its own fails
+the gate at DEFAULT thresholds — a finding `scan` prints that `gate` cannot
+reach at its default settings is the defect this release already fixed once for
+medium severity.
+
 A library is no longer named as the source of a call it cannot have made
 ([#67](https://github.com/ecolibria/cryptoserve/issues/67)).
 

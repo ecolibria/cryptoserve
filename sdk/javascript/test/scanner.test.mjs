@@ -244,6 +244,158 @@ describe('toLibraryInventory language-aware dedup', () => {
   });
 });
 
+/**
+ * `gate --help` promises it fails on "critical API misuse such as a disabled
+ * TLS certificate check". It carried exactly one spelling of that,
+ * `rejectUnauthorized: false`, so a tree that turns certificate verification off
+ * in JavaScript and in Python scored 100/100 and exited 0 (#66).
+ *
+ * Reproduced on released 0.5.0 as well: pre-existing, not a regression.
+ */
+describe('TLS verification disabled in source', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  const misuseIn = (file, body) => {
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, file), body);
+    return scanProject(TEST_DIR).weakPatterns;
+  };
+  const found = (patterns, re) => patterns.filter(p => re.test(p.issue));
+
+  it('flags NODE_TLS_REJECT_UNAUTHORIZED set to 0', () => {
+    const wp = misuseIn('app.js', "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n");
+    assert.equal(found(wp, /certificate verification/i).length, 1, JSON.stringify(wp));
+    assert.equal(found(wp, /certificate verification/i)[0].severity, 'critical');
+  });
+
+  it('does not flag NODE_TLS_REJECT_UNAUTHORIZED restored to 1', () => {
+    // Setting it to 1 is the fix, not the defect. A guard that fires on the
+    // remediation teaches users to ignore it.
+    const wp = misuseIn('app.js', "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';\n");
+    assert.equal(found(wp, /certificate verification/i).length, 0, JSON.stringify(wp));
+  });
+
+  it('flags ssl.CERT_NONE', () => {
+    const wp = misuseIn('app.py', 'import ssl\nctx.verify_mode = ssl.CERT_NONE\n');
+    assert.equal(found(wp, /certificate verification/i).length, 1, JSON.stringify(wp));
+  });
+
+  it('flags cert_reqs=ssl.CERT_NONE', () => {
+    const wp = misuseIn('app.py', 'import ssl\ns = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_NONE)\n');
+    assert.equal(found(wp, /certificate verification/i).length, 1, JSON.stringify(wp));
+  });
+
+  it('does not flag a comparison against ssl.CERT_NONE', () => {
+    // `if ctx.verify_mode == ssl.CERT_NONE:` is code that CHECKS the setting.
+    const wp = misuseIn('app.py', 'import ssl\nif ctx.verify_mode == ssl.CERT_NONE:\n    warn()\n');
+    assert.equal(found(wp, /certificate verification/i).length, 0, JSON.stringify(wp));
+  });
+
+  it('flags check_hostname = False', () => {
+    const wp = misuseIn('app.py', 'import ssl\nctx.check_hostname = False\n');
+    assert.equal(found(wp, /hostname/i).length, 1, JSON.stringify(wp));
+  });
+
+  it('does not flag check_hostname = True', () => {
+    const wp = misuseIn('app.py', 'import ssl\nctx.check_hostname = True\n');
+    assert.equal(found(wp, /hostname/i).length, 0, JSON.stringify(wp));
+  });
+
+  it('flags ssl._create_unverified_context', () => {
+    const wp = misuseIn('app.py', 'import ssl\nctx = ssl._create_unverified_context()\n');
+    assert.equal(found(wp, /certificate verification/i).length, 1, JSON.stringify(wp));
+  });
+
+  it('flags a no-op checkServerIdentity', () => {
+    for (const body of [
+      'const a = new https.Agent({ checkServerIdentity: () => undefined });\n',
+      'const a = new https.Agent({ checkServerIdentity: () => {} });\n',
+      'const a = new https.Agent({ checkServerIdentity: (host, cert) => null });\n',
+      'const a = new https.Agent({ checkServerIdentity: function (h, c) { return undefined; } });\n',
+      'const a = new https.Agent({ checkServerIdentity: () => true });\n',
+      'const a = new https.Agent({ checkServerIdentity: (h, c) => { return true; } });\n',
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('app.js', body);
+      assert.equal(found(wp, /hostname/i).length, 1, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('does not flag a checkServerIdentity that does something', () => {
+    const wp = misuseIn('app.js',
+      'const a = new https.Agent({ checkServerIdentity: (host, cert) => tls.checkServerIdentity(host, cert) });\n');
+    assert.equal(found(wp, /hostname/i).length, 0, JSON.stringify(wp));
+  });
+});
+
+/**
+ * A deprecated protocol version was critical in `nginx.conf` and invisible in
+ * `app.py`. One defect must not change severity with the file type it is
+ * written in, so the source spellings go through the same TLS table the config
+ * ones do rather than becoming a second, differently-rated finding.
+ */
+describe('deprecated TLS protocol pinned in source', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  const tlsIn = (file, body) => {
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, file), body);
+    return scanProject(TEST_DIR).tlsFindings;
+  };
+
+  it('flags ssl.PROTOCOL_TLSv1 in Python', () => {
+    const tls = tlsIn('app.py', 'import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)\n');
+    assert.equal(tls.length, 1, JSON.stringify(tls));
+    assert.equal(tls[0].protocol, 'TLSv1');
+    assert.equal(tls[0].risk, 'critical');
+    assert.equal(tls[0].file, 'app.py');
+    assert.equal(tls[0].line, 2);
+  });
+
+  it('rates it exactly as the nginx spelling of the same defect', () => {
+    const py = tlsIn('app.py', 'import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)\n');
+    cleanup(); setup();
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'nginx.conf'), 'server {\n    ssl_protocols TLSv1;\n}\n');
+    const conf = scanProject(TEST_DIR).tlsFindings;
+    assert.equal(py[0].risk, conf[0].risk);
+    assert.equal(py[0].protocol, conf[0].protocol);
+  });
+
+  it('flags ssl.PROTOCOL_TLSv1_1 and rates it high', () => {
+    const tls = tlsIn('app.py', 'import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_1)\n');
+    assert.equal(tls.length, 1, JSON.stringify(tls));
+    assert.equal(tls[0].protocol, 'TLSv1.1');
+    assert.equal(tls[0].risk, 'high');
+  });
+
+  it('does not flag ssl.PROTOCOL_TLSv1_2', () => {
+    // The longest alternative has to win. TLSv1_2 is current practice, and
+    // reporting it as TLSv1 would fail a correct project at every threshold.
+    assert.deepEqual(tlsIn('app.py', 'import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)\n'), []);
+  });
+
+  it('does not flag ssl.PROTOCOL_SSLv23', () => {
+    // Despite the name, PROTOCOL_SSLv23 means "negotiate the best available"
+    // and is the modern default alias. Matching `SSLv2` inside it would flag
+    // the recommended constant as critical.
+    assert.deepEqual(tlsIn('app.py', 'import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)\n'), []);
+  });
+
+  it('flags secureProtocol: TLSv1_method in JavaScript', () => {
+    const tls = tlsIn('app.js', "const a = new https.Agent({ secureProtocol: 'TLSv1_method' });\n");
+    assert.equal(tls.length, 1, JSON.stringify(tls));
+    assert.equal(tls[0].protocol, 'TLSv1');
+    assert.equal(tls[0].risk, 'critical');
+  });
+
+  it('does not flag secureProtocol: TLSv1_2_method', () => {
+    assert.deepEqual(tlsIn('app.js', "const a = new https.Agent({ secureProtocol: 'TLSv1_2_method' });\n"), []);
+  });
+});
+
 describe('severity ladder', () => {
   it('reports no severity for an algorithm that is not weak', () => {
     // Absence of a security finding is not a finding of severity `none`. The

@@ -60,6 +60,55 @@ const MISUSE_PATTERNS = [
     severity: 'critical',
     fix: 'Remove the override and trust the system CA store',
   },
+  // `gate --help` promises to fail on "critical API misuse such as a disabled
+  // TLS certificate check", and the entry above was the only spelling of that
+  // it knew. A tree turning verification off in JavaScript and in Python scored
+  // 100/100 and exited 0 (#66). Each defect is listed in both languages,
+  // because a project that disables a check in one of them is not safer than
+  // one that disables it in the other.
+  //
+  // Separate entries rather than one alternation on purpose: the loop that
+  // applies these runs `exec` ONCE per pattern per file, so folding them
+  // together would report whichever spelling appeared first and hide the rest
+  // of the file.
+  {
+    languages: ['javascript'],
+    pattern: /NODE_TLS_REJECT_UNAUTHORIZED\s*[=:]\s*['"`]?0['"`]?/g,
+    issue: 'TLS certificate verification disabled process-wide (NODE_TLS_REJECT_UNAUTHORIZED=0)',
+    severity: 'critical',
+    fix: 'Remove the assignment; pass a CA with the `ca` option if the certificate is private',
+  },
+  {
+    languages: ['python'],
+    pattern: /(?:verify_mode|cert_reqs)\s*=\s*ssl\.CERT_NONE/g,
+    issue: 'TLS certificate verification disabled (ssl.CERT_NONE)',
+    severity: 'critical',
+    fix: 'Use ssl.CERT_REQUIRED, or ssl.create_default_context() which sets it',
+  },
+  {
+    languages: ['python'],
+    pattern: /ssl\._create_unverified_context\s*\(/g,
+    issue: 'TLS certificate verification disabled (ssl._create_unverified_context)',
+    severity: 'critical',
+    fix: 'Use ssl.create_default_context()',
+  },
+  {
+    languages: ['python'],
+    pattern: /check_hostname\s*=\s*False/g,
+    issue: 'TLS hostname verification disabled (check_hostname = False)',
+    severity: 'critical',
+    fix: 'Leave check_hostname True; a certificate for another host is not a certificate for yours',
+  },
+  {
+    // The JavaScript spelling of the same defect: an override that returns
+    // nothing accepts every certificate for every host. A real implementation
+    // calls back into `tls.checkServerIdentity`, so only the empty bodies match.
+    languages: ['javascript'],
+    pattern: /checkServerIdentity\s*:\s*(?:function\s*)?\([^)]*\)\s*(?:=>\s*)?(?:undefined\b|null\b|true\b|\{\s*\}|\{\s*return\s*(?:undefined|null|true)?\s*;?\s*\})/g,
+    issue: 'TLS hostname verification disabled (checkServerIdentity overridden with a no-op)',
+    severity: 'critical',
+    fix: 'Remove the override, or return tls.checkServerIdentity(host, cert)',
+  },
 ];
 
 /**

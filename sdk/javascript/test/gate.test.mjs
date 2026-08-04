@@ -707,6 +707,93 @@ describe('gate reports every place an algorithm is used', () => {
 });
 
 /**
+ * `gate --help` promises it fails on "critical API misuse such as a disabled
+ * TLS certificate check". It knew one spelling of that, so a tree that turns
+ * verification off in two languages and pins TLSv1 scored 100/100 and exited 0
+ * (#66). Reproduced on released 0.5.0 too: pre-existing, not a regression.
+ */
+describe('gate fails a tree with TLS verification disabled', () => {
+  let DIR;
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-tls-')); });
+  afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
+
+  function run(args = '') {
+    try {
+      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
+        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+    } catch (e) {
+      return { exitCode: e.status, output: e.stdout || '' };
+    }
+  }
+
+  it('exits non-zero on the tree the help text describes', () => {
+    writeFileSync(join(DIR, 'package.json'), JSON.stringify({ name: 'tls' }));
+    writeFileSync(join(DIR, 'app.js'),
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n"
+      + "const a = new https.Agent({ secureProtocol: 'TLSv1_method' });\n");
+    writeFileSync(join(DIR, 'app.py'),
+      'import ssl\n'
+      + 'ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)\n'
+      + 'ctx.check_hostname = False\n'
+      + 'ctx.verify_mode = ssl.CERT_NONE\n');
+
+    const { exitCode, output } = run('--format json');
+    assert.equal(exitCode, 1, output);
+    const result = JSON.parse(output);
+    assert.equal(result.status, 'fail');
+
+    // Every file that disables verification is named. One of the two would let
+    // a user fix a file, re-run, and be shown the next one.
+    const files = new Set(result.violations.map(v => v.file));
+    assert.ok(files.has('app.js'), JSON.stringify(result.violations, null, 1));
+    assert.ok(files.has('app.py'), JSON.stringify(result.violations, null, 1));
+  });
+
+  it('fails on each spelling ALONE, at default thresholds', () => {
+    // One tree carrying every spelling cannot pin any of them: the others keep
+    // the gate red. A pattern whose severity drops below the default
+    // --max-severity is a finding `scan` prints and `gate` can never reach --
+    // the same unreachability that made medium-severity findings invisible
+    // before 0.6.0 -- and a shared fixture hides it completely.
+    const spellings = {
+      'node-tls.js': "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+      'identity.js': 'const a = new https.Agent({ checkServerIdentity: () => undefined });\n',
+      'protocol.js': "const a = new https.Agent({ secureProtocol: 'TLSv1_method' });\n",
+      'cert-none.py': 'import ssl\nctx.verify_mode = ssl.CERT_NONE\n',
+      'hostname.py': 'import ssl\nctx.check_hostname = False\n',
+      'unverified.py': 'import ssl\nctx = ssl._create_unverified_context()\n',
+      'protocol.py': 'import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)\n',
+    };
+    for (const [file, body] of Object.entries(spellings)) {
+      rmSync(DIR, { recursive: true, force: true });
+      mkdirSync(DIR, { recursive: true });
+      writeFileSync(join(DIR, 'package.json'), JSON.stringify({ name: 'tls' }));
+      writeFileSync(join(DIR, file), body);
+      const { exitCode, output } = run('--format json');
+      assert.equal(exitCode, 1, `${file} alone did not fail the gate: ${output}`);
+      const violations = JSON.parse(output).violations;
+      assert.equal(violations.length, 1, `${file}: ${JSON.stringify(violations, null, 1)}`);
+      assert.equal(violations[0].file, file, JSON.stringify(violations[0]));
+    }
+  });
+
+  it('passes the same tree once verification is restored', () => {
+    // The other direction. A gate that fails everything is not a gate, and this
+    // is the shape of the fixed file.
+    writeFileSync(join(DIR, 'package.json'), JSON.stringify({ name: 'tls' }));
+    writeFileSync(join(DIR, 'app.js'),
+      "const a = new https.Agent({ secureProtocol: 'TLSv1_2_method' });\n");
+    writeFileSync(join(DIR, 'app.py'),
+      'import ssl\n'
+      + 'ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)\n'
+      + 'ctx.check_hostname = True\n');
+
+    const { exitCode, output } = run('--format json');
+    assert.equal(exitCode, 0, output);
+  });
+});
+
+/**
  * A library must not be named as the source of a call it cannot have made.
  *
  * The gate indexed sites on the algorithm NAME alone, dropping the language the
