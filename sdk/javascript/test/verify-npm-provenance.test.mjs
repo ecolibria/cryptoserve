@@ -239,6 +239,26 @@ esac
 const CURL_STUB = `#!/usr/bin/env bash
 set -uo pipefail
 echo "$*" >> "\$STUB_CURL_LOG"
+
+# Redirects are modelled the way curl behaves, not scripted independently:
+# whether the hop is taken is decided by the flags the script passed, so a
+# script that asks to follow one gets to follow it.
+follow=0
+for a in "\$@"; do
+  case "\$a" in -L|--location|--location-trusted) follow=1 ;; esac
+done
+if [ -n "\${STUB_REDIRECT_TO:-}" ]; then
+  if [ "\$follow" = "1" ]; then
+    echo "\$STUB_REDIRECT_TO" >> "\$STUB_CURL_LOG"
+    printf '%s' "\${STUB_REDIRECT_BODY:-}"
+    exit 0
+  fi
+  # An unfollowed 3xx is not an error to --fail: curl writes the short redirect
+  # body and exits 0.
+  printf '<html><head><title>301 Moved Permanently</title></head></html>'
+  exit 0
+fi
+
 if [ -z "\${STUB_BUNDLE:-}" ]; then
   echo "curl: (22) The requested URL returned error: 404" >&2
   exit 22
@@ -640,6 +660,21 @@ describe('verify-npm-provenance.sh origin assertions', () => {
     });
     assert.equal(status, 1, output);
     assert.deepEqual(fetched, [], output);
+  });
+
+  it('does not follow a redirect that leaves the registry', () => {
+    // The host pin is checked against the url the metadata NAMED. Following a
+    // redirect makes the url that was checked and the url that answers two
+    // different urls, and the second one was never checked. The body served
+    // from off-registry here is a perfectly good bundle naming this repository,
+    // so following the hop would produce a PASS from a host we never verified.
+    const result = run({
+      ...ok,
+      STUB_REDIRECT_TO: 'https://cdn.evil.example/attestations/cryptoserve@0.6.0',
+      STUB_REDIRECT_BODY: GOOD_BUNDLE,
+    });
+    assertRefused(result, 'off-registry redirect');
+    assert.deepEqual(result.fetched, [ATTESTATION_URL], result.output);
   });
 
   it('fails closed when the published tarball hash cannot be read', () => {

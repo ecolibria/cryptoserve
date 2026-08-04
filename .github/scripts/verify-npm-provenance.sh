@@ -208,7 +208,11 @@ case "$ATT_URL" in
     ;;
 esac
 
-if ! curl --silent --show-error --fail --location --max-time 60 "$ATT_URL" > bundle.json; then
+# No --location on purpose. Following redirects would hand the check straight
+# back to whoever the registry redirects to, which is the host pin above
+# undone by a 301: the url that was checked and the url that answers stop being
+# the same url. The endpoint answers 200 directly, so there is nothing to follow.
+if ! curl --silent --show-error --fail --max-time 60 "$ATT_URL" > bundle.json; then
   echo "::error::could not fetch the attestation bundle from $ATT_URL." >&2
   echo "::error::The attestation exists but its contents could not be read, so where this was" >&2
   echo "::error::built is unknown. Refusing to report it as verified." >&2
