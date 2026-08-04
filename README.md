@@ -107,12 +107,31 @@ the tag disagrees with the package version in the tree. npm publishes through
 npm Trusted Publishing and PyPI through PyPI Trusted Publishing, both over
 OIDC; no registry token exists in either workflow.
 
-Releases from `js-v0.4.0` onward also carry SLSA provenance, and the workflow
-fails the release if the published version has no attestation:
+Releases from `js-v0.4.0` onward also carry SLSA provenance. That an attestation
+exists and is trusted is not the same as it being ours, so the release fails
+unless the provenance names this repository, this workflow and the tag being
+released. To check that yourself:
 
 ```bash
-npm view cryptoserve@0.4.0 dist.attestations --json
+curl -s "$(npm view cryptoserve@0.6.0 dist.attestations.url)" | node -pe '
+JSON.parse(require("fs").readFileSync(0, "utf8")).attestations
+  .filter((a) => a.predicateType.startsWith("https://slsa.dev/provenance/"))
+  .map((a) => JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload, "base64"))
+    .predicate.buildDefinition.externalParameters.workflow)'
 ```
+
+```
+[
+  {
+    ref: 'refs/tags/js-v0.6.0',
+    repository: 'https://github.com/ecolibria/cryptoserve',
+    path: '.github/workflows/publish-npm.yml'
+  }
+]
+```
+
+`npm audit signatures`, in a project that depends on cryptoserve, verifies the
+signature chain over that attestation.
 
 Versions at or before `0.3.4` were published under the previous token-based
 workflow and carry no attestations. Verify those with `SHA256SUMS.txt` only.

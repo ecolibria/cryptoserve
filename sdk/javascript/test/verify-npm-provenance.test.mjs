@@ -18,6 +18,13 @@
  * the tests assert what the script DID rather than only what it printed:
  * "never reached `npm audit signatures`" is the property that matters for the
  * empty-tree cases, and it is not visible in the output.
+ *
+ * The second half of the file covers a different failure: the job verified that
+ * an attestation was TRUSTED and reported it as if that meant it was OURS. A
+ * package published from another repository, by another workflow, carries a
+ * perfectly valid signature and a SLSA predicate type. Those tests script the
+ * registry into serving exactly that, so the origin assertions have something
+ * to be wrong about.
  */
 
 import { describe, it, before, after } from 'node:test';
@@ -33,9 +40,105 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(__dirname, '..', '..', '..', '.github', 'scripts', 'verify-npm-provenance.sh');
 
+// Every literal below is copied from the published cryptoserve@0.6.0, so a
+// fixture that drifts from the registry's real shape is a visible edit rather
+// than a silent one:
+//
+//   npm view cryptoserve@0.6.0 dist.attestations --json
+//   npm view cryptoserve@0.6.0 dist.integrity
+//   curl -s https://registry.npmjs.org/-/npm/v1/attestations/cryptoserve@0.6.0
+const ATTESTATION_URL = 'https://registry.npmjs.org/-/npm/v1/attestations/cryptoserve@0.6.0';
+const EXPECTED_REPOSITORY = 'https://github.com/ecolibria/cryptoserve';
+const EXPECTED_WORKFLOW = '.github/workflows/publish-npm.yml';
+const EXPECTED_REF = 'refs/tags/js-v0.6.0';
+
+// One value in two encodings: `dist.integrity` is base64 SRI, the SLSA subject
+// records hex. The script converts one to the other, so the fixture keeps both
+// rather than deriving the second and testing its own arithmetic.
+const TARBALL_INTEGRITY = 'sha512-pH+sT+vikBNGSbqqLR7i6JMPFrHdWSjv9kZiQHgcUhhkskRf+o70PVQCvaND3QMeEjP8VXAthix/AK2B4nJzNQ==';
+const TARBALL_SHA512_HEX = 'a47fac4febe290134649baaa2d1ee2e8930f16b1dd5928eff6466240781c5218'
+  + '64b2445ffa8ef43d5402bda343dd031e1233fc55702d862c7f00ad81e2727335';
+
 const GOOD_ATTESTATIONS = JSON.stringify({
+  url: ATTESTATION_URL,
   provenance: { predicateType: 'https://slsa.dev/provenance/v1' },
 });
+
+/** Wrap an in-toto statement the way the registry serves it. */
+function sigstoreBundle(statement, { payloadType = 'application/vnd.in-toto+json', payload } = {}) {
+  return {
+    mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
+    verificationMaterial: { tlogEntries: [{ logIndex: '0' }] },
+    dsseEnvelope: {
+      payload: payload ?? Buffer.from(JSON.stringify(statement), 'utf-8').toString('base64'),
+      payloadType,
+      signatures: [{ sig: 'c3R1Yi1zaWduYXR1cmU=' }],
+    },
+  };
+}
+
+// The registry serves TWO attestations, and this one comes first. It is in every
+// fixture on purpose: a script that reads `attestations[0]` reads the publish
+// receipt, which carries no build claims at all, and would have to either fail a
+// correct release or pass on the absence of the fields it means to check.
+const PUBLISH_ATTESTATION = {
+  predicateType: 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1',
+  bundle: sigstoreBundle({
+    _type: 'https://in-toto.io/Statement/v0.1',
+    subject: [{ name: 'pkg:npm/cryptoserve@0.6.0', digest: { sha512: TARBALL_SHA512_HEX } }],
+    predicateType: 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1',
+    predicate: { name: 'cryptoserve', version: '0.6.0', registry: 'https://registry.npmjs.org' },
+  }),
+};
+
+/**
+ * The attestation bundle document, as JSON text, with any part of the SLSA
+ * provenance overridable. Defaults reproduce the real 0.6.0 exactly.
+ */
+function bundleDoc({
+  repository = EXPECTED_REPOSITORY,
+  path = EXPECTED_WORKFLOW,
+  ref = EXPECTED_REF,
+  workflow,
+  subject,
+  subjectName = 'pkg:npm/cryptoserve@0.6.0',
+  subjectDigest = TARBALL_SHA512_HEX,
+  outerPredicateType = 'https://slsa.dev/provenance/v1',
+  innerPredicateType = 'https://slsa.dev/provenance/v1',
+  payloadType,
+  payload,
+  omitProvenance = false,
+  attestations,
+} = {}) {
+  const statement = {
+    _type: 'https://in-toto.io/Statement/v1',
+    subject: subject ?? [{ name: subjectName, digest: { sha512: subjectDigest } }],
+    predicateType: innerPredicateType,
+    predicate: {
+      buildDefinition: {
+        buildType: 'https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1',
+        externalParameters: {
+          workflow: workflow === undefined ? { ref, repository, path } : workflow,
+        },
+        internalParameters: { github: { event_name: 'push', repository_id: '1128643599' } },
+      },
+      runDetails: { builder: { id: 'https://github.com/actions/runner/github-hosted' } },
+    },
+  };
+
+  if (attestations !== undefined) return JSON.stringify({ attestations });
+
+  const list = [PUBLISH_ATTESTATION];
+  if (!omitProvenance) {
+    list.push({
+      predicateType: outerPredicateType,
+      bundle: sigstoreBundle(statement, { payloadType, payload }),
+    });
+  }
+  return JSON.stringify({ attestations: list });
+}
+
+const GOOD_BUNDLE = bundleDoc();
 
 // A stub `npm` that scripts the registry's behaviour.
 //
@@ -72,6 +175,15 @@ case "\${1:-}" in
         exit 1
       fi
       printf '%s' "\$STUB_ATTESTATIONS"
+      exit 0
+    fi
+    # Likewise the tarball hash the provenance subject has to agree with.
+    if [[ "$*" == *"dist.integrity"* ]]; then
+      if [ -z "\${STUB_INTEGRITY:-}" ]; then
+        echo "npm error no integrity" >&2
+        exit 1
+      fi
+      printf '%s\\n' "\$STUB_INTEGRITY"
       exit 0
     fi
     if probed_present; then
@@ -120,20 +232,59 @@ case "\${1:-}" in
 esac
 `;
 
+// The attestation bundle lives behind a URL, not behind `npm`. Stubbed the same
+// way so the tests can assert WHICH url the script fetched -- "went to the
+// registry" is the property that makes reading an unverified document
+// defensible, and it is not visible in the script's output.
+const CURL_STUB = `#!/usr/bin/env bash
+set -uo pipefail
+echo "$*" >> "\$STUB_CURL_LOG"
+
+# Redirects are modelled the way curl behaves, not scripted independently:
+# whether the hop is taken is decided by the flags the script passed, so a
+# script that asks to follow one gets to follow it.
+follow=0
+for a in "\$@"; do
+  case "\$a" in -L|--location|--location-trusted) follow=1 ;; esac
+done
+if [ -n "\${STUB_REDIRECT_TO:-}" ]; then
+  if [ "\$follow" = "1" ]; then
+    echo "\$STUB_REDIRECT_TO" >> "\$STUB_CURL_LOG"
+    printf '%s' "\${STUB_REDIRECT_BODY:-}"
+    exit 0
+  fi
+  # An unfollowed 3xx is not an error to --fail: curl writes the short redirect
+  # body and exits 0.
+  printf '<html><head><title>301 Moved Permanently</title></head></html>'
+  exit 0
+fi
+
+if [ -z "\${STUB_BUNDLE:-}" ]; then
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+printf '%s' "\$STUB_BUNDLE"
+`;
+
 let sandbox;
 let stubDir;
 let stubLog;
+let stubCurlLog;
 let stubState;
 
 before(() => {
   sandbox = mkdtempSync(join(tmpdir(), 'cryptoserve-provenance-'));
   stubDir = join(sandbox, 'bin');
   stubLog = join(sandbox, 'calls.log');
+  stubCurlLog = join(sandbox, 'curl.log');
   stubState = join(sandbox, 'view-count');
   mkdirSync(stubDir, { recursive: true });
   const stubPath = join(stubDir, 'npm');
   writeFileSync(stubPath, STUB);
   chmodSync(stubPath, 0o755);
+  const curlPath = join(stubDir, 'curl');
+  writeFileSync(curlPath, CURL_STUB);
+  chmodSync(curlPath, 0o755);
 });
 
 after(() => {
@@ -146,14 +297,18 @@ after(() => {
  */
 function run(scenario = {}) {
   writeFileSync(stubLog, '');
+  writeFileSync(stubCurlLog, '');
   writeFileSync(stubState, '0');
 
   const env = {
     ...process.env,
     PATH: `${stubDir}:${process.env.PATH}`,
     STUB_LOG: stubLog,
+    STUB_CURL_LOG: stubCurlLog,
     STUB_STATE: stubState,
     STUB_ATTESTATIONS: GOOD_ATTESTATIONS,
+    STUB_BUNDLE: GOOD_BUNDLE,
+    STUB_INTEGRITY: TARBALL_INTEGRITY,
     // Enough attempts to tolerate a slow registry, at no wall-clock cost.
     PROVENANCE_POLL_ATTEMPTS: '30',
     PROVENANCE_POLL_INTERVAL: '0',
@@ -173,11 +328,14 @@ function run(scenario = {}) {
   });
 
   const calls = readFileSync(stubLog, 'utf-8').split('\n').filter(Boolean);
+  const fetches = readFileSync(stubCurlLog, 'utf-8').split('\n').filter(Boolean);
   return {
     status: result.status,
     output: `${result.stdout || ''}${result.stderr || ''}`,
     calls,
     subcommands: calls.map((c) => c.split(/\s+/)[0]),
+    // Every url the script asked curl for, in order.
+    fetched: fetches.map((line) => line.split(/\s+/).filter((a) => !a.startsWith('-')).pop()),
   };
 }
 
@@ -185,7 +343,7 @@ describe('verify-npm-provenance.sh', () => {
   it('passes when the version is visible immediately and provenance is good', () => {
     const { status, output } = run({ STUB_VISIBLE_AT: '1' });
     assert.equal(status, 0, output);
-    assert.match(output, /Provenance verified: https:\/\/slsa\.dev\/provenance\/v1/);
+    assert.match(output, /Origin verified/);
   });
 
   it('waits out a registry that is slow to propagate', () => {
@@ -194,7 +352,7 @@ describe('verify-npm-provenance.sh', () => {
     // reported FAILURE on a correct release.
     const { status, output, subcommands } = run({ STUB_VISIBLE_AT: '9' });
     assert.equal(status, 0, output);
-    assert.match(output, /Provenance verified/);
+    assert.match(output, /Origin verified/);
 
     // Keyed on metadata visibility, then installed ONCE. Retrying `npm install`
     // is what made the wait both slow and misleading.
@@ -224,7 +382,7 @@ describe('verify-npm-provenance.sh', () => {
       PROVENANCE_POLL_ATTEMPTS: undefined,
     });
     assert.equal(status, 0, output);
-    assert.match(output, /Provenance verified/);
+    assert.match(output, /Origin verified/);
   });
 
   it('refuses a poll budget it cannot act on', () => {
@@ -313,5 +471,215 @@ describe('verify-npm-provenance.sh', () => {
     });
     assert.equal(status, 1);
     assert.match(output, /not a SLSA provenance type/i);
+  });
+});
+
+/**
+ * `npm audit signatures` answers "is this attestation valid and trusted". It
+ * does not answer "is it ours", and the job printed a line that read as if it
+ * had. Every scenario below is a package with a perfectly good signature and a
+ * perfectly good SLSA predicate type, differing from ours only in what the
+ * provenance SAYS -- which is exactly the input the old check could not fail on.
+ */
+describe('verify-npm-provenance.sh origin assertions', () => {
+  const ok = { STUB_VISIBLE_AT: '1' };
+
+  /**
+   * Refused, and said so. This job's design is that its log never has to be
+   * interpreted, so a malformed attestation has to produce a `::error::` line
+   * rather than a node stack trace: both exit 1, and only one of them tells a
+   * release engineer what happened. Asserting the exit status alone cannot tell
+   * a guard from a crash, which is how an untested guard survived here.
+   */
+  function assertRefused({ status, output }, ctx) {
+    assert.equal(status, 1, `${ctx}: ${output}`);
+    assert.match(output, /::error::/, `${ctx}: no ::error:: line: ${output}`);
+    assert.doesNotMatch(output, /^\s+at /m, `${ctx}: crashed instead of refusing: ${output}`);
+    assert.doesNotMatch(output, /Origin verified/, `${ctx}: ${output}`);
+  }
+
+  it('accepts provenance naming this repository, workflow and tag', () => {
+    const { status, output, fetched } = run(ok);
+    assert.equal(status, 0, output);
+
+    // Named, not merely "verified": the success line has to be as narrow as
+    // the check behind it.
+    assert.match(output, /Origin verified/);
+    assert.ok(output.includes(EXPECTED_REPOSITORY), output);
+    assert.ok(output.includes(EXPECTED_WORKFLOW), output);
+    assert.ok(output.includes(EXPECTED_REF), output);
+
+    // Read from the registry's own attestation endpoint, taken from the
+    // metadata rather than assembled here.
+    assert.deepEqual(fetched, [ATTESTATION_URL], output);
+  });
+
+  it('rejects a valid attestation built in a different repository', () => {
+    const { status, output } = run({
+      ...ok,
+      STUB_BUNDLE: bundleDoc({ repository: 'https://github.com/attacker/cryptoserve' }),
+    });
+    assert.equal(status, 1, output);
+    assert.match(output, /repository/i);
+    assert.ok(output.includes('https://github.com/attacker/cryptoserve'), output);
+    assert.doesNotMatch(output, /Origin verified/);
+  });
+
+  it('rejects a valid attestation built by a different workflow in this repository', () => {
+    // Trusted Publishing is keyed to a workflow FILENAME. Any other workflow in
+    // the same repo that gains id-token: write can publish, and its attestation
+    // is as valid as ours.
+    const { status, output } = run({
+      ...ok,
+      STUB_BUNDLE: bundleDoc({ path: '.github/workflows/ci.yml' }),
+    });
+    assert.equal(status, 1, output);
+    assert.ok(output.includes('.github/workflows/ci.yml'), output);
+    assert.doesNotMatch(output, /Origin verified/);
+  });
+
+  it('rejects a publish that did not come from this version\'s release tag', () => {
+    // A branch publish and a stale tag are the same defect: the artifact on the
+    // registry is not the thing the tag says it is.
+    for (const ref of ['refs/heads/main', 'refs/tags/js-v0.5.0', 'refs/pull/12/merge']) {
+      const { status, output } = run({ ...ok, STUB_BUNDLE: bundleDoc({ ref }) });
+      assert.equal(status, 1, `ref=${ref}: ${output}`);
+      assert.ok(output.includes(ref), output);
+      assert.doesNotMatch(output, /Origin verified/);
+    }
+  });
+
+  it('rejects provenance that names a different package or version', () => {
+    for (const subjectName of ['pkg:npm/cryptoserve-cli@0.6.0', 'pkg:npm/cryptoserve@0.5.0']) {
+      const { status, output } = run({ ...ok, STUB_BUNDLE: bundleDoc({ subjectName }) });
+      assert.equal(status, 1, `subject=${subjectName}: ${output}`);
+      assert.match(output, /pkg:npm\/cryptoserve@0\.6\.0/);
+      assert.doesNotMatch(output, /Origin verified/);
+    }
+  });
+
+  it('rejects provenance whose subject is not the tarball that was published', () => {
+    // The name can be right while the digest describes something else. Binding
+    // to `dist.integrity` is what ties these claims to the artifact
+    // `npm audit signatures` actually verified, rather than to a document that
+    // merely mentions our name.
+    const { status, output } = run({
+      ...ok,
+      STUB_BUNDLE: bundleDoc({ subjectDigest: 'b'.repeat(128) }),
+    });
+    assert.equal(status, 1, output);
+    assert.match(output, /different artifact|digest/i);
+    assert.doesNotMatch(output, /Origin verified/);
+  });
+
+  it('fails when the bundle carries no SLSA provenance attestation', () => {
+    const { status, output } = run({ ...ok, STUB_BUNDLE: bundleDoc({ omitProvenance: true }) });
+    assert.equal(status, 1, output);
+    assert.match(output, /no SLSA provenance/i);
+
+    // Naming what it did find proves the list was searched rather than indexed:
+    // the registry puts the publish receipt at [0] and the provenance at [1],
+    // so a script reading attestations[0] would report this same absence on a
+    // correct release.
+    assert.ok(output.includes('https://github.com/npm/attestation/tree/main/specs/publish/v0.1'), output);
+  });
+
+  it('fails closed when the bundle cannot be fetched', () => {
+    const result = run({ ...ok, STUB_BUNDLE: '' });
+    assertRefused(result, 'unfetchable bundle');
+    assert.match(result.output, /attestation bundle/i);
+  });
+
+  it('fails closed on a bundle it cannot parse', () => {
+    for (const body of ['<html>502 Bad Gateway</html>', '', 'null', '{}', '{"attestations":[]}']) {
+      // An empty STUB_BUNDLE means "curl failed", covered above; use a blank
+      // JSON body for the empty-document case instead.
+      const bundle = body === '' ? '   ' : body;
+      assertRefused(run({ ...ok, STUB_BUNDLE: bundle }), `body=${JSON.stringify(body)}`);
+    }
+  });
+
+  it('fails closed when the signed payload is not readable in-toto JSON', () => {
+    const cases = [
+      { payload: Buffer.from('not json', 'utf-8').toString('base64') },
+      { payload: '!!!! not base64 !!!!' },
+      { payloadType: 'application/octet-stream' },
+    ];
+    for (const c of cases) {
+      assertRefused(run({ ...ok, STUB_BUNDLE: bundleDoc(c) }), JSON.stringify(c));
+    }
+  });
+
+  it('trusts the predicate type inside the signature, not the one beside it', () => {
+    // The entry's predicateType is registry metadata sitting OUTSIDE the DSSE
+    // envelope. Believing it over the signed statement would let an unsigned
+    // label decide which document gets read as provenance.
+    const { status, output } = run({
+      ...ok,
+      STUB_BUNDLE: bundleDoc({ innerPredicateType: 'https://example.invalid/attestation/v1' }),
+    });
+    assert.equal(status, 1, output);
+    assert.match(output, /signed statement/i);
+  });
+
+  it('fails closed when the workflow claims are absent or not strings', () => {
+    const cases = [
+      { workflow: null },
+      { workflow: {} },
+      { workflow: { repository: EXPECTED_REPOSITORY, path: EXPECTED_WORKFLOW } },
+      { workflow: { repository: 123, path: EXPECTED_WORKFLOW, ref: EXPECTED_REF } },
+      { workflow: 'https://github.com/ecolibria/cryptoserve' },
+    ];
+    for (const c of cases) {
+      assertRefused(run({ ...ok, STUB_BUNDLE: bundleDoc(c) }), JSON.stringify(c));
+    }
+  });
+
+  it('fails closed when dist.attestations carries no bundle url', () => {
+    const { status, output, fetched } = run({
+      ...ok,
+      STUB_ATTESTATIONS: JSON.stringify({
+        provenance: { predicateType: 'https://slsa.dev/provenance/v1' },
+      }),
+    });
+    assert.equal(status, 1, output);
+    assert.match(output, /url/i);
+    assert.deepEqual(fetched, [], output);
+  });
+
+  it('refuses a bundle url that is not on the npm registry', () => {
+    // The bundle is parsed, not signature-checked -- `npm audit signatures` did
+    // that, against the registry. Reading build claims off an arbitrary host
+    // would put the origin verdict in the hands of whoever answers that url.
+    const { status, output, fetched } = run({
+      ...ok,
+      STUB_ATTESTATIONS: JSON.stringify({
+        url: 'https://registry.npmjs.org.attacker.example/attestations/cryptoserve@0.6.0',
+        provenance: { predicateType: 'https://slsa.dev/provenance/v1' },
+      }),
+    });
+    assert.equal(status, 1, output);
+    assert.deepEqual(fetched, [], output);
+  });
+
+  it('does not follow a redirect that leaves the registry', () => {
+    // The host pin is checked against the url the metadata NAMED. Following a
+    // redirect makes the url that was checked and the url that answers two
+    // different urls, and the second one was never checked. The body served
+    // from off-registry here is a perfectly good bundle naming this repository,
+    // so following the hop would produce a PASS from a host we never verified.
+    const result = run({
+      ...ok,
+      STUB_REDIRECT_TO: 'https://cdn.evil.example/attestations/cryptoserve@0.6.0',
+      STUB_REDIRECT_BODY: GOOD_BUNDLE,
+    });
+    assertRefused(result, 'off-registry redirect');
+    assert.deepEqual(result.fetched, [ATTESTATION_URL], result.output);
+  });
+
+  it('fails closed when the published tarball hash cannot be read', () => {
+    const { status, output } = run({ ...ok, STUB_INTEGRITY: '' });
+    assert.equal(status, 1, output);
+    assert.doesNotMatch(output, /Origin verified/);
   });
 });

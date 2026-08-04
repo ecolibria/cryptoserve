@@ -257,9 +257,16 @@ jobs:
           Published from this tag via npm Trusted Publishing (OIDC). No long-lived
           registry token is used at any point in this release.
 
-          Verify:
+          The release gate checks that the published provenance names this
+          repository, .github/workflows/publish-npm.yml and this tag, not
+          merely that some trusted attestation exists. Verify:
 
-              npm view cryptoserve@$VERSION dist.attestations --json
+              curl -s "\$(npm view cryptoserve@$VERSION dist.attestations.url)" | node -pe '
+              JSON.parse(require("fs").readFileSync(0, "utf8")).attestations
+                .filter((a) => a.predicateType.startsWith("https://slsa.dev/provenance/"))
+                .map((a) => JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload, "base64"))
+                  .predicate.buildDefinition.externalParameters.workflow)'
+
               gh release download $TAG -p SHA256SUMS.txt -p '*.tgz' -R ecolibria/cryptoserve
               sha256sum -c SHA256SUMS.txt
           EOF
