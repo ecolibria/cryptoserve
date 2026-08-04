@@ -49,7 +49,7 @@ architectural hooks are baked in now.
 
 ### CI/CD Gate
 - Exit code 0/1 for pass/fail in pipelines
-- Configurable thresholds: --max-risk, --min-score, --fail-on-weak
+- Configurable thresholds: --max-risk, --max-severity, --min-score, --fail-on-weak
 - JSON output for machine consumption
 
 ### Algorithm Database
@@ -234,7 +234,7 @@ policies:
 - Policy dry-run mode: evaluate policy against existing codebase without blocking
 
 **Architecture hooks needed now:**
-- Gate command already accepts --max-risk, --min-score, --fail-on-weak -- extend to accept --policy <file>
+- Gate command already accepts --max-risk, --max-severity, --min-score, --fail-on-weak -- extend to accept --policy <file>
 - Scan results must include file paths for every finding (already present for some finding types, missing for others)
 - Finding schema must include `dateIntroduced` field (requires git blame integration or baseline comparison)
 - Policy evaluation must be a separate module that takes scan results + policy definition as input and produces pass/fail + violations as output
@@ -468,7 +468,7 @@ org:
 
 ### 3. Policy-as-Data Foundation
 
-The gate command currently uses flag-based thresholds (--max-risk, --min-score, --fail-on-weak). Extend it to accept a YAML/JSON policy file.
+The gate command currently uses flag-based thresholds (--max-risk, --max-severity, --min-score, --fail-on-weak). Extend it to accept a YAML/JSON policy file.
 
 **Current gate interface:**
 ```bash
