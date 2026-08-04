@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
 # Verify that a published npm version carries a registry signature and a SLSA
-# provenance attestation.
+# provenance attestation, and that the provenance names THIS repository's
+# release workflow at the tag being released.
 #
 #     verify-npm-provenance.sh <package> <version>
 #
-# Exits 0 only when both are present and verified.
+# Exits 0 only when all of that holds.
 #
 # Why this is a script rather than an inline `run:` block: the 0.5.0 release
 # reported FAILURE here while having published correctly, WITH correct
@@ -36,6 +37,25 @@ set -euo pipefail
 
 PKG="${1:?usage: verify-npm-provenance.sh <package> <version>}"
 VERSION="${2:?usage: verify-npm-provenance.sh <package> <version>}"
+
+# Constants of THIS repository's release path, deliberately not overridable.
+# An expectation that can be relaxed by the environment is an off switch, and
+# the only caller is the verify-provenance job in publish-npm.yml.
+#
+# The tag shape mirrors verify-tag in that workflow, which already refuses to
+# publish unless `js-v<version>` agrees with sdk/javascript/package.json. Here
+# it does the other half: the artifact ON THE REGISTRY has to have been built
+# from that same tag, not from a branch and not from some other version's tag.
+EXPECTED_REPOSITORY="https://github.com/ecolibria/cryptoserve"
+EXPECTED_WORKFLOW=".github/workflows/publish-npm.yml"
+EXPECTED_REF="refs/tags/js-v$VERSION"
+EXPECTED_SUBJECT="pkg:npm/$PKG@$VERSION"
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "::error::curl is required to fetch the attestation bundle and is not on PATH." >&2
+  echo "::error::This is a runner configuration failure, NOT a provenance failure." >&2
+  exit 2
+fi
 
 # Overridable so the regression test drives the same code path without sleeping.
 # CI uses the defaults: 30 attempts at 10s is a ~4.8 minute budget.
@@ -136,7 +156,186 @@ node -e '
     console.error("::error::provenance.predicateType is not a SLSA provenance type: " + JSON.stringify(pt));
     process.exit(1);
   }
-  console.log("Provenance verified: " + pt);
+  console.log("Attestation predicate type: " + pt);
 '
 
-echo "$PKG@$VERSION: signature and SLSA provenance verified."
+# ---------------------------------------------------------------------------
+# Origin.
+#
+# Everything above establishes that the attestation is VALID and TRUSTED. None
+# of it establishes that it is OURS. `npm audit signatures` verifies the
+# signature chain against npm's public keys, which a package published from any
+# other repository by any other workflow also satisfies, and `predicateType`
+# says what KIND of document this is, not what the document says. The old
+# success line, "signature and SLSA provenance verified", read as a statement
+# about origin and was not one.
+#
+# The claims that identify the build are inside the attestation bundle, which
+# `npm view dist.attestations` only links to. Fetch it and assert the four
+# fields that make "ours" checkable: repository, workflow path, ref, subject.
+#
+# What this deliberately does NOT do is re-verify the bundle's Sigstore
+# signature. `npm audit signatures` above already did that, over the tarball
+# whose hash is `dist.integrity`. Re-implementing Sigstore verification in bash
+# would be a second, worse copy of a check that already ran. Two things keep
+# reading this document honest instead:
+#
+#   1. It is fetched from the registry itself, not from a url an attacker could
+#      point elsewhere -- asserted below before the fetch happens.
+#   2. Its subject digest must equal `dist.integrity`, so the origin claims
+#      describe the exact artifact npm verified, not merely an artifact.
+# ---------------------------------------------------------------------------
+
+ATT_URL="$(node -e '
+  const fs = require("fs");
+  let a = null;
+  try { a = JSON.parse(fs.readFileSync("att.json", "utf8") || "null"); } catch {}
+  const u = a && a.url;
+  if (typeof u !== "string" || u === "") {
+    console.error("::error::dist.attestations carries no bundle url; cannot check where this was built.");
+    process.exit(1);
+  }
+  process.stdout.write(u);
+')"
+
+case "$ATT_URL" in
+  https://registry.npmjs.org/*) ;;
+  *)
+    echo "::error::attestation bundle url is not on registry.npmjs.org: $ATT_URL" >&2
+    echo "::error::The build claims below are read from that document without re-checking its" >&2
+    echo "::error::signature, so it has to come from the registry npm just verified against." >&2
+    exit 1
+    ;;
+esac
+
+if ! curl --silent --show-error --fail --location --max-time 60 "$ATT_URL" > bundle.json; then
+  echo "::error::could not fetch the attestation bundle from $ATT_URL." >&2
+  echo "::error::The attestation exists but its contents could not be read, so where this was" >&2
+  echo "::error::built is unknown. Refusing to report it as verified." >&2
+  exit 1
+fi
+
+# The published tarball hash, to bind the provenance subject to it.
+if ! npm view "$PKG@$VERSION" dist.integrity > integrity.txt; then
+  echo "::error::could not read dist.integrity for $PKG@$VERSION." >&2
+  echo "::error::Without it the provenance subject cannot be tied to the published tarball." >&2
+  exit 1
+fi
+
+EXPECTED_REPOSITORY="$EXPECTED_REPOSITORY" \
+EXPECTED_WORKFLOW="$EXPECTED_WORKFLOW" \
+EXPECTED_REF="$EXPECTED_REF" \
+EXPECTED_SUBJECT="$EXPECTED_SUBJECT" \
+node -e '
+  const fs = require("fs");
+  const fail = (...lines) => {
+    for (const l of lines) console.error("::error::" + l);
+    process.exit(1);
+  };
+
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync("bundle.json", "utf8") || "null");
+  } catch (e) {
+    fail("attestation bundle is not readable JSON: " + e.message);
+  }
+  const list = doc && doc.attestations;
+  if (!Array.isArray(list) || list.length === 0) {
+    fail("attestation bundle carries no attestations.");
+  }
+
+  // The registry serves the npm publish receipt first and the provenance
+  // second. Search by type; attestations[0] is the receipt, which carries no
+  // build claims at all.
+  const entry = list.find((a) => a && typeof a.predicateType === "string"
+    && a.predicateType.startsWith("https://slsa.dev/provenance/"));
+  if (!entry) {
+    fail("attestation bundle carries no SLSA provenance attestation.",
+      "types present: " + list.map((a) => (a && a.predicateType) || "(untyped)").join(", "));
+  }
+
+  const env = entry.bundle && entry.bundle.dsseEnvelope;
+  if (!env || typeof env.payload !== "string" || env.payload === "") {
+    fail("SLSA attestation carries no dsseEnvelope payload.");
+  }
+  if (env.payloadType !== "application/vnd.in-toto+json") {
+    fail("SLSA attestation payloadType is not in-toto: " + JSON.stringify(env.payloadType));
+  }
+
+  let stmt;
+  try {
+    // Buffer.from drops invalid base64 rather than throwing, so the parse below
+    // is what actually rejects a corrupt payload.
+    stmt = JSON.parse(Buffer.from(env.payload, "base64").toString("utf8"));
+  } catch (e) {
+    fail("SLSA attestation payload is not base64-encoded JSON: " + e.message);
+  }
+  if (!stmt || typeof stmt !== "object") {
+    fail("SLSA attestation payload did not decode to an in-toto statement.");
+  }
+
+  // The entry predicateType sits OUTSIDE the envelope and nothing signed it.
+  // The one that decides whether this document is provenance is the one inside.
+  if (typeof stmt.predicateType !== "string"
+    || !stmt.predicateType.startsWith("https://slsa.dev/provenance/")) {
+    fail("signed statement is not SLSA provenance: " + JSON.stringify(stmt.predicateType),
+      "the entry outside the signature claimed " + JSON.stringify(entry.predicateType) + ".");
+  }
+
+  const wantSubject = process.env.EXPECTED_SUBJECT;
+  const subjects = Array.isArray(stmt.subject) ? stmt.subject : [];
+  const subject = subjects.find((s) => s && s.name === wantSubject);
+  if (!subject) {
+    fail("provenance does not name " + wantSubject + ".",
+      "subjects: " + JSON.stringify(subjects.map((s) => (s && s.name) || null)));
+  }
+
+  // Name is not identity: bind to the tarball npm verified the signature over.
+  const integrity = fs.readFileSync("integrity.txt", "utf8").trim();
+  const sri = /^sha512-(.+)$/.exec(integrity);
+  if (!sri) {
+    fail("dist.integrity is not a sha512 SRI value: " + JSON.stringify(integrity));
+  }
+  const published = Buffer.from(sri[1], "base64").toString("hex");
+  const attested = subject.digest && subject.digest.sha512;
+  if (typeof attested !== "string") {
+    fail("provenance subject " + wantSubject + " carries no sha512 digest.");
+  }
+  if (attested.toLowerCase() !== published) {
+    fail("provenance describes a different artifact than the one published.",
+      "subject sha512:  " + attested,
+      "published tarball: " + published);
+  }
+
+  const bd = stmt.predicate && stmt.predicate.buildDefinition;
+  const wf = bd && bd.externalParameters && bd.externalParameters.workflow;
+  if (!wf || typeof wf !== "object" || Array.isArray(wf)) {
+    fail("provenance carries no buildDefinition.externalParameters.workflow; "
+      + "there is nothing in it that says where this was built.");
+  }
+
+  for (const [field, expected] of [
+    ["repository", process.env.EXPECTED_REPOSITORY],
+    ["path", process.env.EXPECTED_WORKFLOW],
+    ["ref", process.env.EXPECTED_REF],
+  ]) {
+    // No separate "is it a string" guard: `expected` is always a string and the
+    // comparison is strict, so a missing, numeric or object value fails here
+    // too, and JSON.stringify makes it visible in the message. A guard no input
+    // can reach is not defence in depth, it is a line that cannot be tested --
+    // mutation testing reported exactly that one as a survivor.
+    const got = wf[field];
+    if (got !== expected) {
+      fail("provenance workflow." + field + " is " + JSON.stringify(got)
+        + ", expected " + JSON.stringify(expected) + ".",
+        "The attestation is valid and trusted. It is not from this release.");
+    }
+  }
+
+  console.log("Origin verified: " + wantSubject + " was built by " + wf.path
+    + " in " + wf.repository + " at " + wf.ref + ".");
+'
+
+echo "$PKG@$VERSION: npm verified the registry signature and attestation; the SLSA"
+echo "provenance names $EXPECTED_REPOSITORY, $EXPECTED_WORKFLOW and $EXPECTED_REF,"
+echo "over the tarball that was published."
