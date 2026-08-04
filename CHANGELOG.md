@@ -75,12 +75,6 @@ written for a call site in another language, which a reader has no line of
 `package.json` to apply. It now says what the other dependency-only violations
 say.
 
-A dependency violation also no longer borrows its remediation from an unrelated
-file. `MD5 crypto-js@3.1.9` at `package.json` said "Replace with SHA-256", a fix
-written for a call site in another language, which a reader has no line of
-`package.json` to apply. It now says what the other dependency-only violations
-say.
-
 ### Known limitations
 
 The disabled-verification patterns match code, not prose, but they cannot tell
@@ -96,6 +90,8 @@ These spellings are not yet detected: `from ssl import CERT_NONE` and
 `from ssl import PROTOCOL_TLSv1` (unqualified after a `from` import), and the
 method-shorthand, `async`, quoted-key and commented-body forms of a no-op
 `checkServerIdentity`.
+
+## [CLI 0.6.0] - 2026-08-03
 
 A minor rather than a patch because the shape of a `gate` violation changed. A
 CI job that filters the JSON on `.risk` will read different values after this

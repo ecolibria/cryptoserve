@@ -313,6 +313,42 @@ describe('ownership inventory is separate from the scored census', () => {
       'ownership must be the longer list, or the split has collapsed');
   });
 
+  it('the CENSUS still mints an entry for an algorithm no library declares', () => {
+    // The census has its own fail-open, and it is older than the ownership one:
+    // an algorithm seen only in source, that NO library lists under any name,
+    // must still reach the scored inventory. Splitting the two lists moved the
+    // only test of this onto `toOwnershipInventory` and left the census side
+    // unguarded -- deleting its minting loop passed the whole suite while
+    // changing the score on hundreds of trees, and turned a 70/100 FAIL into a
+    // 100/100 PASS.
+    writeFileSync(join(TEST_DIR, 'Cargo.toml'), '[dependencies]\nsha2 = "0.10"\n');
+    writeFileSync(join(TEST_DIR, 'x.c'), 'void f(void){ RSA_public_encrypt(0,0,0,0,0); }\n');
+
+    const census = toLibraryInventory(scanProject(TEST_DIR));
+    const rsa = census.find(l => l.name === 'c:rsa');
+    assert.ok(rsa, `census lost the only entry for an unlisted algorithm: `
+      + JSON.stringify(census.map(l => l.name)));
+    // The fields the score reads. `quantumRisk` feeds classification and the
+    // KEM/signature recommendations; `isDeprecated` feeds the per-row penalty
+    // and the SNDL risk level. Neither is reachable from the ownership tests,
+    // because the gate takes risk and CWE from the algorithm database instead.
+    assert.equal(rsa.quantumRisk, 'high', JSON.stringify(rsa));
+    assert.equal(rsa.isDeprecated, false, JSON.stringify(rsa));
+  });
+
+  it('carries the weakness of a minted entry into the census', () => {
+    // The other side of `isDeprecated`. Dropping it inflated the score on 256
+    // trees, always upward, because the per-row deprecation penalty stopped
+    // firing for exactly the algorithms that earned it.
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'hash.c'), '#include <openssl/md5.h>\nvoid f(void){MD5_CTX c;MD5_Init(&c);}\n');
+
+    const md5 = toLibraryInventory(scanProject(TEST_DIR)).find(l => l.name === 'c:md5');
+    assert.ok(md5, 'census lost the C md5 entry');
+    assert.equal(md5.isDeprecated, true, JSON.stringify(md5));
+    assert.equal(md5.quantumRisk, 'critical', JSON.stringify(md5));
+  });
+
   it('keeps the census identical whichever language the site is in', () => {
     // The upward direction of the same defect, which is the dangerous one: a
     // library declaring `AES-GCM` beside a Python `aes-gcm` site would add a
@@ -359,16 +395,41 @@ describe('TLS verification disabled in source', () => {
     assert.equal(found(wp, /certificate verification/i)[0].severity, 'critical');
   });
 
-  it('flags the bracket and ||= spellings of the same override', () => {
+  it('flags every receiver and shape that sets the override to 0', () => {
+    // Narrowing this to `process.env.X = 0` to stop it matching its own
+    // documentation lost five real defects. What makes it a defect is assigning
+    // 0 to that name, not which object happens to hold the environment.
     for (const body of [
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
       "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';\n",
       'process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;\n',
       "process.env.NODE_TLS_REJECT_UNAUTHORIZED ||= '0';\n",
       "process . env . NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+      "const { env } = process;\nenv.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+      "const e = process.env;\ne.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+      "Bun.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+      "spawn('node', ['x.js'], { env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0' } });\n",
+      "Object.assign(process.env, { NODE_TLS_REJECT_UNAUTHORIZED: '0' });\n",
+      "Object.assign(process.env, { 'NODE_TLS_REJECT_UNAUTHORIZED': 0 });\n",
     ]) {
       cleanup(); setup();
       const wp = misuseIn('app.js', body);
       assert.equal(found(wp, /certificate verification/i).length, 1, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('does not flag those shapes when the value restores verification', () => {
+    // Every shape above, set to 1. A guard that fires on the remediation is
+    // worse than no guard.
+    for (const body of [
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';\n",
+      "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '1';\n",
+      "const { env } = process;\nenv.NODE_TLS_REJECT_UNAUTHORIZED = '1';\n",
+      "Object.assign(process.env, { NODE_TLS_REJECT_UNAUTHORIZED: '1' });\n",
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('app.js', body);
+      assert.equal(found(wp, /certificate verification/i).length, 0, `${body} -> ${JSON.stringify(wp)}`);
     }
   });
 

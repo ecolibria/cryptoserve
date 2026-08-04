@@ -881,9 +881,13 @@ describe('gate attributes a site to a library of that language', () => {
     assert.equal(c.length, 1, `C site lost its violation: ${JSON.stringify(result.violations, null, 1)}`);
     // The EXACT owner, not merely "not the wrong one". Asserting the negative
     // let the gate fall through to the weak-pattern sweep, which raises a
-    // `misuse` row named after the file itself -- a different finding shape,
-    // with no risk and no CWE, that happens to satisfy `!== crypto-js`.
+    // `type: 'misuse'` row whose `source` is the FILE -- a different finding
+    // that happens to satisfy `!== crypto-js`. It carries the same risk and CWE
+    // (both come from the algorithm database), so only `source` and the row
+    // type tell the two apart.
     assert.equal(c[0].source, 'c:md5', JSON.stringify(c[0]));
+    assert.equal(c[0].type, undefined, `fell through to the misuse sweep: ${JSON.stringify(c[0])}`);
+    assert.equal(c[0].algorithm.toLowerCase(), 'md5', JSON.stringify(c[0]));
     assert.equal(c[0].risk, 'critical', JSON.stringify(c[0]));
     assert.equal(c[0].cwe, 'CWE-328', JSON.stringify(c[0]));
 

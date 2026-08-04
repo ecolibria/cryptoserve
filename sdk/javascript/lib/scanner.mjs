@@ -72,17 +72,28 @@ const MISUSE_PATTERNS = [
   // together would report whichever spelling appeared first and hide the rest
   // of the file.
   {
-    // Anchored on the ENV ACCESS, not on the bare name. Matching the name alone
+    // Anchored on an ASSIGNMENT, not on the bare name. Matching the name alone
     // flagged every mention of it -- including this rule's own `issue:` string
     // one screen up, so `gate` reported a critical finding against the
-    // definition of the check. Prose that names the anti-pattern is not the
-    // anti-pattern, and a security tool that fails its own source teaches
-    // people to ignore it.
+    // definition of the check. A security tool that fails its own source
+    // teaches people to ignore it.
     //
-    // Requiring `process.env` also reaches the bracket form, which the bare
-    // name matched only by accident of it appearing inside the brackets.
+    // Three shapes, because narrowing to `process.env.X = 0` alone lost five
+    // real defects that the bare name had caught:
+    //
+    //   1. member assignment  -- `process.env.X = '0'`, and equally
+    //      `env.X = '0'` after `const { env } = process`, `e.X` after
+    //      `const e = process.env`, and `Bun.env.X`. Any receiver: what makes
+    //      it a defect is assigning 0 to that name, not which object holds it.
+    //   2. subscript          -- `process.env['X'] = 0`
+    //   3. object property    -- `{ ...process.env, X: '0' }` and
+    //      `Object.assign(process.env, { X: '0' })`, which no member-access
+    //      pattern can reach.
+    //
+    // Still missed, deliberately, because they need binding analysis rather
+    // than another alternative: `??=`, and `Deno.env.set('X', '0')`.
     languages: ['javascript'],
-    pattern: /process\s*\.\s*env\s*(?:\.\s*NODE_TLS_REJECT_UNAUTHORIZED|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\])\s*(?:\|\|)?=\s*['"`]?0['"`]?/g,
+    pattern: /(?:\w\s*\.\s*NODE_TLS_REJECT_UNAUTHORIZED\s*(?:\|\|)?=\s*['"`]?0['"`]?|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\]\s*(?:\|\|)?=\s*['"`]?0['"`]?|['"`]?NODE_TLS_REJECT_UNAUTHORIZED['"`]?\s*:\s*['"`]?0['"`]?)/g,
     issue: 'TLS certificate verification disabled process-wide (NODE_TLS env override set to 0)',
     severity: 'critical',
     fix: 'Remove the assignment; pass a CA with the `ca` option if the certificate is private',
@@ -181,24 +192,32 @@ export function exceedsSeverity(severity, threshold) {
  *
  * No manifest ecosystem produces C, and that gap is load-bearing rather than an
  * omission: a `#include <openssl/md5.h>` site has no owning library at all, so
- * it depends on the synthetic owner `toLibraryInventory` mints for it. Narrowing
- * the claim without that fallback would delete the violation instead of
- * re-attributing it.
+ * it depends on the synthetic owner `toOwnershipInventory` mints for it.
+ * Narrowing the claim without that fallback would delete the violation instead
+ * of re-attributing it.
  */
-export const ECOSYSTEM_LANGUAGES = {
-  npm: ['javascript'],
-  go: ['go'],
-  pypi: ['python'],
-  cargo: ['rust'],
-  maven: ['java'],
-  source: [], // recorded per library, from the files the import was seen in
-};
+export const ECOSYSTEM_LANGUAGES = Object.freeze({
+  npm: Object.freeze(['javascript']),
+  go: Object.freeze(['go']),
+  pypi: Object.freeze(['python']),
+  cargo: Object.freeze(['rust']),
+  maven: Object.freeze(['java']),
+  source: Object.freeze([]), // recorded per library, from the files the import was seen in
+});
 
-/** The languages a library can own a call site in. */
+/**
+ * The languages a library can own a call site in.
+ *
+ * Returns a COPY. Handing out the table's own array made an exported constant
+ * writable through any inventory entry that derived from it -- one
+ * `entry.languages.push(...)` would have rewritten `ECOSYSTEM_LANGUAGES.npm`
+ * process-wide, for every library and both inventories at once. Nothing mutates
+ * it today; the frozen table and the copy mean nothing can start to.
+ */
 export function libraryLanguages(lib) {
   if (!lib) return [];
-  if (Array.isArray(lib.languages)) return lib.languages;
-  return ECOSYSTEM_LANGUAGES[lib.ecosystem] || [];
+  if (Array.isArray(lib.languages)) return [...lib.languages];
+  return [...(ECOSYSTEM_LANGUAGES[lib.ecosystem] || [])];
 }
 
 /**
@@ -728,16 +747,19 @@ export function toLibraryInventory(scanResults) {
  * happens next depends on the algorithm:
  *
  *   - a WEAK one is still caught by the weakPatterns sweep at the end of the
- *     gate, but as a `misuse` row named after the FILE, carrying no risk and no
- *     CWE. The violation survives; the attribution and the shape do not.
+ *     gate, but as a `type: 'misuse'` row whose `source` is the FILE and whose
+ *     `algorithm` is the issue prose. The violation survives; the attribution
+ *     does not.
  *   - one that is only QUANTUM-risky has no weakPattern to fall back on, so it
- *     disappears entirely.
+ *     disappears entirely. `node-rsa` in a manifest with `RSA_public_encrypt`
+ *     in a `.c` file loses the `.c` violation and keeps only the manifest row.
  *
- * Measured, not assumed: an earlier version of this comment claimed the
- * synthetic owner is what keeps `md5@hash.c` a violation at all. Mutating the
- * gate to iterate the census instead showed the sweep still reports that site,
- * which is why the regression test now pins the exact owner, risk and CWE
- * rather than merely asserting the wrong library is not named.
+ * Measured twice, and wrong twice before this wording. The first version
+ * claimed the synthetic owner is what keeps `md5@hash.c` a violation at all;
+ * mutating the gate to iterate the census showed the sweep still reports it.
+ * The second claimed the sweep's row carries no risk and no CWE; it carries
+ * both, from `lookupAlgorithm`. What actually distinguishes the two is `source`
+ * and the row type, which is what the regression test pins.
  */
 export function toOwnershipInventory(scanResults) {
   const inventory = inventoryEntries(scanResults);
