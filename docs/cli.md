@@ -140,6 +140,23 @@ into a kill switch for a disabled TLS certificate check. It also does not reach
 credential findings: secrets and committed private keys are waivable only by
 name, with `--allow-secrets`.
 
+#### What the SARIF contains
+
+`gate --format sarif` reports the decision this run made: the violations that
+failed it, at the thresholds you passed. Change `--max-severity` and the
+document changes; pass a gate and it has no results at all. Each result names
+the threshold it breached, so the report explains the red build rather than
+restating the scan.
+
+`scan --format sarif` is the other document: every finding in the tree,
+independent of any threshold. Upload that one if you want the Security tab to
+hold everything the scanner can see rather than everything that failed the gate.
+
+Before 0.6.0 they were the same document. `gate --format sarif` re-read the tree
+with `scan`'s collector, so no threshold reached it: a build failing on three
+dependency violations uploaded a report naming none of them, and a build that
+passed uploaded alerts anyway.
+
 `--min-score` must be a number from 0 to 100, `--max-risk` one of the five
 levels and `--max-severity` one of its three; anything else exits `2` rather
 than running. This matters because an unenforceable threshold is not a lax gate

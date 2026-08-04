@@ -220,6 +220,15 @@ export function scanProject(projectDir, options = {}) {
     filesWalked: 0,    // every file the walker examined, analyzed or not
     // New in v0.2.0
     sourceAlgorithms: [],
+    // Every place an algorithm was seen, as opposed to `sourceAlgorithms`,
+    // which is the deduplicated inventory: one row per algorithm:language for
+    // the whole tree. Both are wanted, by different callers. A CBOM component
+    // list must not repeat a component once per file; a gate reporting a
+    // violation must name every file the reader has to change. Before this
+    // existed the gate read the inventory, so MD5 in three files was one
+    // violation naming the first, and the user found the second only after
+    // fixing the first.
+    algorithmSites: [],
     tlsFindings: [],
     binaryFindings: [],
     languagesDetected: new Set(),
@@ -337,6 +346,16 @@ export function scanProject(projectDir, options = {}) {
 
     for (const algo of langResult.algorithms) {
       const dbEntry = lookupAlgorithm(algo.algorithm);
+      // Recorded before the inventory deduplication, and never subject to it:
+      // this is the list of places, and the second and third file are exactly
+      // what the deduplication drops.
+      results.algorithmSites.push({
+        algorithm: algo.algorithm,
+        category: algo.category,
+        language,
+        file: relPath,
+        line: algo.line,
+      });
       const sourceAlgoKey = `${algo.algorithm}:${language}`;
       if (!seenSourceAlgos.has(sourceAlgoKey)) {
         seenSourceAlgos.add(sourceAlgoKey);
@@ -395,6 +414,13 @@ export function scanProject(projectDir, options = {}) {
 
     // Keys generated below the current minimum size.
     for (const weakKey of scanWeakKeySizes(content)) {
+      results.algorithmSites.push({
+        algorithm: weakKey.algorithm,
+        category: weakKey.category,
+        language,
+        file: relPath,
+        line: weakKey.line,
+      });
       const key = `${weakKey.algorithm}:${language}`;
       if (!seenSourceAlgos.has(key)) {
         seenSourceAlgos.add(key);
