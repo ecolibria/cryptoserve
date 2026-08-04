@@ -188,6 +188,11 @@ Full reference: [docs/cli.md](docs/cli.md).
 Each SARIF result carries the `file:line` that produced it, so findings land on
 the right line in the GitHub Security tab and in pull request annotations.
 
+The gate's SARIF describes the gate's decision: the violations that failed this
+run at these thresholds, each naming the threshold it breached. A passing gate
+uploads no alerts. For every finding in the tree regardless of any threshold,
+upload `cryptoserve scan --format sarif` instead.
+
 `--max-risk` bounds quantum risk; `--max-severity` bounds the security severity
 `scan` reports. They are separate questions: SHA-256 is quantum `low` and good
 practice, unauthenticated CBC has no quantum problem and is a `medium` security

@@ -98,8 +98,63 @@ publish workflow.
 - **A quantum-risk violation is no longer a dead end.** It had no remediation
   line at all, because the answer is a migration rather than a per-line edit.
   It now says so and names `cryptoserve pqc`.
+- **`gate --format sarif` did not describe the decision `gate` had made.** It
+  re-read the tree with `scan`'s collector, so the document was byte-identical
+  to `scan --format sarif` however the gate had been configured, and every
+  threshold reached the exit code, the text report and the JSON report but not
+  the one artifact a CI job uploads. A build that failed on three manifest
+  violations uploaded a SARIF naming none of them; a build that passed uploaded
+  alerts for findings it had just accepted; a build that failed on `--min-score`
+  alone uploaded an empty document. This is the sixth appearance of one
+  fail-open, and the first in the reporting layer rather than the decision. The
+  SARIF is now built from the same `violations` array the other two formats
+  read, so there is one decision and three renderings of it. Each result also
+  names the threshold it breached, which is the answer to "why is this build
+  red" and was in no format before.
+- **`gate` collapsed one algorithm across files.** MD5 in `a.js`, `b.js` and
+  `c.js` was one violation naming `a.js`, so a CI user fixed one file per run
+  and learned about the next only after the first was green, while `scan`
+  reported all three from the start. The cause is one level down: `scanProject`
+  deduplicates `sourceAlgorithms` on `algorithm:language` across the whole tree,
+  which is right for an inventory (a CBOM must not list one component three
+  times) and wrong for a gate (a violation is a place to change code). Scan
+  results now carry `algorithmSites`, every place an algorithm was seen, and the
+  gate reports one violation per place. The 0.4.0 deduplication stays: that bug
+  was one call site emitting a risk row and a weakness row for the SAME line,
+  and the violation key is now `algorithm:file:line`, which still merges those.
+- **A violation from a manifest had nowhere to point.** A dependency the scanner
+  never saw used carried no location, which is a dead end in the text report and
+  a result that GitHub code scanning drops in the SARIF one. It now points at
+  the manifest that declares it.
+- **`scan` and `gate` filed one finding under two SARIF rule ids.** Code
+  scanning groups and tracks alerts by `ruleId`. The scanner canonicalizes
+  source tokens to lowercase (`md5`) and the package database spells the same
+  algorithm as a datasheet does (`MD5`), so an alert could close and reopen
+  depending on which command last ran. Rule ids are lowercase. A committed
+  private key also had no rule of its own and shared the catch-all
+  `cryptoserve/finding`; it is now `cryptoserve/private-key`.
+
+### Added
+
+- `violations` in `--format json` carry `manifest` (the file that declares a
+  dependency), `protocol` on a TLS violation and `secretType` on a credential
+  violation. All three were already implied by other fields; naming them lets a
+  CI policy group without parsing a sentence.
+- `scan --format json` carries `algorithmSites`: every algorithm occurrence with
+  its file and line, alongside the deduplicated `sourceAlgorithms` inventory.
 
 ### Notes
+
+`gate --format sarif` and `scan --format sarif` are now different documents on
+purpose. The gate reports what failed THIS run at THESE thresholds, so a passing
+gate emits no results. `scan --format sarif` still reports every finding in the
+tree. A pipeline that uploads the gate's document to code scanning will see
+fewer alerts after this release, and the ones it loses are the findings the gate
+was configured to accept.
+
+One algorithm used in N files now reports N violations where it reported one, so
+a CI policy comparing `summary` counts or `violations.length` across the upgrade
+will see them rise. The verdict does not change: a tree that failed still fails.
 
 `--max-severity` does not reach credential findings. Secrets and committed
 private keys fail under their own rule and are waivable only by name, with

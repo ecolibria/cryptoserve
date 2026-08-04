@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
@@ -342,5 +342,355 @@ describe('gate severity axis', () => {
     assert.match(help, /--max-risk/);
     assert.match(help, /quantum/i);
     assert.match(help, /--max-severity/);
+  });
+
+  it('says in --help that its SARIF is this run, not the whole tree', () => {
+    // `gate --format sarif` and `scan --format sarif` used to be the same
+    // document. They are now different answers to different questions, and a
+    // CI author choosing between them has to be told which is which.
+    const help = execSync(`${process.execPath} ${CLI} help gate`, { encoding: 'utf-8' });
+    assert.match(help, /--format sarif/);
+    assert.match(help, /scan --format sarif/);
+  });
+});
+
+/**
+ * One decision, three renderings.
+ *
+ * `gate --format sarif` re-ran `collectFindings(scanResults)` instead of
+ * reporting the violations `gate` had just decided on, so the document was
+ * byte-identical to `scan --format sarif` and no threshold reached it. A CI job
+ * failed the build on three manifest violations and uploaded a SARIF naming one
+ * source finding; another passed the build and uploaded alerts anyway.
+ *
+ * The test that shipped in #62 asserted only "SARIF has error results -> exit
+ * 1". The converse -- gate failed, so SARIF must say why -- is the half that was
+ * missing, and it is the half that was broken.
+ */
+describe('gate renders one decision in every format', () => {
+  let DIR;
+  // A fresh directory per test, from mkdtemp rather than a shared name: these
+  // trees are what the assertions measure, and a sibling test writing into the
+  // same path under a parallel runner would rewrite the measurement.
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-format-')); });
+  afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
+
+  const MD5 = 'const c = require("crypto");\nconst h = c.createHash("md5");\n';
+  const RSA = 'const c = require("crypto");\n'
+    + 'const kp = c.generateKeyPairSync("rsa", { modulusLength: 2048 });\n';
+  const CBC = 'const c = require("crypto");\nconst ci = c.createCipheriv("aes-256-cbc", k, iv);\n';
+  const ECB = 'const c = require("crypto");\nconst ci = c.createCipheriv("aes-256-ecb", k, iv);\n';
+
+  function write(name, body) { writeFileSync(join(DIR, name), body); }
+  function manifest(deps) { write('package.json', JSON.stringify({ name: 'fmt', ...(deps ? { dependencies: deps } : {}) })); }
+
+  function run(args) {
+    try {
+      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
+        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+    } catch (e) {
+      return { exitCode: e.status, output: e.stdout || '' };
+    }
+  }
+
+  function asJson(args = '') {
+    const { exitCode, output } = run(`${args} --format json`);
+    return { exitCode, result: JSON.parse(output), output };
+  }
+
+  function asSarif(args = '') {
+    const { exitCode, output } = run(`${args} --format sarif`);
+    const doc = JSON.parse(output);
+    return { exitCode, doc, results: doc.runs[0].results || [], output };
+  }
+
+  const uris = (results) => results
+    .map(r => r.locations?.[0]?.physicalLocation?.artifactLocation?.uri)
+    .sort();
+
+  it('names in SARIF every violation that failed the build', () => {
+    // crypto-js 3.1.9-1 puts DES and 3DES in the inventory from the manifest
+    // alone; MD5 comes from source. `gate` failed on all three and its SARIF
+    // carried the one that happened to be a scanner weakPattern, so the two
+    // manifest violations that failed the build were invisible in the report
+    // uploaded to explain it.
+    manifest({ 'crypto-js': '3.1.9-1' });
+    write('app.js', MD5);
+
+    const { result } = asJson('--min-score 0');
+    assert.equal(result.status, 'fail', JSON.stringify(result, null, 1));
+    assert.ok(result.violations.length >= 3, JSON.stringify(result.violations));
+
+    const { exitCode, results } = asSarif('--min-score 0');
+    assert.equal(exitCode, 1);
+    assert.equal(results.length, result.violations.length,
+      `JSON reported ${result.violations.length} violations, SARIF ${results.length}`);
+    for (const v of result.violations) {
+      assert.ok(results.some(r => r.message.text.includes(v.algorithm)),
+        `SARIF never names ${v.algorithm}: ${results.map(r => r.message.text).join(' | ')}`);
+    }
+  });
+
+  it('uploads no alert for a tree it passed', () => {
+    // Unauthenticated CBC is `medium`, which the default threshold accepts. The
+    // gate said PASS and the same invocation emitted a code-scanning alert, so
+    // a job that exited 0 still opened an alert nobody could act on -- the
+    // reverse of the failure above, from the same cause.
+    manifest();
+    write('app.js', CBC);
+
+    const { exitCode, result } = asJson('--min-score 0');
+    assert.equal(result.status, 'pass', JSON.stringify(result, null, 1));
+    assert.equal(exitCode, 0);
+
+    const sarif = asSarif('--min-score 0');
+    assert.equal(sarif.exitCode, 0);
+    assert.deepEqual(sarif.results, [], `passing gate emitted ${sarif.results.length} SARIF results`);
+  });
+
+  it('changes the SARIF when a threshold changes the verdict', () => {
+    // Pinned from both sides: the test above fixes the passing end, this one
+    // the failing end. A SARIF emitter that reported nothing at all would
+    // satisfy the first and fail this one.
+    manifest();
+    write('app.js', CBC);
+
+    const { exitCode, results } = asSarif('--min-score 0 --max-severity low');
+    assert.equal(exitCode, 1);
+    assert.ok(results.some(r => /cbc/i.test(r.message.text)),
+      `--max-severity low failed the gate but SARIF says: ${JSON.stringify(results)}`);
+  });
+
+  it('agrees with its own JSON at every threshold', () => {
+    // The property, over the flags that move the verdict: one decision, so the
+    // count and the exit code are the same in both formats.
+    manifest({ 'crypto-js': '3.1.9-1' });
+    write('app.js', MD5);
+    write('lib.js', CBC);
+    write('nginx.conf', 'server {\n  ssl_protocols SSLv3;\n}\n');
+
+    for (const flags of ['', '--max-severity low', '--max-severity none', '--max-risk none', '--fail-on-weak']) {
+      const j = asJson(`--min-score 0 ${flags}`);
+      const s = asSarif(`--min-score 0 ${flags}`);
+      assert.equal(s.exitCode, j.exitCode, `exit codes differ for "${flags}"`);
+      assert.equal(s.results.length, j.result.violations.length,
+        `"${flags}": ${j.result.violations.length} violations, ${s.results.length} SARIF results`);
+    }
+  });
+
+  it('says in SARIF why a build failed on the score alone', () => {
+    // The shape of the whole defect, on the one axis that raises no violation:
+    // red build, empty document, nothing in the Security tab to explain it.
+    manifest();
+    write('app.js', RSA);
+
+    const { exitCode, result } = asJson('--min-score 99');
+    assert.equal(exitCode, 1);
+    assert.equal(result.violations.length, 0, 'fixture must fail on score only');
+
+    const sarif = asSarif('--min-score 99');
+    assert.equal(sarif.exitCode, 1);
+    assert.equal(sarif.results.length, 1, JSON.stringify(sarif.results));
+    assert.match(sarif.results[0].message.text, /score .* below the minimum 99/i);
+    assert.equal(sarif.results[0].level, 'error');
+    // Anchored, or code scanning renders no alert for it at all.
+    assert.deepEqual(uris(sarif.results), ['package.json'], JSON.stringify(sarif.results));
+  });
+
+  it('anchors a score failure even with no manifest to anchor it to', () => {
+    // The score is computed from source-detected libraries too, so a tree with
+    // no manifest can fail on it. `locations: []` is schema-valid and invisible
+    // in the Security tab, which is the defect this release is fixing.
+    write('app.js', RSA);
+
+    const { results } = asSarif('--min-score 99');
+    assert.equal(results.length, 1, JSON.stringify(results));
+    assert.deepEqual(uris(results), ['app.js'], JSON.stringify(results));
+    // The anchor is a place to start reading, not the file that caused it.
+    assert.match(results[0].message.text, /verdict on the project, not on this file/);
+  });
+
+  it('ranks a quantum-risk breach by its risk, not by a default', () => {
+    // A quantum-only violation has no security severity -- that is the point of
+    // the two axes -- so the SARIF level was falling to the "unknown severity"
+    // default. A critical breach that failed the build was filed as a warning.
+    manifest();
+    write('app.js', RSA);
+
+    const { results } = asSarif('--min-score 0 --max-risk low');
+    const rsa = results.find(r => /rsa/i.test(r.message.text));
+    assert.ok(rsa, JSON.stringify(results));
+    assert.equal(rsa.level, 'error', JSON.stringify(rsa));
+  });
+
+  it('gives a finding the same rule id as scan does', () => {
+    // Code scanning groups, deduplicates and tracks alerts by ruleId. Two
+    // commands reporting one tree under two ids means an alert that closes and
+    // reopens depending on which one ran.
+    write('.env', `AWS_ACCESS_KEY_ID=${'AKIA' + 'EXAMPLEKEY0000FF'}\n`);
+    // The manifest matters: the package database spells the algorithm `MD5`
+    // and the source scanner canonicalizes the same one to `md5`, so a gate
+    // reporting the dependency filed it under an id `scan` never emits.
+    manifest({ 'crypto-js': '3.1.9-1' });
+    write('app.js', MD5);
+    write('nginx.conf', 'server {\n  ssl_protocols SSLv3;\n}\n');
+
+    const scanned = JSON.parse(execSync(
+      `${process.execPath} ${CLI} scan ${DIR} --format sarif`,
+      { encoding: 'utf-8', timeout: 30000 },
+    )).runs[0].results.map(r => r.ruleId);
+
+    const mine = asSarif('--min-score 0').results.map(r => r.ruleId);
+
+    // MD5, the secret and the protocol are in both reports, so both must file
+    // them under one id. (DES and 3DES are in the gate's alone: they come from
+    // the dependency, which `scan` never saw used. Two reports of different
+    // things is not disagreement.)
+    for (const id of ['cryptoserve/weak-algorithm/md5', 'cryptoserve/secret/aws-access', 'cryptoserve/tls/SSLv3']) {
+      assert.ok(scanned.includes(id), `scan lost ${id}: ${scanned.join(', ')}`);
+      assert.ok(mine.includes(id), `gate says ${mine.join(', ')}, not ${id}`);
+    }
+
+    // And nothing may agree only up to spelling: an id that differs by case is
+    // a second rule as far as code scanning is concerned.
+    const byCase = new Map(scanned.map(id => [id.toLowerCase(), id]));
+    for (const id of mine) {
+      const twin = byCase.get(id.toLowerCase());
+      if (twin) assert.equal(id, twin, 'gate and scan spell one rule id two ways');
+    }
+  });
+
+  it('gives a manifest violation the same next step as a source one', () => {
+    // The scanner produces a fix only where it read a source line, so the same
+    // algorithm was answered two ways: "Replace with AES-256-GCM" when seen in
+    // `app.js` and "56-bit key is trivially brutable" -- a description, not a
+    // step -- when seen in `package.json`.
+    manifest({ 'crypto-js': '3.1.9-1' });
+    write('app.js', 'const c = require("crypto");\nconst ci = c.createCipheriv("des-ede3-cbc", k, iv);\n');
+
+    const { result } = asJson('--min-score 0');
+    const fromManifest = result.violations.find(v => /^des$/i.test(v.algorithm));
+    const fromSource = result.violations.find(v => /3des|des-ede3/i.test(v.algorithm));
+    assert.ok(fromManifest, JSON.stringify(result.violations, null, 1));
+    assert.ok(fromSource, JSON.stringify(result.violations, null, 1));
+    for (const v of [fromManifest, fromSource]) {
+      assert.match(v.reason, /^Replace with /, `${v.algorithm}: ${v.reason}`);
+    }
+  });
+
+  it('gives every SARIF result a location code scanning can render', () => {
+    // A result with no physical location is dropped by GitHub code scanning, so
+    // a manifest violation with nowhere to point would fail the build and still
+    // show up nowhere. A dependency has a location: the manifest that declares
+    // it.
+    manifest({ 'crypto-js': '3.1.9-1' });
+    write('app.js', MD5);
+
+    const { results } = asSarif('--min-score 0');
+    assert.ok(results.length > 0);
+    for (const r of results) {
+      const uri = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri;
+      assert.ok(uri, `no location on ${r.ruleId}: ${r.message.text}`);
+    }
+    assert.ok(uris(results).includes('package.json'),
+      `manifest violations do not point at the manifest: ${uris(results)}`);
+  });
+});
+
+/**
+ * One algorithm in three files is three places to fix.
+ *
+ * `byAlgorithm` was keyed on the algorithm name and `locations` kept the first
+ * hit, so MD5 in `a.js`, `b.js` and `c.js` was one violation naming `a.js`. A CI
+ * user fixed that file, re-ran, and was shown `b.js` -- N cycles for N files --
+ * while `scan` and the SARIF path reported all three from the start.
+ *
+ * The root cause is one level down: `scanProject` deduplicates
+ * `sourceAlgorithms` on `algorithm:language` across the WHOLE tree, so the gate
+ * could not have seen the second file. That is why the quantum-risk case below
+ * matters: it has no weakPattern to fall back on.
+ *
+ * The dedup itself stays. The 0.4.0 bug it was added for was one call site
+ * emitting a risk row and a weakness row for the SAME line, which the last test
+ * here pins.
+ */
+describe('gate reports every place an algorithm is used', () => {
+  let DIR;
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-sites-')); });
+  afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
+
+  const MD5 = 'const c = require("crypto");\nconst h = c.createHash("md5");\n';
+  const RSA = 'const c = require("crypto");\n'
+    + 'const kp = c.generateKeyPairSync("rsa", { modulusLength: 2048 });\n';
+  const ECB = 'const c = require("crypto");\nconst ci = c.createCipheriv("aes-256-ecb", k, iv);\n';
+
+  function spread(body, files = ['a.js', 'b.js', 'c.js']) {
+    writeFileSync(join(DIR, 'package.json'), JSON.stringify({ name: 'sites' }));
+    for (const f of files) writeFileSync(join(DIR, f), body);
+  }
+
+  function run(args) {
+    try {
+      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
+        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+    } catch (e) {
+      return { exitCode: e.status, output: e.stdout || '' };
+    }
+  }
+
+  const asJson = (args = '') => JSON.parse(run(`${args} --format json`).output);
+  const asSarif = (args = '') => JSON.parse(run(`${args} --format sarif`).output).runs[0].results || [];
+
+  it('reports a weak algorithm once per file, not once per name', () => {
+    spread(MD5);
+    const result = asJson('--min-score 0');
+    const md5 = result.violations.filter(v => /md5/i.test(v.algorithm));
+    assert.deepEqual(md5.map(v => v.file).sort(), ['a.js', 'b.js', 'c.js'],
+      JSON.stringify(result.violations, null, 1));
+  });
+
+  it('reports a quantum-risk breach once per file too', () => {
+    // No weakPattern exists for RSA -- it is not a weak algorithm, it is a
+    // quantum-vulnerable one -- so this case cannot be fixed by reading the
+    // scanner's weakness list. It pins the deduplication in `scanProject`.
+    spread(RSA);
+    const result = asJson('--min-score 0 --max-risk medium');
+    const rsa = result.violations.filter(v => /rsa/i.test(v.algorithm));
+    assert.deepEqual(rsa.map(v => v.file).sort(), ['a.js', 'b.js', 'c.js'],
+      JSON.stringify(result.violations, null, 1));
+  });
+
+  it('names all three files in SARIF as well as JSON', () => {
+    spread(MD5);
+    const violations = asJson('--min-score 0').violations;
+    const results = asSarif('--min-score 0');
+    const uris = results
+      .map(r => r.locations?.[0]?.physicalLocation?.artifactLocation?.uri)
+      .sort();
+    assert.deepEqual(uris, ['a.js', 'b.js', 'c.js'], JSON.stringify(results));
+    assert.equal(results.length, violations.length);
+  });
+
+  it('still counts one algorithm at one location once', () => {
+    // The 0.4.0 defect, kept red-proofed: `gate --fail-on-weak` emitted a row
+    // for the risk breach and a row for the weakness from a single call site,
+    // doubling the violation count. Splitting on location must not bring that
+    // back -- one file, one violation, under the flag that used to double it.
+    spread(ECB, ['a.js']);
+    for (const flags of ['', '--fail-on-weak', '--max-risk none --fail-on-weak']) {
+      const result = asJson(`--min-score 0 ${flags}`);
+      const ecb = result.violations.filter(v => /ecb/i.test(v.algorithm));
+      assert.equal(ecb.length, 1, `"${flags}" raised ${ecb.length} violations for one call site: `
+        + JSON.stringify(ecb, null, 1));
+    }
+  });
+
+  it('does not multiply a per-file violation by the flags that reach it', () => {
+    spread(MD5);
+    for (const flags of ['', '--fail-on-weak', '--max-risk none']) {
+      const result = asJson(`--min-score 0 ${flags}`);
+      const md5 = result.violations.filter(v => /md5/i.test(v.algorithm));
+      assert.equal(md5.length, 3, `"${flags}": ${JSON.stringify(md5.map(v => `${v.file}:${v.line}`))}`);
+    }
   });
 });
