@@ -1332,9 +1332,22 @@ async function cmdGate(args) {
           // scanner produces a fix only where it read a source line, so DES in
           // `package.json` said "56-bit key is trivially brutable" (a
           // description) while DES in `app.js` said "Replace with AES-256-GCM"
-          // (an action). One algorithm, one answer, wherever it was found.
+          // (an action).
+          //
+          // An algorithm reached only through a manifest gets a DIFFERENT
+          // action, because "Replace with AES-256-GCM" points at a call site
+          // the scanner never found: crypto-js lists DES in its catalogue
+          // whether or not anything calls it, so a user who has fixed every
+          // line of their own code still fails the gate and has nothing left
+          // to edit. The action for a dependency is at the dependency, and the
+          // report says which case this is rather than leaving the reader to
+          // discover it.
+          const replacement = entry.isWeak && entry.replacement ? entry.replacement : null;
           const reason = scanned?.fix
-            || (entry.isWeak && entry.replacement ? `Replace with ${entry.replacement}` : undefined)
+            || (place.manifest && replacement
+              ? `declared by this dependency and not seen in the scanned source: `
+                + `use ${replacement} if you call it, or drop the dependency`
+              : undefined)
             || (entry.isWeak ? entry.weaknessReason : undefined)
             || (riskBreach ? `quantum risk ${entry.quantumRisk}; run \`cryptoserve pqc\` for migration options` : undefined);
           if (reason) violation.reason = reason;

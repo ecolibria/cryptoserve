@@ -560,11 +560,14 @@ describe('gate renders one decision in every format', () => {
     }
   });
 
-  it('gives a manifest violation the same next step as a source one', () => {
-    // The scanner produces a fix only where it read a source line, so the same
-    // algorithm was answered two ways: "Replace with AES-256-GCM" when seen in
-    // `app.js` and "56-bit key is trivially brutable" -- a description, not a
-    // step -- when seen in `package.json`.
+  it('gives a manifest violation an action the reader can actually take', () => {
+    // Two failures, one line of text. It said "56-bit key is trivially
+    // brutable", a description rather than a step. Answering it with the
+    // scanner's step, "Replace with AES-256-GCM", is worse: crypto-js lists DES
+    // in its catalogue whether or not anything calls it, so a user who has
+    // fixed every line of their own code still fails the gate and is told to
+    // edit a call site that does not exist. The remediation loop has to
+    // terminate, and for a dependency it terminates at the dependency.
     manifest({ 'crypto-js': '3.1.9-1' });
     write('app.js', 'const c = require("crypto");\nconst ci = c.createCipheriv("des-ede3-cbc", k, iv);\n');
 
@@ -573,9 +576,17 @@ describe('gate renders one decision in every format', () => {
     const fromSource = result.violations.find(v => /3des|des-ede3/i.test(v.algorithm));
     assert.ok(fromManifest, JSON.stringify(result.violations, null, 1));
     assert.ok(fromSource, JSON.stringify(result.violations, null, 1));
-    for (const v of [fromManifest, fromSource]) {
-      assert.match(v.reason, /^Replace with /, `${v.algorithm}: ${v.reason}`);
-    }
+
+    // The algorithm the scanner read in a file: edit that line.
+    assert.match(fromSource.reason, /^Replace with AES-256-GCM/, fromSource.reason);
+    assert.ok(fromSource.file, JSON.stringify(fromSource));
+
+    // The algorithm reached only through the manifest: the same replacement is
+    // named, and so is the fact that this one is about the dependency.
+    assert.ok(fromManifest.manifest, JSON.stringify(fromManifest));
+    assert.match(fromManifest.reason, /AES-256-GCM/, fromManifest.reason);
+    assert.match(fromManifest.reason, /dependency/, fromManifest.reason);
+    assert.match(fromManifest.reason, /not seen in the scanned source/, fromManifest.reason);
   });
 
   it('gives every SARIF result a location code scanning can render', () => {
