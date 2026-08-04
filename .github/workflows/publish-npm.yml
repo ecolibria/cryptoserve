@@ -189,66 +189,35 @@ jobs:
         working-directory: sdk/javascript
         run: npm publish --provenance --access public
 
+  # A publish that produces no attestation cannot be verified by consumers.
+  # cryptoserve@0.3.4 shipped with --provenance and has no attestations at all,
+  # which went unnoticed. This job exists to fail the release instead.
+  #
+  # The body lives in .github/scripts/verify-npm-provenance.sh rather than
+  # inline, because it is the one step here that a release cannot afford to get
+  # wrong twice: the 0.5.0 release reported FAILURE from this job while having
+  # published correctly, with correct provenance, because it read registry
+  # propagation as an absent attestation. As a script it is exercised by
+  # sdk/javascript/test/verify-npm-provenance.test.mjs against a stubbed npm on
+  # every CI run, including the propagation case that has no other way to be
+  # reproduced.
   verify-provenance:
     needs: [verify-tag, publish]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4.3.0
         with:
           node-version: '24'
 
-      # A publish that produces no attestation cannot be verified by consumers.
-      # cryptoserve@0.3.4 shipped with --provenance and has no attestations at
-      # all, which went unnoticed. Fail the release instead.
-      # npm audit signatures cryptographically verifies the registry signature
-      # and the provenance attestation against npm's public keys. Grepping the
-      # metadata blob for the string "slsa" would only prove a word appears in
-      # some JSON: a descriptor is not a signature, and a check that cannot
-      # fail on a forged input is not a check.
+      # The version reaches the script as an argument via the environment, not
+      # by expression interpolation into the shell text. verify-tag has already
+      # constrained it, but a `run:` block that pastes an expression into its
+      # own source is a shape worth not having in the repo at all.
       - name: Verify provenance cryptographically
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.verify-tag.outputs.version }}"
-          WORKDIR="$(mktemp -d)"
-          cd "$WORKDIR"
-          npm init -y >/dev/null 2>&1
-
-          for attempt in 1 2 3 4 5; do
-            if npm install --no-audit --no-fund "cryptoserve@$VERSION" >/dev/null 2>&1; then
-              break
-            fi
-            echo "Version not installable yet (attempt $attempt); waiting for registry propagation..."
-            sleep 20
-          done
-
-          # Fails on a missing, malformed, or untrusted attestation.
-          if ! npm audit signatures; then
-            echo "::error::cryptoserve@$VERSION failed signature/provenance verification."
-            echo "::error::Check Trusted Publishing: npm trust list cryptoserve"
-            exit 1
-          fi
-
-          # audit signatures also passes for a package that is merely signed,
-          # so assert the provenance attestation exists and carries a SLSA
-          # predicate type in the field that defines it, not anywhere in the
-          # document.
-          npm view "cryptoserve@$VERSION" dist.attestations --json > att.json || true
-          node -e '
-            const fs = require("fs");
-            let a = null;
-            try { a = JSON.parse(fs.readFileSync("att.json", "utf8") || "null"); } catch {}
-            if (!a) {
-              console.error("::error::no dist.attestations on the published version");
-              process.exit(1);
-            }
-            const pt = a && a.provenance && a.provenance.predicateType;
-            if (typeof pt !== "string" || !pt.startsWith("https://slsa.dev/provenance/")) {
-              console.error("::error::provenance.predicateType is not a SLSA provenance type: " + JSON.stringify(pt));
-              process.exit(1);
-            }
-            console.log("Provenance verified: " + pt);
-          '
-          echo "cryptoserve@$VERSION: signature and SLSA provenance verified."
+        env:
+          PKG_VERSION: ${{ needs.verify-tag.outputs.version }}
+        run: .github/scripts/verify-npm-provenance.sh cryptoserve "$PKG_VERSION"
 
   release:
     needs: [verify-tag, publish]
