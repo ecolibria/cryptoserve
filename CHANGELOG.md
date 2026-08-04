@@ -126,6 +126,15 @@ publish workflow.
   never saw used carried no location, which is a dead end in the text report and
   a result that GitHub code scanning drops in the SARIF one. It now points at
   the manifest that declares it.
+- **A violation from a manifest had no step the reader could take.** It carried
+  the algorithm database's description (`56-bit key is trivially brutable`)
+  rather than an action, and the scanner's action is the wrong one here:
+  crypto-js lists DES in its catalogue whether or not anything calls it, so
+  "Replace with AES-256-GCM" points at a call site that does not exist. A user
+  who had fixed every line of their own code still failed the gate with nothing
+  left to edit. A dependency-declared algorithm now says so and gives the action
+  that applies to a dependency: use the replacement where you call it, or drop
+  the dependency.
 - **`scan` and `gate` filed one finding under two SARIF rule ids.** Code
   scanning groups and tracks alerts by `ruleId`. The scanner canonicalizes
   source tokens to lowercase (`md5`) and the package database spells the same
