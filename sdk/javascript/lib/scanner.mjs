@@ -62,6 +62,46 @@ const MISUSE_PATTERNS = [
   },
 ];
 
+/**
+ * The security severity `scan` reports for a weak algorithm.
+ *
+ * Exported because `gate` needs the same answer for algorithms it only ever
+ * sees named in a dependency manifest, where no source line was read and so no
+ * weakPattern exists to carry a severity. Restating the rule in the gate would
+ * let the two commands drift into rating the same algorithm differently, which
+ * is the class of disagreement issue #58 is about.
+ *
+ * Returns null for an algorithm that is not weak: absence of a security finding
+ * is not the same claim as a finding of severity `none`.
+ */
+export function weakAlgorithmSeverity(dbEntry) {
+  if (!dbEntry || !dbEntry.isWeak) return null;
+  return dbEntry.quantumRisk === 'critical' ? 'critical' : 'high';
+}
+
+/** The severity ladder, lowest to highest. */
+export const SEVERITY_ORDER = ['none', 'low', 'medium', 'high', 'critical'];
+
+/**
+ * Does a finding's severity exceed a threshold?
+ *
+ * Unknown severities fail CLOSED. `SEVERITY_ORDER.indexOf` returns -1 for a
+ * value the ladder does not know, and `-1 > anything` is false, so comparing
+ * indices directly means a typo in one pattern definition -- `severity:
+ * 'moderate'` -- makes that finding silently unable to breach any threshold.
+ * The gate would report the tree clean and never mention the finding it could
+ * not classify. A gate must not be disarmed by a misspelling.
+ *
+ * A null severity means the scanner reported no security finding at all, which
+ * is a different claim from a finding of severity `none`, and never breaches.
+ */
+export function exceedsSeverity(severity, threshold) {
+  if (severity === null || severity === undefined) return false;
+  const idx = SEVERITY_ORDER.indexOf(severity);
+  if (idx === -1) return true;
+  return idx > SEVERITY_ORDER.indexOf(threshold);
+}
+
 // Modes that are not weak on their own but carry a caveat worth surfacing.
 const MODE_ADVISORIES = {
   'aes-cbc': {
@@ -322,7 +362,7 @@ export function scanProject(projectDir, options = {}) {
           line: algo.line,
           algorithm: algo.algorithm,
           issue: `${algo.algorithm.toUpperCase()}: ${dbEntry.weaknessReason}`,
-          severity: dbEntry.quantumRisk === 'critical' ? 'critical' : 'high',
+          severity: weakAlgorithmSeverity(dbEntry),
           cwe: dbEntry.cwe,
           fix: dbEntry.replacement ? `Replace with ${dbEntry.replacement}` : undefined,
           evidence: algo.evidence,

@@ -16,7 +16,7 @@
  *   cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]
  *   cryptoserve context list | show NAME [--verbose] [--format json]
  *   cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]
- *   cryptoserve gate [path] [--max-risk R] [--min-score N] [--fail-on-weak] [--format json]
+ *   cryptoserve gate [path] [--max-risk R] [--max-severity S] [--min-score N] [--fail-on-weak] [--format json]
  *   cryptoserve vault init|set|get|list|delete|run|import|export [--password P]
  *   cryptoserve login [--server URL]
  *   cryptoserve status
@@ -37,7 +37,7 @@ const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-
 const OPTIONS_WITH_VALUES = new Set([
   '--password', '--algorithm', '--profile', '--format', '--file',
   '--output', '--server', '--context', '--max-risk', '--min-score',
-  '--emit-findings',
+  '--max-severity', '--emit-findings',
 ]);
 
 const KNOWN_FLAGS = new Set([
@@ -294,7 +294,7 @@ async function cmdHelp() {
   console.log(`    ${info('pqc [path] [--profile P] [--format json]')} Post-quantum readiness analysis`);
   console.log(`    ${info('scan [path] [--format json]')}           Scan project for crypto & secrets`);
   console.log(`    ${info('cbom [path] [--format F] [--output O]')} Generate Crypto Bill of Materials`);
-  console.log(`    ${info('gate [path] [--max-risk R]')}            CI/CD gate (0=pass, 1=fail, 2=cannot run)`);
+  console.log(`    ${info('gate [path] [--max-risk R] [--max-severity S]')}  CI/CD gate (0=pass, 1=fail, 2=cannot run)`);
   console.log();
   console.log(`  ${bold('Research')}`);
   console.log(`    ${info('census [--format json|html]')}           Published crypto census (11 ecosystems + NVD)`);
@@ -1121,7 +1121,7 @@ async function cmdCbom(args) {
 }
 
 async function cmdGate(args) {
-  const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
+  const { scanProject, toLibraryInventory, weakAlgorithmSeverity, exceedsSeverity } = await import('../lib/scanner.mjs');
   const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
   const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
   const { existsSync } = await import('node:fs');
@@ -1131,7 +1131,15 @@ async function cmdGate(args) {
   const failOnWeak = getFlag(args, '--fail-on-weak');
   const { statSync } = await import('node:fs');
 
+  // Two ladders, deliberately not one. `--max-risk` bounds QUANTUM risk: how
+  // much a cryptographically relevant quantum computer would weaken the
+  // algorithm. `--max-severity` bounds SECURITY severity: what `scan` reports
+  // about the code today. Before 0.6.0 only the first existed, and it carried
+  // both meanings under one name, so the strictest setting failed a correct
+  // modern project (SHA-256 is quantum `low`) and passed unauthenticated CBC
+  // (which `scan` rates `medium`).
   const riskOrder = ['none', 'low', 'medium', 'high', 'critical'];
+  const severityOrder = ['none', 'low', 'medium', 'high', 'critical'];
 
   // --format decides how every later error is rendered, so it is validated
   // first, and against plain stderr because there is not yet a format to honour.
@@ -1159,6 +1167,33 @@ async function cmdGate(args) {
   // scored -1 in the risk order, which made every algorithm a breach.
   const maxRisk = choiceOption(args, '--max-risk', 'high', riskOrder, { onError: refuse });
   const minScore = numericOption(args, '--min-score', 50, { min: 0, max: 100, onError: refuse });
+
+  // --max-severity may only TIGHTEN. High and critical findings always fail the
+  // gate, so `--max-severity high` has two possible readings and both are bad:
+  // accept-and-ignore is a flag that appears to act and does not, and honouring
+  // it would turn the flag into a kill switch for the findings it must never
+  // waive -- a disabled TLS certificate check is `critical`, and no threshold
+  // should be able to let that through. Refusing by name is the third option.
+  const SEVERITY_CHOICES = ['none', 'low', 'medium'];
+  const SEVERITY_USAGE = '--max-severity <none|low|medium>';
+  const rawMaxSeverity = optionValue(args, '--max-severity');
+  let maxSeverity = 'medium';
+  if (rawMaxSeverity !== undefined) {
+    if (rawMaxSeverity === null) {
+      refuse('--max-severity expects a value.', SEVERITY_USAGE);
+    } else if (!SEVERITY_CHOICES.includes(rawMaxSeverity)) {
+      refuse(
+        severityOrder.includes(rawMaxSeverity)
+          ? `--max-severity ${rawMaxSeverity} would loosen the gate: findings at high and `
+            + 'critical severity always fail it. --max-severity can only tighten, so it takes '
+            + 'none, low or medium.'
+          : `--max-severity expects one of: none, low or medium. Received "${rawMaxSeverity}".`,
+        SEVERITY_USAGE,
+      );
+    } else {
+      maxSeverity = rawMaxSeverity;
+    }
+  }
 
   // A missing path is an error class (exit 2), not a clean pass. Without this
   // a typo in CI (`cryptoserve gate ./srcc`) silently scores 100 and lets the
@@ -1194,30 +1229,67 @@ async function cmdGate(args) {
     const byAlgorithm = new Map();
     const maxRiskIdx = riskOrder.indexOf(maxRisk);
 
+    // What the SCANNER said about each algorithm, indexed so an algorithm-level
+    // violation can carry both axes. A finding's severity is a property of the
+    // finding: it is recorded whether or not it breached a threshold, and it
+    // does not change with the flags. The worst severity wins when one
+    // algorithm appears more than once.
+    const scannedByAlgorithm = new Map();
+    for (const wp of scanResults.weakPatterns || []) {
+      if (!wp.algorithm) continue;
+      const key = wp.algorithm.toLowerCase();
+      const seen = scannedByAlgorithm.get(key);
+      if (!seen || severityOrder.indexOf(wp.severity) > severityOrder.indexOf(seen.severity)) {
+        scannedByAlgorithm.set(key, wp);
+      }
+    }
+
     for (const lib of libraries) {
       for (const algoName of lib.algorithms) {
         const entry = lookupAlgorithm(algoName);
         if (!entry) continue;
 
-        const riskBreach = riskOrder.indexOf(entry.quantumRisk) > maxRiskIdx;
-        const weakBreach = failOnWeak && entry.isWeak;
-        if (!riskBreach && !weakBreach) continue;
-
         const key = algoName.toLowerCase();
+        const scanned = scannedByAlgorithm.get(key);
+        // From the scanner where a source line was actually read; from the
+        // shared rule where the algorithm is only known from a manifest and no
+        // weakPattern exists. Null means the scanner reports no security
+        // finding for it, which is not the same as a finding of severity none.
+        const severity = scanned ? scanned.severity : weakAlgorithmSeverity(entry);
+
+        const riskBreach = riskOrder.indexOf(entry.quantumRisk) > maxRiskIdx;
+        const severityBreach = exceedsSeverity(severity, maxSeverity);
+        const weakBreach = failOnWeak && entry.isWeak;
+        if (!riskBreach && !severityBreach && !weakBreach) continue;
+
         const existing = byAlgorithm.get(key);
         const where = locations.get(key);
         const violation = existing || {
           algorithm: algoName,
+          // Both axes, always, on every violation. Which flag caused the
+          // violation is recorded separately, in the *Breach fields, so no flag
+          // has to be inferred from a rewritten classification.
           risk: entry.quantumRisk,
+          severity,
           source: lib.name + (lib.version && lib.version !== 'source-code' ? `@${lib.version}` : ''),
           ...(where ? { file: where.file, line: where.line } : {}),
         };
         if (riskBreach) violation.riskBreach = true;
-        if (weakBreach) {
-          violation.weak = true;
-          violation.reason = entry.weaknessReason;
-          if (entry.cwe) violation.cwe = entry.cwe;
-        }
+        if (severityBreach) violation.severityBreach = true;
+        if (weakBreach) violation.weak = true;
+        // The scanner's fix is actionable ("Replace with AES-256-GCM (any
+        // authenticated mode)"); the database's weaknessReason is a description
+        // ("ECB mode leaks patterns"). Passing --fail-on-weak used to swap the
+        // first for the second, so the flag whose name sounds strictest gave
+        // the least useful remediation.
+        // A violation with no next step is a dead end. A quantum-risk breach
+        // has no per-line fix -- the answer is a migration -- so it points at
+        // the command that plans one instead of leaving the line bare.
+        const reason = scanned?.fix
+          || (entry.isWeak ? entry.weaknessReason : undefined)
+          || (riskBreach ? `quantum risk ${entry.quantumRisk}; run \`cryptoserve pqc\` for migration options` : undefined);
+        if (reason) violation.reason = reason;
+        if (entry.cwe) violation.cwe = entry.cwe;
         byAlgorithm.set(key, violation);
       }
     }
@@ -1240,16 +1312,57 @@ async function cmdGate(args) {
     // at every setting. A weak algorithm that DID raise one is still counted
     // once -- the double-emit bug fixed in 0.4.0.
     for (const wp of scanResults.weakPatterns || []) {
-      if (wp.severity !== 'critical' && wp.severity !== 'high') continue;
+      // Already raised above, carrying THIS finding's severity and fix, so
+      // skipping here merges rather than drops. The old skip dropped it, which
+      // is how --fail-on-weak replaced a `high` severity and an actionable fix
+      // with the algorithm database's `none` and a bare description.
       if (wp.algorithm && byAlgorithm.has(wp.algorithm.toLowerCase())) continue;
+      if (!exceedsSeverity(wp.severity, maxSeverity)) continue;
+
+      const entry = wp.algorithm ? lookupAlgorithm(wp.algorithm) : null;
       violations.push({
         type: 'misuse',
         algorithm: wp.issue,
-        risk: wp.severity,
+        // A misuse is a statement about how the code uses an algorithm, not
+        // about quantum resistance. `risk` used to be set to the SECURITY
+        // severity here, which is exactly the conflation of the two axes.
+        risk: entry ? entry.quantumRisk : null,
+        severity: wp.severity,
+        severityBreach: true,
         source: wp.file,
         file: wp.file,
         line: wp.line,
         reason: wp.fix,
+        ...(wp.cwe ? { cwe: wp.cwe } : {}),
+      });
+    }
+
+    // Same fail-open, fifth location. `scan` reported SSLv3 at critical, `gate`
+    // passed the tree 100/100, and `gate --format sarif` emitted three
+    // level="error" results while exiting 0 -- one command contradicting itself
+    // about one tree, which is worse than the silent version. The scanner's
+    // `risk` here is a SECURITY level (SSLv3 is critical because of POODLE, not
+    // because of Shor), so it is bounded by --max-severity.
+    //
+    // Deduplicated by location and protocol: the scanner matches one
+    // `ssl_protocols SSLv3 TLSv1;` line with both a protocol-specific and a
+    // generic config pattern, and one line is one finding.
+    const seenTls = new Set();
+    for (const tls of scanResults.tlsFindings || []) {
+      if (!exceedsSeverity(tls.risk, maxSeverity)) continue;
+      const key = `${tls.file}:${tls.line}:${tls.protocol}`;
+      if (seenTls.has(key)) continue;
+      seenTls.add(key);
+      violations.push({
+        type: 'tls',
+        algorithm: `${tls.protocol} enabled`,
+        risk: null,
+        severity: tls.risk,
+        severityBreach: true,
+        source: tls.file,
+        file: tls.file,
+        line: tls.line,
+        reason: tls.recommendation,
       });
     }
 
@@ -1264,11 +1377,17 @@ async function cmdGate(args) {
       // Same predicate, one artifact type over: `scan` listed a committed
       // private key and `gate` passed the tree 100/100. Publishing a
       // certificate is routine; publishing the key that signs it is not.
+      // These fail under their own rule, not under --max-severity: a threshold
+      // that could waive them would be a second, unnamed --allow-secrets. Their
+      // `risk` is null because a committed credential says nothing about
+      // quantum resistance -- it was `critical` before only because one field
+      // was carrying both meanings.
       for (const keyFile of privateKeys) {
         violations.push({
           type: 'private-key',
           algorithm: 'Private key committed to the repository',
-          risk: 'critical',
+          risk: null,
+          severity: 'critical',
           source: keyFile,
           file: keyFile,
           reason: 'remove it from the tree and rotate the key',
@@ -1278,7 +1397,8 @@ async function cmdGate(args) {
         violations.push({
           type: 'secret',
           algorithm: secret.name,
-          risk: 'critical',
+          risk: null,
+          severity: 'critical',
           source: secret.file,
           file: secret.file,
           line: secret.line,
@@ -1307,12 +1427,19 @@ async function cmdGate(args) {
       filesScanned: scanResults.filesScanned,
       manifestsFound: scanResults.manifestsFound?.length ?? 0,
       total: libraries.reduce((sum, l) => sum + l.algorithms.length, 0),
+      // An algorithm that raised a violation is not safe, whatever its quantum
+      // risk. AES-ECB is quantum-`none` and structurally broken, and counting
+      // it as safe is how `gate` reported the tree as clean while `scan`
+      // reported a high-severity finding in it.
       safe: libraries.reduce((sum, l) => sum + l.algorithms.filter(a => {
         const e = lookupAlgorithm(a);
-        return e && (e.quantumRisk === 'none' || e.quantumRisk === 'low');
+        const quantumOk = e && (e.quantumRisk === 'none' || e.quantumRisk === 'low');
+        return quantumOk && !byAlgorithm.has(a.toLowerCase());
       }).length, 0),
-      vulnerable: violations.filter(v => !v.weak && !v.type).length,
+      vulnerable: violations.filter(v => v.riskBreach).length,
+      severityBreaches: violations.filter(v => v.severityBreach).length,
       misuse: violations.filter(v => v.type === 'misuse').length,
+      tls: violations.filter(v => v.type === 'tls').length,
       weak: violations.filter(v => v.weak).length,
       secrets: secretFindings.length,
       privateKeys: privateKeys.length,
@@ -1360,18 +1487,31 @@ async function cmdGate(args) {
       console.log(labelValue('Directory', scanDir));
       console.log(labelValue('Files scanned', scannedSummary(scanResults)));
       console.log(labelValue('Score', `${score}/100 (min: ${minScore})`));
-      console.log(labelValue('Max risk', maxRisk));
+      console.log(labelValue('Max quantum risk', maxRisk));
+      console.log(labelValue('Max severity', maxSeverity));
 
       if (violations.length > 0) {
         console.log(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
-          const label = v.type === 'misuse'
-            ? error(`[MISUSE] ${v.algorithm}`)
-            : v.type === 'private-key'
-            ? error(`[KEY] ${v.algorithm}`)
-            : v.type === 'secret'
-            ? error(`[SECRET] ${v.algorithm}`)
-            : v.weak ? warning(`[WEAK] ${v.algorithm}`) : error(`[${v.risk.toUpperCase()}] ${v.algorithm}`);
+          // One ordinal vocabulary for the whole list, with the category kept
+          // as a suffix. A bare `[LOW]` next to a bare `[CRITICAL]` used to
+          // mean quantum risk in the first case and security severity in the
+          // second, and `[TLS]` next to `[MEDIUM]` gave no way to tell that the
+          // TLS finding was the more severe of the two. Severity comes first so
+          // the list reads in one scale; `QUANTUM` names the other axis
+          // explicitly wherever it is the reason a line is here.
+          const CATEGORY = { misuse: 'MISUSE', 'private-key': 'KEY', secret: 'SECRET', tls: 'TLS' };
+          const category = CATEGORY[v.type];
+          const tag = v.severity
+            ? `[${v.severity.toUpperCase()}${category ? ` ${category}` : ''}]`
+            : category
+            ? `[${category}]`
+            : v.weak
+            ? '[WEAK]'
+            : `[QUANTUM ${String(v.risk).toUpperCase()}]`;
+          // Weak-only violations are a warning: --fail-on-weak is opt-in and
+          // reaches algorithms merely named in a manifest.
+          const label = (!v.severity && v.weak ? warning : error)(`${tag} ${v.algorithm}`);
           const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
           console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
         }
@@ -1591,7 +1731,7 @@ const COMMAND_HELP = {
   'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',
   context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
   cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials. Reports how many files it read, and\n  refuses a path that does not exist rather than certifying an empty tree.',
-  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--min-score 0-100] [--fail-on-weak] [--allow-secrets]\n        [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.\n\n  Fails on hardcoded secrets, committed private keys, weak algorithms and\n  critical API misuse such as a disabled TLS certificate check.\n\n  --max-risk bounds QUANTUM risk, not security severity: a weak algorithm\n  fails the gate regardless of it.\n  --allow-secrets waives credential findings only (secrets and private\n  keys). It does not reach weak algorithms or misuse findings.',
+  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--max-severity none|low|medium] [--min-score 0-100]\n        [--fail-on-weak] [--allow-secrets] [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.\n\n  Fails on hardcoded secrets, committed private keys, weak algorithms,\n  deprecated TLS protocol versions, and critical API misuse such as a\n  disabled TLS certificate check.\n\n  Two independent thresholds, because a finding has two independent\n  properties. Every finding reports both, and neither changes with the\n  flags you passed.\n\n  --max-risk bounds QUANTUM risk (default high): how far a\n  cryptographically relevant quantum computer would weaken the algorithm.\n  SHA-256 is quantum `low` and perfectly good practice today, so\n  --max-risk none fails a correct modern project on purpose.\n\n  --max-severity bounds SECURITY severity as `scan` reports it\n  (default medium: high and critical fail). Lower it to reach medium\n  findings such as unauthenticated CBC or a static IV. It takes only\n  none, low or medium: high and critical always fail the gate, so a\n  higher value could only loosen it, and this flag does not loosen.\n\n  --fail-on-weak additionally fails any algorithm the database marks\n  weak, including ones seen only in a dependency manifest.\n  --allow-secrets waives credential findings only (secrets and private\n  keys). It does not reach weak algorithms or misuse findings.',
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',

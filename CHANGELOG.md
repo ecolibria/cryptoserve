@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [CLI 0.6.0] - 2026-08-03
+
+A minor rather than a patch because the shape of a `gate` violation changed. A
+CI job that filters the JSON on `.risk` will read different values after this
+release, and that is the point: `.risk` meant two different things depending on
+which flags were passed.
+
+### Changed
+
+`gate` had one threshold, `--max-risk`, and it carried two meanings.
+
+`--max-risk` bounds QUANTUM risk: how far a cryptographically relevant quantum
+computer would weaken an algorithm. Nothing in the flag name, the help text or
+the output said so, while the same output printed `[CRITICAL] md5` using
+`critical` to mean security severity. Two meanings, one vocabulary. The
+consequences were all reachable from the command line:
+
+- `--max-risk none` FAILED a correct AES-256-GCM + SHA-256 + bcrypt project,
+  because SHA-256 carries quantum risk `low`.
+- `--max-risk none` PASSED unauthenticated CBC, which `scan` reports at
+  severity `medium`. The strictest available setting failed good code and
+  passed a real weakness.
+- No value of `--max-risk` tightened the gate on security severity at all.
+- Medium-severity findings -- unauthenticated CBC, a static IV -- were
+  unreachable by any combination of `--max-risk`, `--fail-on-weak` and
+  `--min-score`. `gate` counted them as `safe`.
+
+There are now two thresholds, because a finding has two independent properties:
+
+- `--max-risk` keeps its meaning and says so, in the help and in the report,
+  which now reads `Max quantum risk`. A quantum-risk violation is labelled
+  `[QUANTUM LOW]` rather than `[LOW]`, so no two labels share a vocabulary
+  without sharing a meaning.
+- `--max-severity` is new and bounds security severity as `scan` reports it.
+  It takes `none`, `low` or `medium` and defaults to `medium`, which is exactly
+  the previous behaviour: high and critical fail. Lower it to reach medium
+  findings.
+
+`--max-severity high` and `--max-severity critical` are refused with exit `2`.
+High and critical findings always fail the gate, so a higher value could only
+loosen it. Accepting and ignoring it would be a flag that appears to act and
+does not; honouring it would make the flag a kill switch for a disabled TLS
+certificate check. Refusing by name is the third option.
+
+The default verdict is deliberately unchanged. The defect was that medium
+findings were unreachable, not that the gate was lax, and tightening the default
+would flip verdicts for every existing CI job on upgrade with no code change --
+the same "teaches people to ignore the check" failure this release fixes in the
+publish workflow.
+
+### Fixed
+
+- **`--fail-on-weak` rewrote the findings it took over.** AES-ECB reported
+  `risk: "high"` normally and `risk: "none"` under the flag; 3DES and Blowfish
+  went `high` to `low` the same way; `type` was dropped; and the actionable fix
+  (`Replace with AES-256-GCM (any authenticated mode)`) was replaced by a bare
+  description (`ECB mode leaks patterns`). The exit code was unaffected, so it
+  was not a fail-open, but a CI policy filtering `.risk == "high"` saw nothing
+  under the flag whose name sounds strictest. The cause was deduplication
+  order: the algorithm-level record silently replaced the scanner's record
+  instead of merging with it. Every violation now carries both `risk` (quantum)
+  and `severity` (security), neither of which depends on the flags, plus
+  `riskBreach` / `severityBreach` / `weak` recording which threshold fired.
+- **`gate` counted an algorithm it had just failed on as `safe`.** AES-ECB is
+  quantum-`none` and structurally broken, so it appeared in the `safe` count of
+  the same summary whose violation list failed the build.
+- **`gate` ignored TLS findings entirely.** This is the fifth appearance of one
+  fail-open, after secrets, committed private keys, misuse findings and AES-ECB.
+  `scan` reported SSLv3 at `critical`, `gate` passed the same tree 100/100, and
+  `gate --format sarif` emitted three `level: "error"` results while exiting
+  `0` -- one command contradicting itself about one tree, so a CI job uploading
+  that report got three code-scanning alerts from a gate that had just told the
+  build it passed. Deprecated protocol versions now fail the gate, bounded by
+  `--max-severity` and deduplicated by location and protocol.
+- The severity of a weak algorithm is now defined once, in the scanner, and
+  imported by the gate. It was about to be restated in a second place, which is
+  how two commands drift into rating the same algorithm differently.
+- **A severity the ladder does not recognise now fails closed.** Comparing
+  ladder indices directly meant `indexOf` returned `-1` for an unrecognised
+  value and `-1 > anything` is false, so a typo in a single pattern definition
+  (`severity: 'moderate'`) would have made that finding unable to breach any
+  threshold, silently, while the gate reported the tree clean. A gate must not
+  be disarmed by a misspelling.
+- **Violation labels now read on one scale.** `[TLS]` and `[MEDIUM]` in the same
+  list gave no way to see that the TLS finding was the more severe of the two.
+  Severity leads every label that has one and the category follows it
+  (`[CRITICAL TLS]`, `[CRITICAL SECRET]`, `[MEDIUM]`), and a quantum-risk
+  breach is labelled `[QUANTUM LOW]` so the other axis names itself.
+- **A quantum-risk violation is no longer a dead end.** It had no remediation
+  line at all, because the answer is a migration rather than a per-line edit.
+  It now says so and names `cryptoserve pqc`.
+
+### Notes
+
+`--max-severity` does not reach credential findings. Secrets and committed
+private keys fail under their own rule and are waivable only by name, with
+`--allow-secrets`; a threshold that could waive them would be a second,
+unnamed waiver.
+
 ## [CLI 0.5.0] - 2026-07-30
 
 A minor rather than a patch because `census --live` is gone. Under 0.x semver a

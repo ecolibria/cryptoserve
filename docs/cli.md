@@ -101,24 +101,51 @@ Enforces cryptographic policy compliance in CI/CD pipelines. Exits non-zero when
 cryptoserve gate .                          # Check current directory
 cryptoserve gate . --fail-on-weak           # Fail on weak algorithms (MD5, DES, RC4)
 cryptoserve gate . --min-score 70           # Require minimum quantum readiness score
-cryptoserve gate . --max-risk medium        # Fail on algorithms above medium risk
+cryptoserve gate . --max-risk medium        # Fail above medium QUANTUM risk
+cryptoserve gate . --max-severity low       # Also fail on medium SECURITY findings
 cryptoserve gate . --format sarif           # SARIF output
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--max-risk <level>` | Maximum allowed risk level: `none`, `low`, `medium`, `high` (default), `critical` |
+| `--max-risk <level>` | Maximum allowed **quantum** risk: `none`, `low`, `medium`, `high` (default), `critical` |
+| `--max-severity <level>` | Maximum allowed **security** severity as `scan` reports it: `none`, `low`, `medium` (default) |
 | `--min-score <n>` | Minimum quantum readiness score (default: `50`) |
-| `--fail-on-weak` | Fail on weak algorithms (MD5, DES, RC4, ECB) |
+| `--fail-on-weak` | Fail on weak algorithms (MD5, DES, RC4, ECB), including ones seen only in a manifest |
 | `--allow-secrets` | Do not fail on hardcoded secrets or committed private keys (both still reported) |
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
 | `--verbose` | Show detailed violations |
 
-`--min-score` must be a number from 0 to 100 and `--max-risk` one of the five
-levels; anything else exits `2` rather than running. This matters because an
-unenforceable threshold is not a lax gate but an absent one. Before 0.5.0
-`--min-score abc` parsed to `NaN`, `score < NaN` was false, and a gate failing on
-score printed `min: NaN` and exited `0`.
+#### The two thresholds are different questions
+
+A finding has two independent properties, and before 0.6.0 one flag carried
+both. `--max-risk` asks how far a cryptographically relevant quantum computer
+would weaken an algorithm. `--max-severity` asks what `scan` reports about the
+code today.
+
+They disagree on purpose. SHA-256 is quantum `low` and perfectly good practice,
+so `--max-risk none` fails a correct modern project. Unauthenticated CBC has no
+quantum problem at all and is a `medium` security finding, so only
+`--max-severity low` reaches it. Before 0.6.0 the strictest available setting
+did the first and not the second.
+
+Every violation reports both, as `risk` and `severity`, and neither changes
+depending on which flags were passed. `riskBreach`, `severityBreach` and `weak`
+record which threshold actually fired.
+
+`--max-severity` takes only `none`, `low` or `medium`. High and critical
+findings always fail the gate, so a higher value could only loosen it; passing
+`--max-severity high` exits `2` rather than being silently ignored or turned
+into a kill switch for a disabled TLS certificate check. It also does not reach
+credential findings: secrets and committed private keys are waivable only by
+name, with `--allow-secrets`.
+
+`--min-score` must be a number from 0 to 100, `--max-risk` one of the five
+levels and `--max-severity` one of its three; anything else exits `2` rather
+than running. This matters because an unenforceable threshold is not a lax gate
+but an absent one. Before 0.5.0 `--min-score abc` parsed to `NaN`,
+`score < NaN` was false, and a gate failing on score printed `min: NaN` and
+exited `0`.
 
 The report shows the directory and the file count, so a gate that passed because
 it scanned nothing is distinguishable from one that passed on a clean tree. A

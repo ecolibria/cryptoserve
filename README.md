@@ -178,7 +178,7 @@ Full reference: [docs/cli.md](docs/cli.md).
 
 ```yaml
 - name: Crypto gate
-  run: npx cryptoserve gate . --fail-on-weak --max-risk medium --format sarif --output crypto.sarif
+  run: npx cryptoserve gate . --max-risk medium --max-severity low --format sarif --output crypto.sarif
 - uses: github/codeql-action/upload-sarif@v3
   if: always()
   with:
@@ -188,9 +188,14 @@ Full reference: [docs/cli.md](docs/cli.md).
 Each SARIF result carries the `file:line` that produced it, so findings land on
 the right line in the GitHub Security tab and in pull request annotations.
 
+`--max-risk` bounds quantum risk; `--max-severity` bounds the security severity
+`scan` reports. They are separate questions: SHA-256 is quantum `low` and good
+practice, unauthenticated CBC has no quantum problem and is a `medium` security
+finding. See [docs/cli.md](docs/cli.md#the-two-thresholds-are-different-questions).
+
 Exit codes: `0` gate passed, `1` violations found, `2` the gate could not run
-(missing path, unreadable tree). A typo in the scanned path exits 2 rather than
-scoring a clean pass.
+(missing path, unreadable tree, a threshold it cannot enforce). A typo in the
+scanned path exits 2 rather than scoring a clean pass.
 
 ## SDKs
 
