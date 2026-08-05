@@ -29,11 +29,15 @@
  *   4. **Its reach is one line.** A pragma covers findings on its own line and
  *      on the line immediately after it, and nothing else. Anything wider
  *      drifts away from what it was written for as the file changes around it.
- *   5. **It is plain text on a line with an end.** A control character in a
- *      pragma, or a line the newline split did not actually split, is reported
- *      as malformed and waives nothing. The reason and the rule id are file
- *      content on their way to a terminal, and "one line" is not a bound at all
- *      on a file that has no line endings.
+ *   5. **It is plain text, in a file with line endings.** A control character
+ *      in a pragma is reported as malformed and waives nothing: the reason and
+ *      the rule id are file content on their way to a terminal. Line
+ *      terminators are decided once for the FILE, before any line is chosen --
+ *      a file holding any terminator `split('\n')` does not split on honours no
+ *      pragma anywhere in it. Asked instead of the pragma's own line, which is
+ *      the only line a guard inside the loop can see, a terminator one line
+ *      further down collapsed the file and waived a finding an unbounded
+ *      distance away, in silence.
  *
  * Waived findings are never silently dropped: they leave `weakPatterns` and
  * arrive in `waivedFindings`, where `scan`, `gate` and the JSON output all
@@ -42,18 +46,39 @@
  * ## What this is NOT
  *
  * Recognising a comment by its opener is a heuristic, not a parse. This module
- * does not tokenize the file, so a string literal that both begins with a
- * comment opener and ends the line with pragma text would be honoured. Doing
- * better needs a real parser per language, which this package cannot have while
- * it stays dependency-free, and a hand-written tokenizer was measured to
- * mis-read ordinary JSX and minified bundles badly enough to lose real
- * findings.
+ * does not tokenize the file, so in a language that HAS block comments there
+ * are three shapes it cannot tell from a real pragma. All three are measured
+ * and pinned by tests rather than left to be rediscovered:
  *
- * That residual is acceptable because of who a waiver is for. It is authored by
- * whoever can already edit the file, so it is not a privilege boundary: anyone
- * able to smuggle a pragma through a string could simply write the comment. The
- * property being defended is that data a project merely CONTAINS -- a fixture,
- * a JSON blob, a documentation sample -- does not silently switch a check off.
+ *   - a string that begins with an opener: `"// <marker> <rule> -- why"`
+ *   - an opener that is not directly after the quote: `" // <marker> ..."`,
+ *     because the adjacency guard reads exactly one character
+ *   - a block-comment continuation inside a template literal: a line of
+ *     backtick-delimited text starting ` * <marker>`
+ *
+ * So the property defended here is NARROWER than "data a project merely
+ * contains cannot switch a check off". That is what an earlier version of this
+ * comment claimed, and a Python docstring disproved it. What actually holds:
+ *
+ *   In a language with no block comments, contained data cannot operate the
+ *   control at all -- the continuation branch is gated on the language having
+ *   the opener it is a continuation of. In the C family it can, but only from a
+ *   string shaped like a comment, and never SILENTLY: a waived finding is still
+ *   listed by `scan` and `gate`, counted in `summary.waived`, and emitted to
+ *   SARIF as a suppressed result.
+ *
+ * The residual is bounded by who a waiver is for and by where the scanner
+ * looks. It is authored by whoever can already edit the file, so it is not a
+ * privilege boundary: anyone able to smuggle a pragma through a string could
+ * simply write the comment instead. And `walker.mjs` skips `node_modules`,
+ * `vendor`, `.venv` and `venv` by default, so the code this applies to is
+ * first-party, not a dependency's.
+ *
+ * Closing it needs a real parser per language -- six of them for the languages
+ * here, not one -- which this package cannot have while it stays
+ * dependency-free. A hand-written tokenizer was built for this and removed:
+ * adversarial review measured it mis-reading ordinary JSX and minified bundles
+ * badly enough to LOSE real findings.
  *
  * ## Known limitation: a pragma this module ignores in silence
  *
@@ -96,7 +121,8 @@ const MARKER = 'cryptoserve-ignore';
 const PRAGMA_REACH = 1;
 
 /** Comment openers per language family. */
-const C_FAMILY = ['//', '/*'];
+const BLOCK_OPENER = '/*';
+const C_FAMILY = ['//', BLOCK_OPENER];
 const HASH = ['#'];
 
 const OPENERS_BY_LANGUAGE = {
@@ -196,13 +222,22 @@ function pragmaText(rawLine, openers) {
   const afterMarker = (s) =>
     s.startsWith(MARKER) ? s.slice(MARKER.length).replace(/^[ \t]+/, '') : null;
 
-  // A JSDoc continuation is decoration, not an opener: the comment began on an
-  // earlier line, so this line's text starts right after the `*`. The marker
-  // must follow it DIRECTLY. Anything else there, including a further `//`, is
-  // an example being shown rather than a pragma being written, which is what
-  // this module's own header contains.
-  const continuation = /^[ \t]*\*(?!\/)[ \t]*/.exec(rawLine);
-  if (continuation) return afterMarker(rawLine.slice(continuation[0].length));
+  // A block-comment continuation is decoration, not an opener: the comment
+  // began on an earlier line, so this line's text starts right after the `*`.
+  // The marker must follow it DIRECTLY. Anything else there, including a
+  // further `//`, is an example being shown rather than a pragma being written,
+  // which is what this module's own header contains.
+  //
+  // Gated on the language actually HAVING the opener this is a continuation
+  // OF. Ungated it ran before the opener scan and before the quote guard, so
+  // ` * <marker>` was read as a pragma in Python, where `*` is not a comment
+  // character at all and the line is far likelier to be a docstring quoting
+  // the JavaScript spelling. That let a documentation sample switch off a
+  // Python check, which is exactly the property this module claims to hold.
+  if (openers.includes(BLOCK_OPENER)) {
+    const continuation = /^[ \t]*\*(?!\/)[ \t]*/.exec(rawLine);
+    if (continuation) return afterMarker(rawLine.slice(continuation[0].length));
+  }
 
   let at = -1;
   let opener = '';
@@ -246,10 +281,48 @@ export function parseWaiverPragmas(content, language) {
   const malformed = [];
   if (!openers || !content.includes(MARKER)) return { waivers, malformed };
 
-  const lines = content.split('\n');
+  // CRLF is a line ending this parser understands, so it is normalised away
+  // first. That leaves the test below to be about the terminators that are
+  // genuinely left, and it removes the trailing-CR strip this loop used to do
+  // per line: after this replace, the only CR that can still be in `source` is
+  // a lone one, and the refusal below returns before any line is read.
+  const source = content.replace(/\r\n/g, '\n');
+
+  // Decided ONCE for the FILE, before a single line has been selected.
+  //
+  // The guard this replaced ran inside the loop, which had already skipped
+  // every line that does not contain the marker, so it could only ever inspect
+  // the pragma's OWN line. A terminator one line further down collapsed the
+  // body into the pragma's reach and waived it in silence -- no warning at all.
+  // Three rounds widened the character class and each was defeated the same
+  // way, because the axis that stayed pinned was never the byte: it was WHICH
+  // LINE gets asked. Asking the file leaves no other line to move it to.
+  //
+  // Refusing the whole file is the safe direction and a cheap one: measured
+  // over 47,486 source files in 258 trees, 7 carry a stray terminator (0.015%)
+  // and every one of them is minified build output or a security fixture that
+  // embeds U+2028 deliberately. None carried a pragma.
+  const stray = source.search(UNSPLIT_TERMINATOR);
+  if (stray !== -1) {
+    const lineEnd = source.indexOf('\n', stray);
+    malformed.push({
+      line: source.slice(0, stray).split('\n').length,
+      // On a file with no line endings at all, "the line" is the whole file, so
+      // this is capped the way `evidence` is, and stripped of the characters
+      // that made it a problem rather than carried out of this module for
+      // whoever reads the report to print.
+      text: stripControl(
+        source.slice(source.lastIndexOf('\n', stray) + 1, lineEnd === -1 ? undefined : lineEnd).trim(),
+      ).slice(0, 120),
+      issue: 'this file does not end its lines the way the scanner reads line endings,'
+        + ' so no pragma in it has an end; save it with LF or CRLF line endings',
+    });
+    return { waivers, malformed };
+  }
+
+  const lines = source.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    // A trailing CR from a CRLF file is line terminator, not pragma text.
-    const raw = lines[i].replace(/\r$/, '');
+    const raw = lines[i];
     if (!raw.includes(MARKER)) continue;
 
     const text = pragmaText(raw, openers);
@@ -262,32 +335,25 @@ export function parseWaiverPragmas(content, language) {
     // documentation.
     if (!shape) continue;
 
-    // Three ways a pragma this module can see is still not one it will honour.
-    // All of them REPORT: every refusal above this point is prose that never
-    // claimed to be a pragma, and every refusal below it is somebody's waiver,
-    // which must never disappear without a word.
-    //
-    // A terminator this split does not split on means the string is not one
-    // line, and every finding in the file then reports as line 1 with one
-    // pragma reaching all of them: measured for CR and again for U+2028, a tree
-    // disabling TLS verification 400 lines below an unrelated waiver PASSED the
-    // gate. Refusing leaves the finding reported, which is the only safe
-    // direction for an off switch. Asked of the RAW line, because a separator
-    // that appears only before the pragma never reaches the pragma text.
+    // Two ways a pragma this module can see is still not one it will honour.
+    // Both REPORT: every refusal above this point is prose that never claimed
+    // to be a pragma, and every refusal below it is somebody's waiver, which
+    // must never disappear without a word.
     //
     // The control-character check runs on the pragma text, so it covers the
     // rule id and the reason together. Both are file content and both are
     // printed to a terminal by `scan` and `gate`, so a reason of
     // `ok<ESC>[2K<CR>FORGED` erases the line the scanner just wrote and prints
     // its own. Nothing before this feature put file text on that surface at all.
-    const issue = UNSPLIT_TERMINATOR.test(raw)
-      ? 'this line does not end the way the scanner reads line endings, so the pragma on it has no end;'
-        + ' save the file with LF or CRLF line endings'
-      : CONTROL.test(text)
-        ? 'a waiver must be plain text; remove the control character from this one'
-        : !shape.reason
-          ? 'a waiver needs a reason: cryptoserve-ignore <rule> -- <why>'
-          : null;
+    //
+    // The line-terminator question is NOT asked here. It is decided once for
+    // the file above, because asking it of a line the loop already selected can
+    // only ever see the pragma's own line.
+    const issue = CONTROL.test(text)
+      ? 'a waiver must be plain text; remove the control character from this one'
+      : !shape.reason
+        ? 'a waiver needs a reason: cryptoserve-ignore <rule> -- <why>'
+        : null;
 
     if (issue) {
       // The offending line is quoted back, so it is stripped of the characters
@@ -305,6 +371,38 @@ export function parseWaiverPragmas(content, language) {
 }
 
 /**
+ * Waivers bucketed by the line they were written on, keyed by the array they
+ * came from.
+ *
+ * A linear scan here was the second half of a quadratic: `findWaiver` runs once
+ * per misuse match, and the scan is over every pragma in the file, so a file
+ * that waives everything costs matches x pragmas. Resolving the line faster was
+ * not enough on its own -- with that alone, doubling the file still took 4.5x
+ * the time. Both halves are attacker-authorable in a pull request and `gate`
+ * has no timeout.
+ *
+ * Keyed on the array because that is what a caller already holds per file, and
+ * weakly so a scan of many files does not retain them. `parseWaiverPragmas`
+ * never mutates the array after returning it, and the buckets hold the same
+ * objects, so `used` set through a bucket is visible to `waiverWarnings`.
+ */
+const BY_LINE = new WeakMap();
+
+function bucketsFor(waivers) {
+  let byLine = BY_LINE.get(waivers);
+  if (byLine) return byLine;
+
+  byLine = new Map();
+  for (const w of waivers) {
+    const bucket = byLine.get(w.line);
+    if (bucket) bucket.push(w);
+    else byLine.set(w.line, [w]);
+  }
+  BY_LINE.set(waivers, byLine);
+  return byLine;
+}
+
+/**
  * Does a waiver cover a finding of `rule` at `line`?
  *
  * Marks the waiver used, so the ones that cover nothing can be reported. A
@@ -313,11 +411,18 @@ export function parseWaiverPragmas(content, language) {
  * silently.
  */
 export function findWaiver(waivers, rule, line) {
-  for (const w of waivers) {
-    if (w.rule !== rule) continue;
-    if (line < w.line || line > w.line + PRAGMA_REACH) continue;
-    w.used = true;
-    return w;
+  const byLine = bucketsFor(waivers);
+
+  // A pragma covers its own line and the next one, so the only lines that can
+  // hold a covering pragma are `line - PRAGMA_REACH` through `line`. Walked
+  // oldest-first so the earliest pragma still wins, which is what the linear
+  // scan did and what `does not reach two lines down` pins.
+  for (let at = line - PRAGMA_REACH; at <= line; at++) {
+    for (const w of byLine.get(at) || []) {
+      if (w.rule !== rule) continue;
+      w.used = true;
+      return w;
+    }
   }
   return null;
 }

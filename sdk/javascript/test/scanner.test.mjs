@@ -979,3 +979,47 @@ describe('severity ladder', () => {
     }
   });
 });
+
+describe('misuse scanning cost', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('stays linear when every match in a file is waived', () => {
+    // The misuse loop resolved each match's line with `lineNumberAt`, which
+    // scans the file from the start, and the cut-back made the loop CONTINUE
+    // past waived matches instead of stopping at the first. Together that is
+    // O(matches x filesize): 20 files of ~1MB with everything waived went from
+    // 161 ms at c74916d to 5,805 ms, about 36x, and `gate` has no timeout, so
+    // the input is a denial of service anyone can author in a pull request.
+    // Not reachable before the waiver feature, because only the FIRST match was
+    // ever examined.
+    //
+    // Doubling the file doubles the matches too, so the quadratic shape shows
+    // up as 4x and the fixed shape as 2x. The bound is loose enough to absorb a
+    // noisy machine and still fail a reintroduction, which would be ~4x.
+    const build = (blocks) => {
+      const unit = `// cryptoserve-ignore misuse/create-cipher -- waived\n`
+        + `const c${'x'} = crypto.createCipher('aes-256-cbc', key);\n`;
+      writeFileSync(join(TEST_DIR, 'big.js'), unit.repeat(blocks), 'utf-8');
+    };
+
+    const time = (blocks) => {
+      build(blocks);
+      const t = process.hrtime.bigint();
+      const results = scanProject(TEST_DIR);
+      const ms = Number(process.hrtime.bigint() - t) / 1e6;
+      // The fixture has to REACH the waived path, or this measures an empty
+      // loop and passes for the wrong reason.
+      assert.equal(results.waivedFindings.length, blocks,
+        `expected ${blocks} waived findings, got ${results.waivedFindings.length}`);
+      assert.deepEqual(results.weakPatterns.filter(w => w.rule === 'misuse/create-cipher'), []);
+      return ms;
+    };
+
+    time(2000);                        // warm up, so JIT does not skew the ratio
+    const small = Math.max(time(2000), 1);
+    const large = time(4000);
+    assert.ok(large < small * 3,
+      `2x the file took ${(large / small).toFixed(1)}x the time (${small.toFixed(1)}ms -> ${large.toFixed(1)}ms)`);
+  });
+});

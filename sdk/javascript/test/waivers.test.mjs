@@ -303,6 +303,75 @@ describe('parseWaiverPragmas', () => {
     assert.equal(malformed[0].line, 2);
   });
 
+  it('honours nothing when the terminator is on a line the pragma merely COVERS', () => {
+    // The guard this replaced was asked only of lines that CONTAINED the
+    // marker, because the loop skipped every other line first. So it only ever
+    // inspected the pragma's OWN line. Put the pragma on a clean LF-terminated
+    // line 1 and separate the BODY with any non-LF terminator, and the whole
+    // body collapses into LF-line 2, inside `PRAGMA_REACH`: `gate` went from
+    // exit 1 to exit 0, `waived 1`, and `waiverWarnings` EMPTY. No warning of
+    // any kind, which is the half that made it critical rather than wrong.
+    //
+    // Three rounds each widened the character class and each was defeated,
+    // because the axis that was pinned was never the byte: it was WHICH LINE
+    // gets asked. This is now decided once per FILE, so there is no other line
+    // left to move the terminator to.
+    const pragma = `// ${IGNORE} misuse/create-cipher -- unrelated`;
+    for (const cp of [0x0b, 0x0c, 0x0d, 0x85, 0x2028, 0x2029]) {
+      const sep = String.fromCodePoint(cp);
+      const body = Array.from({ length: 40 }, (_, i) => `const f${i} = ${i};`).join(sep);
+      const what = 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
+      const { waivers, malformed } = parse(`${pragma}\n${body}\n`);
+      assert.deepEqual(waivers, [], `${what} -> ${JSON.stringify(waivers)}`);
+      assert.equal(malformed.length, 1, `${what} -> ${JSON.stringify(malformed)}`);
+      assert.match(malformed[0].issue, /line ending/, `${what} -> ${malformed[0].issue}`);
+      // The line REPORTED is the one carrying the terminator, not the pragma's.
+      // A refusal that pointed at the pragma would send a user to edit the one
+      // line in the file that is fine.
+      assert.equal(malformed[0].line, 2, `${what} -> line ${malformed[0].line}`);
+    }
+  });
+
+  it('does not take a block-comment continuation in a language with no block comments', () => {
+    // `pragmaText` took its continuation branch on any line matching
+    // /^[ \t]*\*(?!\/)[ \t]*/, BEFORE the opener scan and WITHOUT consulting
+    // the language's openers. `*` is not a comment character in Python at all,
+    // so a docstring quoting the JavaScript spelling switched off a Python
+    // check -- the module's stated property, falsified by a documentation
+    // sample. The branch is now gated on the language actually having the
+    // opener it is a continuation OF.
+    const src = [
+      'import ssl',
+      'DOC = """',
+      ` * ${IGNORE} misuse/create-cipher -- an example copied from the JS docs`,
+      '"""',
+      'ctx = ssl.SSLContext()',
+    ].join('\n') + '\n';
+    const { waivers, malformed } = parse(src, 'python');
+    assert.deepEqual(waivers, [], JSON.stringify(waivers));
+    assert.deepEqual(malformed, [], JSON.stringify(malformed));
+  });
+
+  it('records the C-family shapes this heuristic still cannot refuse', () => {
+    // Gating the continuation branch on the opener set fixes the languages that
+    // have no block comment. It cannot fix the C family, where ` * pragma` in a
+    // template literal and a comment continuation are the same characters, and
+    // telling them apart needs a real parse.
+    //
+    // Pinned so the documented limitation cannot drift silently, and so nobody
+    // reads the Python fix above as closing the whole class. Both of these
+    // still produce a waiver:
+    const templateLiteral = `const doc = \`\n * ${IGNORE} misuse/create-cipher -- smuggled\n\`;\n`;
+    assert.equal(parse(templateLiteral).waivers.length, 1,
+      'the template-literal limitation changed; update the docs with it');
+
+    // And one space between the quote and the opener defeats the adjacency
+    // guard, which reads only the character immediately before the opener.
+    const spacedInString = `const s = " // ${IGNORE} misuse/create-cipher -- smuggled";\n`;
+    assert.equal(parse(spacedInString).waivers.length, 1,
+      'the quote-adjacency limitation changed; update the docs with it');
+  });
+
   it('stays linear in the length of one line', () => {
     // Walking every start index of an opener run to find a later pragma was
     // quadratic in the line: `// x cryptoserve-ignore ` followed by N slashes

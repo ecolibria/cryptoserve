@@ -315,7 +315,7 @@ export function detectLanguage(filePath) {
  * Build the sorted list of newline offsets so a match index can be resolved to
  * a 1-based line number in O(log n) instead of re-splitting the file per match.
  */
-function newlineOffsets(content) {
+export function newlineOffsets(content) {
   const offsets = [];
   let i = content.indexOf('\n');
   while (i !== -1) {
@@ -325,7 +325,7 @@ function newlineOffsets(content) {
   return offsets;
 }
 
-function lineAt(offsets, index) {
+export function lineAt(offsets, index) {
   let lo = 0;
   let hi = offsets.length;
   while (lo < hi) {

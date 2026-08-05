@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
-import { LANGUAGE_PATTERNS, scanSourceFile, scanWeakKeySizes, detectLanguage, MULTI_LANG_EXTENSIONS } from './scanner-languages.mjs';
+import { LANGUAGE_PATTERNS, scanSourceFile, scanWeakKeySizes, detectLanguage, MULTI_LANG_EXTENSIONS, newlineOffsets, lineAt } from './scanner-languages.mjs';
 import { scanManifests } from './scanner-manifests.mjs';
 import { scanTlsConfigs } from './scanner-tls.mjs';
 import { lookupAlgorithm } from './algorithm-db.mjs';
@@ -304,12 +304,10 @@ export const SECRET_PATTERNS = [
 // File patterns for cert/key discovery
 const CERT_EXTENSIONS = new Set(['.pem', '.key', '.crt', '.p12', '.pfx', '.jks', '.keystore']);
 
-/** 1-based line number for a byte offset. */
-function lineNumberAt(content, index) {
-  let line = 1;
-  for (let i = content.indexOf('\n'); i !== -1 && i < index; i = content.indexOf('\n', i + 1)) line++;
-  return line;
-}
+// Line resolution comes from `scanner-languages.mjs`, which already had a
+// newline index and a binary search over it. The version that used to live here
+// re-scanned the file from the start on every call, which is why the misuse
+// loop below builds the index once per file instead.
 
 // ---------------------------------------------------------------------------
 // Scanner
@@ -640,6 +638,14 @@ export function scanProject(projectDir, options = {}) {
     const applicable = MISUSE_PATTERNS.filter(p => p.languages.includes(language));
     const { waivers, malformed } = parseWaiverPragmas(content, language);
 
+    // Built at most once per file, on the first match, and shared by every
+    // pattern. Resolving a line by scanning from the start of the file costs
+    // O(filesize) per call, and the loop below no longer stops at the first
+    // match, so a file where everything is waived paid that on every match:
+    // 20 files of ~1MB went from 161 ms to 5,805 ms, and `gate` has no timeout.
+    // Left null for the overwhelmingly common file that matches nothing.
+    let offsets = null;
+
     for (const { id, pattern, issue, severity, fix } of applicable) {
       pattern.lastIndex = 0;
       let m;
@@ -650,7 +656,7 @@ export function scanProject(projectDir, options = {}) {
       // itself to the rest of the file. Behaviour is unchanged where no pragma
       // applies: the first unwaived match is reported, and the loop stops.
       while ((m = pattern.exec(content)) !== null) {
-        const line = lineNumberAt(content, m.index);
+        const line = lineAt(offsets ??= newlineOffsets(content), m.index);
         const evidence = m[0].slice(0, 80);
         const waiver = findWaiver(waivers, id, line);
         if (waiver) {

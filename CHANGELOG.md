@@ -35,9 +35,16 @@ A waiver is a security control's off switch, so it is deliberately narrow:
   `eslint-disable` uses. Prose that merely mentions a pragma is not one. Put a
   pragma on its own line ABOVE the finding whenever the finding's line already
   contains a comment opener; see "What a waiver deliberately is not" below.
-- **It must be plain text on a line the scanner can see the end of.** A pragma
-  carrying a control character, or sitting on a line with no line ending, is
-  reported as malformed and waives nothing.
+- **It must be plain text, in a file whose lines have endings.** A pragma
+  carrying a control character is reported as malformed and waives nothing. The
+  line-ending question is decided once for the whole FILE: a file holding any
+  terminator the newline split does not split on (CR, VT, FF, NEL, U+2028,
+  U+2029) honours no pragma anywhere in it, and reports the line that carries
+  it. Asked per line it could only ever inspect the pragma's OWN line, which
+  left a terminator one line below free to collapse the rest of the file into
+  the pragma's reach. Measured over 47,486 source files in 258 trees, 7 hold
+  such a terminator and all 7 are minified build output or a fixture that
+  embeds one deliberately.
 - **It waives one rule on one line**, its own or the one below. There is no
   wildcard, and a rule id that no rule uses is reported rather than ignored.
 - **Nothing is silently dropped.** Waived findings are listed by `scan` and by
@@ -84,9 +91,20 @@ covers nothing is still reported, as `unused`.
 
 That residual is acceptable because of who a waiver is for. It is authored by
 whoever can already edit the file, so it is not a privilege boundary: anyone
-able to smuggle a pragma through a string could simply write the comment. The
-property being defended is that data a project merely CONTAINS, a fixture or a
-JSON blob or a documentation sample, does not silently switch a check off.
+able to smuggle a pragma through a string could simply write the comment. It is
+also bounded by where the scanner looks: `node_modules`, `vendor`, `.venv` and
+`venv` are skipped by default, so this is first-party code, not a dependency's.
+
+The property being defended is narrower than "data a project merely CONTAINS
+does not switch a check off", which is how an earlier draft of this entry put
+it. A Python docstring disproved that: the block-comment continuation branch ran
+without consulting the language's comment openers, and `*` is not a comment
+character in Python at all. What holds now is that a language with no block
+comments cannot have its checks operated by contained data, and that in the C
+family a comment-shaped string can still be honoured but never silently -- a
+waived finding is listed by `scan` and `gate`, counted in `summary.waived`, and
+emitted to SARIF as a suppressed result. The three C-family shapes that remain
+are pinned by tests in `test/waivers.test.mjs`.
 
 Doing better needs a real parser per language, which this package cannot have
 while it stays dependency-free. A hand-written comment tokenizer was built for
