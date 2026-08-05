@@ -433,6 +433,24 @@ describe('TLS verification disabled in source', () => {
     }
   });
 
+  it('does not match a 0 that is only the prefix of a longer value', () => {
+    // `['"`]?0['"`]?` is satisfied by the leading `0` of `0.5`, `0x1` and
+    // `'00'`. None of those is the disabling literal, and reporting a critical
+    // finding on one is a false positive on a line that is not a defect at all.
+    for (const body of [
+      'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0.5;\n',
+      'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0x1;\n',
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '00';\n",
+      'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 10;\n',
+      "Object.assign(process.env, { NODE_TLS_REJECT_UNAUTHORIZED: 0.5 });\n",
+      "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0x0;\n",
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('app.js', body);
+      assert.equal(found(wp, /certificate verification/i).length, 0, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
   it('does not flag prose that merely names the anti-pattern', () => {
     // A guide, a linter rule, or this scanner's own pattern table names these
     // strings without doing them. Matching the bare name made `gate` report a

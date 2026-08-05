@@ -92,8 +92,12 @@ const MISUSE_PATTERNS = [
     //
     // Still missed, deliberately, because they need binding analysis rather
     // than another alternative: `??=`, and `Deno.env.set('X', '0')`.
+    //
+    // Every alternative ends `0` with `(?![\w.])`. Without it a bare `0` with
+    // optional quotes prefix-matches longer values: `= 0.5`, `= 0x1` and
+    // `= '00'` all reported the disabling literal, and none of them is it.
     languages: ['javascript'],
-    pattern: /(?:\w\s*\.\s*NODE_TLS_REJECT_UNAUTHORIZED\s*(?:\|\|)?=\s*['"`]?0['"`]?|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\]\s*(?:\|\|)?=\s*['"`]?0['"`]?|['"`]?NODE_TLS_REJECT_UNAUTHORIZED['"`]?\s*:\s*['"`]?0['"`]?)/g,
+    pattern: /(?:\w\s*\.\s*NODE_TLS_REJECT_UNAUTHORIZED\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\]\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])|['"`]?NODE_TLS_REJECT_UNAUTHORIZED['"`]?\s*:\s*['"`]?0['"`]?(?![\w.]))/g,
     issue: 'TLS certificate verification disabled process-wide (NODE_TLS env override set to 0)',
     severity: 'critical',
     fix: 'Remove the assignment; pass a CA with the `ca` option if the certificate is private',
