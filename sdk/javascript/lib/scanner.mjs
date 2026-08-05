@@ -113,7 +113,9 @@ const MISUSE_PATTERNS = [
     // wants the scanner to be able to tell code from prose, and a hand-written
     // comment tokenizer was measured mis-reading ordinary JSX and minified
     // bundles badly enough to LOSE real findings. Tracked in
-    // `todo/roadmap/gate-tls-verification-spellings.md`.
+    // https://github.com/ecolibria/cryptoserve/issues/72, which carries the
+    // five missed spellings, the false positives widening adds, and what a fix
+    // has to satisfy.
     //
     // The value ends with `(?![\w.])`. Without it a bare `0` with optional
     // quotes prefix-matches longer values: `= 0.5`, `= 0x1` and `= '00'` all
