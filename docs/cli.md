@@ -181,6 +181,95 @@ having the check.
 An unknown flag exits `2` rather than warning and continuing, because
 `gate . --min-scoree 95` used to fall back to the default threshold and pass.
 
+#### Clearing a false positive
+
+A misuse finding that is wrong for your code is waived in place, with a comment
+on the finding's line or the line directly above it:
+
+```js
+// cryptoserve-ignore misuse/tls-verify-disabled -- talks only to the local test server's self-signed cert
+const agent = new https.Agent({ rejectUnauthorized: false });
+```
+
+`scan` and `gate` both print the exact pragma to write, rule id included, beside
+the finding, so the id never has to be looked up. Whatever comment syntax the
+file's language uses works: `#` in Python, `//` in the C family.
+
+A waived finding stops failing the gate and is still reported. `scan` and `gate`
+list it with the reason given, `gate --format json` counts it in
+`summary.waived` and lists it under `waived[]`, and SARIF emits it as a
+suppressed result, which code scanning renders as a dismissed alert rather than
+as an absent one.
+
+##### The rules a pragma can name
+
+| Rule id | What it reports | Languages |
+|---|---|---|
+| `misuse/create-cipher` | `createCipher` derives an IV from the key | JavaScript |
+| `misuse/insecure-random-js` | `Math.random()` is not a CSPRNG | JavaScript |
+| `misuse/insecure-random-python` | the `random` module is not a CSPRNG | Python |
+| `misuse/tls-verify-disabled` | TLS certificate verification disabled | JavaScript, Python, Go, Java |
+| `misuse/node-tls-reject-unauthorized` | verification disabled process-wide via the `NODE_TLS_REJECT_UNAUTHORIZED` env override | JavaScript |
+| `misuse/python-cert-none` | verification disabled with `ssl.CERT_NONE` | Python |
+| `misuse/python-unverified-context` | verification disabled with `ssl._create_unverified_context` | Python |
+| `misuse/python-check-hostname` | hostname verification disabled with `check_hostname = False` | Python |
+| `misuse/js-check-server-identity` | hostname verification disabled by a no-op `checkServerIdentity` | JavaScript |
+
+These are the whole waivable set. Weak algorithms, hardcoded secrets, committed
+private keys and certificate findings are deliberately not waivable this way: a
+pragma naming one is reported as `unknown-rule`, and a pragma written next to
+one covers nothing and is reported as `unused`. Use `skipDirs` in
+`.cryptoserve.json` for a directory of fixtures, and `--allow-secrets` for
+credential findings.
+
+The ids are part of the CLI's contract with your source tree. Renaming one would
+un-waive every finding somebody wrote a pragma for, so they do not get renamed.
+
+##### What `scan` and `gate` say about a broken pragma
+
+| Warning | What it means |
+|---|---|
+| `malformed` | No reason given, or the pragma carries a control character. It waives nothing. |
+| `unknown-rule` | No rule uses that id. Usually a typo, and reported rather than ignored, because an off switch that looks like it worked is worse than none. |
+| `unused` | The pragma is honoured but covered no finding. |
+
+`unused` is the one worth acting on. A stale waiver is suppression with nothing
+under it, and the next real finding on that line would land under it silently.
+
+##### What a waiver deliberately is not
+
+Recognising a comment by its opener is a heuristic, not a parse. The scanner does
+not tokenize your source, so in a language that HAS block comments there are
+string shapes it cannot tell from a real pragma: a string literal beginning with
+an opener, an opener not directly after the quote, and a block-comment
+continuation line inside a template literal. All three are pinned by tests in
+`test/waivers.test.mjs` rather than left to be rediscovered.
+
+So the property defended here is narrower than "data a project merely contains
+cannot switch a check off", which is how an earlier draft put it. A Python
+docstring disproved that version. What holds now: a language with no block
+comments cannot have its checks operated by contained data at all, and in the C
+family a comment-shaped string can be honoured but never silently, since every
+waived finding is listed, counted and emitted to SARIF.
+
+The residual is bounded by who a waiver is for and by where the scanner looks. It
+is authored by whoever can already edit the file, so it is not a privilege
+boundary: anyone able to smuggle a pragma through a string could simply write the
+comment instead. And `node_modules`, `vendor`, `.venv` and `venv` are skipped by
+default, so this applies to first-party code rather than a dependency's.
+
+Closing it needs a real parser per language, six of them for the languages here,
+which this package cannot have while it stays dependency-free.
+
+Two further rules follow from a pragma being file content on its way to a
+terminal. A pragma carrying a control character is reported as malformed and
+waives nothing. And the line-ending question is decided once for the whole FILE:
+a file holding any terminator that splitting on newlines does not split on (CR,
+VT, FF, NEL, U+2028, U+2029) honours no pragma anywhere in it, and reports the
+line that carries it. Measured over 47,486 source files in 258 trees, 7 hold such
+a terminator and all 7 are minified build output or a fixture embedding one
+deliberately.
+
 ### `census`: Ecosystem Census
 
 Analyze cryptographic library adoption across package ecosystems.

@@ -144,6 +144,7 @@ workflow and carry no attestations. Verify those with `SHA256SUMS.txt` only.
 | Score post-quantum readiness and get a migration plan | `cryptoserve pqc` |
 | Generate a Cryptographic Bill of Materials | `cryptoserve cbom --format cyclonedx` |
 | Block weak crypto in CI | `cryptoserve gate . --fail-on-weak` |
+| Clear a false positive without silencing a directory | `// cryptoserve-ignore <rule-id> -- <why>` |
 | Encrypt a file or string offline | `cryptoserve encrypt --file data.csv --password $SECRET` |
 | Hash a password (scrypt / pbkdf2 / argon2) | `cryptoserve hash-password --algorithm argon2` |
 | Store secrets in an encrypted local vault | `cryptoserve vault set API_KEY <value>` |
@@ -220,6 +221,76 @@ finding. See [docs/cli.md](docs/cli.md#the-two-thresholds-are-different-question
 Exit codes: `0` gate passed, `1` violations found, `2` the gate could not run
 (missing path, unreadable tree, a threshold it cannot enforce). A typo in the
 scanned path exits 2 rather than scoring a clean pass.
+
+## Clearing a false positive
+
+A scanner whose false positives cannot be cleared gets excluded from the tree
+entirely. When an API-misuse finding is wrong for your code, waive that one
+finding where it is. `scan` and `gate` print the pragma to write, rule id
+included, so nothing has to be looked up:
+
+```
+Weak Crypto Patterns
+  x TLS certificate verification disabled
+    src/dev-server.js:4
+    *  Fix: Remove the override and trust the system CA store
+    Waive: put cryptoserve-ignore misuse/tls-verify-disabled -- <why> on its own line above
+```
+
+Put it in a comment on the finding's line or the one above, in whatever comment
+syntax the file's language uses:
+
+```js
+// cryptoserve-ignore misuse/tls-verify-disabled -- talks only to the local test server's self-signed cert
+const agent = new https.Agent({ rejectUnauthorized: false });
+```
+
+The gate now exits `0`, and says what it stopped failing on:
+
+```
+  !  1 finding waived by a cryptoserve-ignore pragma:
+    src/dev-server.js:5 misuse/tls-verify-disabled (talks only to the local test server's self-signed cert)
+```
+
+Nothing is silently dropped. `gate --format json` counts waived findings in
+`summary.waived` and lists each under `waived[]` with its reason, and SARIF
+emits them as suppressed results, which code scanning shows as dismissed alerts
+rather than as absent ones.
+
+A waiver is a security control's off switch, so it is deliberately narrow:
+
+- **A reason is required.** It is the only part a reviewer can disagree with.
+- **It must be the first thing in the comment**, the rule `eslint-disable` uses,
+  so prose that merely mentions a pragma is not one.
+- **It waives one rule on one line**, its own or the one below. There is no
+  wildcard.
+- **It reaches API misuse only**, the `misuse/*` rules. Weak algorithms,
+  secrets and private keys are not waivable this way. Use `skipDirs` in
+  `.cryptoserve.json` for a directory of fixtures, `--allow-secrets` for
+  credential findings.
+
+A pragma that does not do what it looks like it does is reported rather than
+trusted:
+
+```
+Waiver Problems
+  !  [malformed] a waiver needs a reason: cryptoserve-ignore <rule> -- <why>
+    src/stale.js:4
+  !  [unknown-rule] no rule is called misuse/tls-verify-disable
+    src/stale.js:1
+  !  [unused] this waiver covered no finding; delete it or move it onto the line it was written for
+    src/stale.js:7
+```
+
+`unused` is the one to act on: a stale waiver is suppression with nothing under
+it, and the next real finding on that line would land under it silently.
+
+Recognising a comment by its opener is a heuristic, not a parse, so in a
+language that has block comments a string shaped like a comment can be honoured.
+That is narrower than "data a project merely contains cannot switch a check
+off", and it is never silent when it happens. The rule ids, the warnings, and
+the full limitation are in
+[docs/cli.md](docs/cli.md#clearing-a-false-positive).
 
 ## SDKs
 
