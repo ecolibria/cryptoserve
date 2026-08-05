@@ -54,7 +54,7 @@ not exist, or covered no finding. A stale waiver is suppression with nothing
 under it, and the next real finding on that line would land under it silently.
 
 **Detection is unchanged by this release.** Verified finding-for-finding against
-0.6.1 across 22 trees and 10,680 source files, third-party `node_modules` and
+0.6.0 across 22 trees and 10,680 source files, third-party `node_modules` and
 minified bundles included: same misuse findings, same lines, same evidence,
 nothing added and nothing removed. The only new behaviour is that a finding you
 have explicitly waived stops failing the gate.

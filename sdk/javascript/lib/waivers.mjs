@@ -281,9 +281,10 @@ export function parseWaiverPragmas(content, language) {
     // `ok<ESC>[2K<CR>FORGED` erases the line the scanner just wrote and prints
     // its own. Nothing before this feature put file text on that surface at all.
     const issue = UNSPLIT_TERMINATOR.test(raw)
-      ? 'a waiver must sit on its own line: this one has no line ending the scanner recognises'
+      ? 'this line does not end the way the scanner reads line endings, so the pragma on it has no end;'
+        + ' save the file with LF or CRLF line endings'
       : CONTROL.test(text)
-        ? 'a waiver must be plain text: this one carries a control character'
+        ? 'a waiver must be plain text; remove the control character from this one'
         : !shape.reason
           ? 'a waiver needs a reason: cryptoserve-ignore <rule> -- <why>'
           : null;

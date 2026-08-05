@@ -281,6 +281,11 @@ describe('parseWaiverPragmas', () => {
         // Refused, not dropped. Past the point where a line looks like a
         // pragma, silence is the failure this module is trying not to be.
         assert.equal(malformed.length, 1, `${JSON.stringify(sep)} -> ${JSON.stringify(malformed)}`);
+        // The RIGHT refusal, not just any refusal. Without this, the message
+        // could drift to "needs a reason" and the test would stay green while
+        // telling a user with a CR-only file to go and look at the wrong thing.
+        assert.match(malformed[0].issue, /line ending/,
+          `${JSON.stringify(sep)} -> ${malformed[0].issue}`);
         // "The line" here is the whole file, so the quote-back is capped the
         // same way `evidence` is rather than carrying a megabyte into a report.
         assert.ok(src.length > 200, 'the fixture stopped being long enough to test the cap');
