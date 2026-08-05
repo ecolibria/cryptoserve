@@ -30,7 +30,7 @@ Now reported, each in both languages:
   severity whatever file type it is written in.
 
 Restoring verification passes the same tree, and each spelling on its own fails
-the gate at DEFAULT thresholds — a finding `scan` prints that `gate` cannot
+the gate at DEFAULT thresholds. A finding `scan` prints that `gate` cannot
 reach at its default settings is the defect this release already fixed once for
 medium severity.
 
@@ -51,15 +51,15 @@ The same name-only match was in the CBOM, which dropped an `md5` read from a
 tree listed MD5. Both now use one shared language predicate.
 
 Ownership is now answered by its own list, separate from the inventory that
-feeds scoring. A site no same-language library claims gets a synthetic owner —
+feeds scoring. A site no same-language library claims gets a synthetic owner,
 without which barring a foreign claim would leave a `#include <openssl/md5.h>`
 site with no claimant at all, since a C include produces no library entry in
 any ecosystem. Keeping that list separate is what makes this change score-neutral:
 
 **No score changes.** `quantumReadinessScore` is byte-identical to 0.6.0 on
 every tree measured, including mixed-language ones. That is deliberate and is
-regression-tested. `calculateQuantumScore` counts inventory ROWS —
-`deprecatedCount * 10`, uncapped — while `classifyAlgorithms` deduplicates by
+regression-tested. `calculateQuantumScore` counts inventory ROWS
+(`deprecatedCount * 10`, uncapped) while `classifyAlgorithms` deduplicates by
 algorithm name, so one row per language for the same algorithm moves the score
 without the set of algorithms present having changed. It moves it in both
 directions, and the upward one is the dangerous one: a tree with `jose`
@@ -79,14 +79,14 @@ say.
 
 The disabled-verification patterns match code, not prose, but they cannot tell
 code from a test fixture that contains code. A repository whose own sources
-carry these strings — a linter, a security guide, this scanner's test suite —
+carry these strings (a linter, a security guide, this scanner's test suite)
 will see critical findings on those files, and there is no per-finding waiver:
 `--max-severity` only tightens and refuses `high`/`critical` by name,
 `--allow-secrets` does not reach misuse, and `.cryptoserve.json` offers only
 `skipDirs`. This is not new (`createCipher` and `rejectUnauthorized: false`
 behave the same way today) but there are now more patterns that can hit it.
 
-These spellings are not yet detected, and each has a test asserting it is not —
+These spellings are not yet detected, and each has a test asserting it is not,
 so if one starts being detected, this list is what fails:
 
 - `NODE_TLS_REJECT_UNAUTHORIZED` set through anything other than `process.env`
@@ -94,13 +94,13 @@ so if one starts being detected, this list is what fails:
   `const e = process.env`, `Bun.env`, a spread into a child process's env, or
   `Object.assign(process.env, …)`. Also `??=` and `Deno.env.set(…)`. The rule is
   scoped to `process.env` on purpose. Widening it to any receiver does catch all
-  of these — and also flags `{ rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } }`, a
+  of these, and also flags `{ rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } }`, a
   severity map, an unrelated counter, a class field, and a comment naming the
   variable. Measured: 8/8 detected against 6/6 false positives, versus 3/8
   against 1/6 as shipped. These findings are `critical` and there is no
   per-finding waiver, so a false one cannot be cleared short of excluding a
   directory. Widening waits on comment-stripping and a waiver mechanism.
-- `from ssl import CERT_NONE` and `from ssl import PROTOCOL_TLSv1` — unqualified
+- `from ssl import CERT_NONE` and `from ssl import PROTOCOL_TLSv1`: unqualified
   after a `from` import; both rules require the `ssl.` qualifier.
 - The method-shorthand, `async`, quoted-key and commented-body forms of a no-op
   `checkServerIdentity`.

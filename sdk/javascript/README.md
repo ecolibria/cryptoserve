@@ -67,7 +67,7 @@ cryptoserve scan . --binary          # Include binary crypto detection
 
 ### Additional Detection
 
-- **TLS/SSL versions**: nginx and Apache configs, Dockerfiles, and source — Node.js
+- **TLS/SSL versions**: nginx and Apache configs, Dockerfiles, and source: Node.js
   (`minVersion`, `secureProtocol`), Python (`ssl.PROTOCOL_*`), Go (`tls.Config`) and
   Java (`SSLContext`). A deprecated protocol is rated the same wherever it is written.
 - **Disabled TLS verification**: `rejectUnauthorized: false`,
