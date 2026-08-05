@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+A per-finding waiver, written as a comment next to the code it covers:
+
+```js
+// cryptoserve-ignore misuse/node-tls-reject-unauthorized -- a severity table, not an assignment
+const SEVERITY = { NODE_TLS_REJECT_UNAUTHORIZED: 0, OTHER: 2 };
+```
+
+Until now a false `critical` could not be cleared at all. `--max-severity` only
+tightens and refuses `high`/`critical` by name, `--allow-secrets` does not reach
+misuse, and `.cryptoserve.json` offers only `skipDirs`, which excludes a whole
+directory to silence one line. A tool whose false positives are unresolvable
+gets excluded entirely, so the absence of this was itself a security defect.
+
+Every misuse rule now carries a stable id (`misuse/create-cipher`,
+`misuse/node-tls-reject-unauthorized`, and so on) which is what a pragma names.
+The ids are part of the CLI's contract with your source tree and will not be
+renamed.
+
+A waiver is a security control's off switch, so it is deliberately narrow:
+
+- **A reason is required.** It is the only part a reviewer can disagree with.
+  A pragma without one waives nothing and is reported as malformed.
+- **It must be the first thing in the comment**, the same rule
+  `eslint-disable` uses. Prose that merely mentions a pragma is not one.
+- **It waives one rule on one line**, its own or the one below. There is no
+  wildcard, and a rule id that no rule uses is reported rather than ignored.
+- **Nothing is silently dropped.** Waived findings are listed by `scan` and by
+  `gate` with the reason given, counted in `gate --format json` as
+  `summary.waived`, and emitted in SARIF as suppressed results, which code
+  scanning renders as dismissed alerts rather than as absent ones.
+- **A waiver cannot hide the next finding.** Misuse patterns report only the
+  first match per pattern per file, so the scan deliberately keeps reading past
+  a waived match. Without that, one pragma at the top of a file would suppress
+  every later occurrence of the same rule in it.
+
+`scan` and `gate` also report pragmas that are malformed, name a rule that does
+not exist, or covered no finding. A stale waiver is suppression with nothing
+under it, and the next real finding on that line would land under it silently.
+
+**Detection is unchanged by this release.** Verified finding-for-finding against
+0.6.1 on this repository and on four unrelated ones (1,007 files): same misuse
+findings, same lines, nothing added and nothing removed. The only new behaviour
+is that a finding you have explicitly waived stops failing the gate.
+
+#### What a waiver deliberately is not
+
+Recognising a comment by its opener is a heuristic, not a parse. The scanner
+does not tokenize your source, so a string literal that both begins with a
+comment opener and ends the line with pragma text would be honoured.
+
+That residual is acceptable because of who a waiver is for. It is authored by
+whoever can already edit the file, so it is not a privilege boundary: anyone
+able to smuggle a pragma through a string could simply write the comment. The
+property being defended is that data a project merely CONTAINS, a fixture or a
+JSON blob or a documentation sample, does not silently switch a check off.
+
+Doing better needs a real parser per language, which this package cannot have
+while it stays dependency-free. A hand-written comment tokenizer was built for
+this release and then removed: adversarial review measured it mis-reading
+ordinary JSX and minified bundles badly enough to LOSE real findings, including
+57% of a 174KB bundle shipped inside a real PyPI package. For a security
+scanner, a false negative on a third-party file is worse than the false positive
+it was meant to fix.
+
 ### Fixed
 
 `gate` now fails a tree that disables TLS certificate verification
@@ -77,14 +143,20 @@ say.
 
 ### Known limitations
 
-The disabled-verification patterns match code, not prose, but they cannot tell
-code from a test fixture that contains code. A repository whose own sources
-carry these strings (a linter, a security guide, this scanner's test suite)
-will see critical findings on those files, and there is no per-finding waiver:
-`--max-severity` only tightens and refuses `high`/`critical` by name,
-`--allow-secrets` does not reach misuse, and `.cryptoserve.json` offers only
-`skipDirs`. This is not new (`createCipher` and `rejectUnauthorized: false`
-behave the same way today) but there are now more patterns that can hit it.
+The misuse patterns match code, not prose, and they cannot tell either from a
+test fixture that CONTAINS code: a fixture string in a test file is textually a
+call, and a comment quoting an anti-pattern is textually the anti-pattern. A
+pragma clears an isolated one, but it is per line, and a file made of fixtures
+needs one per occurrence. This repository's own test files would need 39, which
+is what `skipDirs` is for. `createCipher` and `rejectUnauthorized: false` have
+always behaved this way; there are now more patterns that can.
+
+A misuse pattern reports only the FIRST match per pattern per file, so a false
+positive above a real defect of the same rule hides it until the false one is
+waived or fixed. Waiving does not hide it: the scan keeps reading past a waived
+match specifically so that a pragma cannot silently widen itself to the rest of
+the file. Reporting every match changes finding counts for every existing misuse
+pattern, so it wants its own measured change.
 
 These spellings are not yet detected, and each has a test asserting it is not,
 so if one starts being detected, this list is what fails:
@@ -92,14 +164,19 @@ so if one starts being detected, this list is what fails:
 - `NODE_TLS_REJECT_UNAUTHORIZED` set through anything other than `process.env`
   directly: a destructured `const { env } = process`, an aliased
   `const e = process.env`, `Bun.env`, a spread into a child process's env, or
-  `Object.assign(process.env, …)`. Also `??=` and `Deno.env.set(…)`. The rule is
-  scoped to `process.env` on purpose. Widening it to any receiver does catch all
-  of these, and also flags `{ rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } }`, a
-  severity map, an unrelated counter, a class field, and a comment naming the
-  variable. Measured: 8/8 detected against 6/6 false positives, versus 3/8
-  against 1/6 as shipped. These findings are `critical` and there is no
-  per-finding waiver, so a false one cannot be cleared short of excluding a
-  directory. Widening waits on comment-stripping and a waiver mechanism.
+  `Object.assign(process.env, ...)`. Also `??=` and `Deno.env.set(...)`. The
+  rule is scoped to `process.env` on purpose. Widening it to any receiver does
+  catch all of these, and also flags `{ rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } }`,
+  a severity map, an unrelated counter, a class field, and a comment naming the
+  variable: 8/8 detected against 6/6 false positives, versus 3/8 against 1/6 as
+  shipped.
+
+  The new pragma makes every one of those clearable, which removes the original
+  objection. It stays narrow for a second reason, found by adversarial review:
+  widened, every remaining critical on this repository's own tree becomes a
+  fixture string in its own test suite, so the scanner fails its own gate and
+  owes itself 39 pragmas. Reaching those spellings wants the scanner to be able
+  to tell code from prose, which needs a real parser rather than a regex.
 - `from ssl import CERT_NONE` and `from ssl import PROTOCOL_TLSv1`: unqualified
   after a `from` import; both rules require the `ssl.` qualifier.
 - The method-shorthand, `async`, quoted-key and commented-body forms of a no-op

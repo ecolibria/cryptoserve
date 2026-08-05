@@ -460,8 +460,13 @@ describe('TLS verification disabled in source', () => {
   it('does not flag an unrelated property that happens to share the name', () => {
     // The reason this rule is scoped to `process.env` and not widened to any
     // receiver. Each of these is a real construct in real code, none is a
-    // defect, and every one of them is `critical` with no per-finding waiver if
-    // the rule matches it.
+    // defect, and every one of them is `critical` if the rule matches it.
+    //
+    // The `cryptoserve-ignore` pragma can now clear each one, which removed the
+    // original objection to widening. It stays narrow for a second reason:
+    // widening makes every remaining critical on this repository's own tree a
+    // fixture string in its test suite, so the scanner fails its own gate and
+    // its author owes it 39 pragmas.
     for (const body of [
       '// Never write NODE_TLS_REJECT_UNAUTHORIZED: 0 anywhere.\n',
       'module.exports = { rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } };\n',
@@ -472,6 +477,24 @@ describe('TLS verification disabled in source', () => {
       cleanup(); setup();
       const wp = misuseIn('app.js', body);
       assert.equal(found(wp, /certificate verification/i).length, 0, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('does not apply one language\'s spellings to another language\'s files', () => {
+    // Each misuse rule declares the languages it applies to, and nothing tested
+    // that the declaration was honoured: running every pattern against every
+    // file left the suite green. A Python spelling matched in a .js file is a
+    // finding whose fix names an API that file cannot call, which is the same
+    // wrong-language attribution #67 was about, one table over.
+    const cases = [
+      ['app.js', 'ctx.check_hostname = False\n', /hostname/i],
+      ['app.js', 'ctx.verify_mode = ssl.CERT_NONE\n', /certificate verification/i],
+      ['app.py', "cipher = crypto.createCipher('aes-256-cbc', key)\n", /createCipher/i],
+    ];
+    for (const [file, body, re] of cases) {
+      cleanup(); setup();
+      const wp = misuseIn(file, body);
+      assert.equal(found(wp, re).length, 0, `${file}: ${body} -> ${JSON.stringify(wp)}`);
     }
   });
 
@@ -612,6 +635,193 @@ describe('TLS verification disabled in source', () => {
     const wp = misuseIn('app.js',
       'const a = new https.Agent({ checkServerIdentity: (host, cert) => tls.checkServerIdentity(host, cert) });\n');
     assert.equal(found(wp, /hostname/i).length, 0, JSON.stringify(wp));
+  });
+});
+
+/**
+ * Per-finding waivers.
+ *
+ * Before these existed a false `critical` could not be cleared at all:
+ * `--max-severity` only tightens and refuses `high`/`critical` by name,
+ * `--allow-secrets` does not reach misuse, and `.cryptoserve.json` offers only
+ * `skipDirs`, which excludes a whole directory to silence one line. That is
+ * what kept the widened NODE_TLS rule off main for three review rounds.
+ *
+ * A waiver is a security control's off switch, so most of what follows tests
+ * what it must NOT be able to do.
+ */
+describe('cryptoserve-ignore pragmas', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  const scanWith = (file, body) => {
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, file), body);
+    return scanProject(TEST_DIR);
+  };
+  const tls = (r) => r.weakPatterns.filter(p => /certificate verification/i.test(p.issue));
+
+  const RULE = 'misuse/node-tls-reject-unauthorized';
+  // Assembled, so this file's own source does not read as a live pragma.
+  const IGNORE = 'cryptoserve' + '-ignore';
+  const DEFECT = "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n";
+
+  it('clears a finding when the pragma is on the line above', () => {
+    const r = scanWith('app.js', `// cryptoserve-ignore ${RULE} -- fixture asserting the scanner sees this\n${DEFECT}`);
+    assert.equal(tls(r).length, 0, JSON.stringify(r.weakPatterns));
+    assert.equal(r.waivedFindings.length, 1, JSON.stringify(r.waivedFindings));
+    assert.equal(r.waivedFindings[0].rule, RULE);
+    assert.equal(r.waivedFindings[0].line, 2);
+    assert.equal(r.waivedFindings[0].reason, 'fixture asserting the scanner sees this');
+    // A waiver that did its job is not also reported as a problem. Without this
+    // the "unused" bookkeeping could stop working and nothing would notice,
+    // because every OTHER assertion here passes whether or not it is marked.
+    assert.deepEqual(r.waiverWarnings, [], JSON.stringify(r.waiverWarnings));
+  });
+
+  it('quotes the evidence as it was written', () => {
+    const r = scanWith('app.js', "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n");
+    assert.equal(tls(r).length, 1, JSON.stringify(r.weakPatterns));
+    assert.match(tls(r)[0].evidence, /process\.env\.NODE_TLS_REJECT_UNAUTHORIZED/);
+  });
+
+  it('clears a finding when the pragma trails the same line', () => {
+    const r = scanWith('app.js',
+      `process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // ${IGNORE} ${RULE} -- deliberate\n`);
+    assert.equal(tls(r).length, 0, JSON.stringify(r.weakPatterns));
+    assert.equal(r.waivedFindings.length, 1);
+  });
+
+  it('clears a finding from a block comment', () => {
+    const r = scanWith('app.js', `/* cryptoserve-ignore ${RULE} -- deliberate */\n${DEFECT}`);
+    assert.equal(tls(r).length, 0, JSON.stringify(r.weakPatterns));
+    assert.equal(r.waivedFindings[0].reason, 'deliberate');
+  });
+
+  it('does not reach a finding two lines below it', () => {
+    // A pragma covers its own line and the next one. Anything wider drifts away
+    // from the line it was written for as the file changes around it, and
+    // starts covering findings its author never saw.
+    const r = scanWith('app.js',
+      `// cryptoserve-ignore ${RULE} -- deliberate\nconst unrelated = 1;\n${DEFECT}`);
+    assert.equal(tls(r).length, 1, JSON.stringify(r.weakPatterns));
+    assert.equal(r.waivedFindings.length, 0);
+  });
+
+  it('does not clear a different rule', () => {
+    const r = scanWith('app.js',
+      `// cryptoserve-ignore misuse/create-cipher -- unrelated rule\n${DEFECT}`);
+    assert.equal(tls(r).length, 1, JSON.stringify(r.weakPatterns));
+  });
+
+  it('does not clear anything without a reason', () => {
+    // The reason is the only part of a waiver a reviewer can disagree with. One
+    // without it is not auditable, so it waives nothing and says so.
+    const r = scanWith('app.js', `// cryptoserve-ignore ${RULE}\n${DEFECT}`);
+    assert.equal(tls(r).length, 1, JSON.stringify(r.weakPatterns));
+    assert.equal(r.waiverWarnings.filter(w => w.kind === 'malformed').length, 1,
+      JSON.stringify(r.waiverWarnings));
+  });
+
+  it('does not honour a pragma that is not in a comment', () => {
+    // The pragma is read from comment ranges, so checked-in DATA cannot turn a
+    // check off. A fixture file, a JSON blob or a test's own expected-output
+    // string containing this text is text, not an instruction.
+    for (const body of [
+      `const s = "cryptoserve-ignore ${RULE} -- from a string";\n${DEFECT}`,
+      `const t = \`cryptoserve-ignore ${RULE} -- from a template\`;\n${DEFECT}`,
+    ]) {
+      cleanup(); setup();
+      const r = scanWith('app.js', body);
+      assert.equal(tls(r).length, 1, `${body} -> ${JSON.stringify(r.weakPatterns)}`);
+      assert.equal(r.waivedFindings.length, 0);
+    }
+  });
+
+  it('does not hide a later real defect of the same rule in the same file', () => {
+    // The dangerous shape. Misuse patterns report only the FIRST match per
+    // pattern per file, so a waiver on the first match would silently widen
+    // itself to the whole file: one pragma at the top of a fixture, and a real
+    // defect fifty lines down is never reported at all.
+    const r = scanWith('app.js',
+      `// cryptoserve-ignore ${RULE} -- the first one is a deliberate demo\n`
+      + DEFECT
+      + 'const filler = 1;\n'
+      + DEFECT);
+    const hits = tls(r);
+    assert.equal(hits.length, 1, JSON.stringify(r.weakPatterns));
+    assert.equal(hits[0].line, 4);
+    assert.equal(r.waivedFindings.length, 1);
+    assert.equal(r.waivedFindings[0].line, 2);
+  });
+
+  it('reports a pragma naming a rule that does not exist', () => {
+    // A typo in an off switch that looks like it worked is worse than no off
+    // switch, because the author stops looking at the finding.
+    const r = scanWith('app.js', `// cryptoserve-ignore misuse/nod-tls-reject -- typo\n${DEFECT}`);
+    assert.equal(tls(r).length, 1, JSON.stringify(r.weakPatterns));
+    const warn = r.waiverWarnings.filter(w => w.kind === 'unknown-rule');
+    assert.equal(warn.length, 1, JSON.stringify(r.waiverWarnings));
+    assert.equal(warn[0].rule, 'misuse/nod-tls-reject');
+  });
+
+  it('reports a pragma that covered no finding', () => {
+    // Suppression with nothing under it. The code it was written for is gone,
+    // and the next real finding on that line would land under it silently.
+    const r = scanWith('app.js', `// cryptoserve-ignore ${RULE} -- stale\nconst clean = 1;\n`);
+    assert.equal(r.waiverWarnings.filter(w => w.kind === 'unused').length, 1,
+      JSON.stringify(r.waiverWarnings));
+  });
+
+  it('reports nothing for a file with no pragmas', () => {
+    const r = scanWith('app.js', DEFECT);
+    assert.deepEqual(r.waiverWarnings, []);
+    assert.deepEqual(r.waivedFindings, []);
+  });
+
+  it('does not change the library inventory that scoring reads', () => {
+    // A waiver clears a MISUSE finding. It must not move `quantumReadinessScore`
+    // in either direction: the score is computed from the library inventory,
+    // and a user who waives a false positive has not made their tree more
+    // quantum-ready. A gate that goes green because somebody wrote a comment is
+    // the failure this pins.
+    //
+    // The tree carries a real dependency and a real call site ON PURPOSE. The
+    // first version of this test scanned a file that imported nothing, so both
+    // sides of the comparison were the empty array and it passed against any
+    // implementation whatsoever. Found by adversarial review; an inventory
+    // assertion that cannot tell an inventory from no inventory asserts
+    // nothing.
+    const withDependency = (pragma) => {
+      writeFileSync(join(TEST_DIR, 'package.json'),
+        JSON.stringify({ dependencies: { 'crypto-js': '3.1.9' } }));
+      writeFileSync(join(TEST_DIR, 'app.js'),
+        "const C = require('crypto-js');\nconst h = C.MD5('pw');\n" + pragma + DEFECT);
+      return scanProject(TEST_DIR);
+    };
+
+    const withoutPragma = toLibraryInventory(withDependency(''));
+    // Guards the guard: if the fixture ever stops producing an inventory, this
+    // test silently stops measuring anything.
+    assert.ok(withoutPragma.length > 0, 'fixture produced no inventory to compare');
+    assert.ok(withoutPragma.some(l => l.name === 'crypto-js'), JSON.stringify(withoutPragma));
+
+    cleanup(); setup();
+    const scanned = withDependency(`// cryptoserve-ignore ${RULE} -- deliberate\n`);
+    const withPragma = toLibraryInventory(scanned);
+
+    // The pragma really did waive something, or this compares two identical
+    // runs and proves nothing about waiving.
+    assert.equal(scanned.waivedFindings.length, 1, JSON.stringify(scanned.waivedFindings));
+    assert.deepEqual(withPragma, withoutPragma);
+  });
+
+  it('waives a Python finding from a # comment', () => {
+    const r = scanWith('app.py',
+      '# cryptoserve-ignore misuse/python-check-hostname -- documented example\nctx.check_hostname = False\n');
+    assert.equal(r.weakPatterns.filter(p => /hostname/i.test(p.issue)).length, 0,
+      JSON.stringify(r.weakPatterns));
+    assert.equal(r.waivedFindings.length, 1);
   });
 });
 

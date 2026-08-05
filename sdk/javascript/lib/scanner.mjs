@@ -22,6 +22,7 @@ import { lookupAlgorithm } from './algorithm-db.mjs';
 import { lookupNpmPackage } from './crypto-registry.mjs';
 import { walkProject } from './walker.mjs';
 import { loadScannerConfig } from './config.mjs';
+import { parseWaiverPragmas, findWaiver, waiverWarnings } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // API misuse patterns
@@ -29,10 +30,16 @@ import { loadScannerConfig } from './config.mjs';
 // These are distinct from weak *algorithms* (which come from the algorithm
 // database via the language pattern tables). A misuse is a correct algorithm
 // used incorrectly, so it cannot be derived from an algorithm name.
+//
+// Every entry carries a stable `id`. It is what a waiver pragma names, so it is
+// part of the CLI's contract with a user's source tree: renaming one silently
+// un-waives every finding somebody wrote a pragma for. The `issue` text is
+// prose and may be reworded; the id may not.
 // ---------------------------------------------------------------------------
 
 const MISUSE_PATTERNS = [
   {
+    id: 'misuse/create-cipher',
     languages: ['javascript'],
     pattern: /createCipher\s*\(\s*['"`]/g,
     issue: 'createCipher derives an IV from the key (use createCipheriv)',
@@ -40,6 +47,7 @@ const MISUSE_PATTERNS = [
     fix: 'crypto.createCipheriv(algorithm, key, crypto.randomBytes(16))',
   },
   {
+    id: 'misuse/insecure-random-js',
     languages: ['javascript'],
     pattern: /Math\.random\s*\(\s*\)[^\n]{0,40}(?:token|secret|key|nonce|salt|iv|password)/gi,
     issue: 'Math.random() is not a CSPRNG',
@@ -47,6 +55,7 @@ const MISUSE_PATTERNS = [
     fix: 'crypto.randomBytes(n) or crypto.getRandomValues(...)',
   },
   {
+    id: 'misuse/insecure-random-python',
     languages: ['python'],
     pattern: /\brandom\s*\.\s*(?:random|randint|choice)\s*\([^\n]{0,40}(?:token|secret|key|nonce|salt|password)/gi,
     issue: 'random module is not a CSPRNG',
@@ -54,6 +63,7 @@ const MISUSE_PATTERNS = [
     fix: 'secrets.token_bytes(n)',
   },
   {
+    id: 'misuse/tls-verify-disabled',
     languages: ['javascript', 'python', 'go', 'java'],
     pattern: /(?:rejectUnauthorized\s*:\s*false|verify\s*=\s*False|InsecureSkipVerify\s*:\s*true)/g,
     issue: 'TLS certificate verification disabled',
@@ -93,16 +103,22 @@ const MISUSE_PATTERNS = [
     //     this.NODE_TLS_REJECT_UNAUTHORIZED = 0;
     //
     // 8/8 detected against 6/6 false positives, versus 3/8 against 1/6 here.
-    // These are `critical` findings and the CLI has no per-finding waiver, so a
-    // false one cannot be cleared short of excluding a whole directory. For a
-    // security tool an unwaivable false critical costs more than a missed
-    // spelling that no released version ever detected, so this stays narrow
-    // until the structural work lands: strip comments before matching, and add
-    // a waiver. Tracked in `todo/roadmap/gate-tls-verification-spellings.md`.
+    //
+    // The `cryptoserve-ignore` pragma now makes every one of those clearable,
+    // which removes the ORIGINAL objection to widening. It stays narrow anyway,
+    // for a second reason found by adversarial review: on this repository's own
+    // tree the widened form makes all eight remaining criticals fixture strings
+    // in the test suite, so the scanner fails its own gate. A rule that forces
+    // 39 pragmas onto its own author is not ready. Reaching those spellings
+    // wants the scanner to be able to tell code from prose, and a hand-written
+    // comment tokenizer was measured mis-reading ordinary JSX and minified
+    // bundles badly enough to LOSE real findings. Tracked in
+    // `todo/roadmap/gate-tls-verification-spellings.md`.
     //
     // The value ends with `(?![\w.])`. Without it a bare `0` with optional
     // quotes prefix-matches longer values: `= 0.5`, `= 0x1` and `= '00'` all
     // reported the disabling literal, and none of them is it.
+    id: 'misuse/node-tls-reject-unauthorized',
     languages: ['javascript'],
     pattern: /process\s*\.\s*env\s*(?:\.\s*NODE_TLS_REJECT_UNAUTHORIZED|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\])\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])/g,
     issue: 'TLS certificate verification disabled process-wide (NODE_TLS env override set to 0)',
@@ -110,6 +126,7 @@ const MISUSE_PATTERNS = [
     fix: 'Remove the assignment; pass a CA with the `ca` option if the certificate is private',
   },
   {
+    id: 'misuse/python-cert-none',
     languages: ['python'],
     pattern: /(?:verify_mode|cert_reqs)\s*=\s*ssl\.CERT_NONE/g,
     issue: 'TLS certificate verification disabled (ssl.CERT_NONE)',
@@ -120,6 +137,7 @@ const MISUSE_PATTERNS = [
     // Both spellings. Assigning it to `_create_default_https_context` is the
     // canonical process-wide Python bypass and never calls the function here,
     // so requiring the opening parenthesis missed exactly the worst form.
+    id: 'misuse/python-unverified-context',
     languages: ['python'],
     pattern: /ssl\._create_unverified_context\s*\(|_create_default_https_context\s*=\s*ssl\._create_unverified_context/g,
     issue: 'TLS certificate verification disabled (ssl._create_unverified_context)',
@@ -127,6 +145,7 @@ const MISUSE_PATTERNS = [
     fix: 'Use ssl.create_default_context()',
   },
   {
+    id: 'misuse/python-check-hostname',
     languages: ['python'],
     pattern: /check_hostname\s*=\s*False/g,
     issue: 'TLS hostname verification disabled (check_hostname = False)',
@@ -137,6 +156,7 @@ const MISUSE_PATTERNS = [
     // The JavaScript spelling of the same defect: an override that returns
     // nothing accepts every certificate for every host. A real implementation
     // calls back into `tls.checkServerIdentity`, so only the empty bodies match.
+    id: 'misuse/js-check-server-identity',
     languages: ['javascript'],
     pattern: /checkServerIdentity\s*:\s*(?:function\s*)?\([^)]*\)\s*(?:=>\s*)?(?:undefined\b|null\b|true\b|\{\s*\}|\{\s*return\s*(?:undefined|null|true)?\s*;?\s*\})/g,
     issue: 'TLS hostname verification disabled (checkServerIdentity overridden with a no-op)',
@@ -144,6 +164,15 @@ const MISUSE_PATTERNS = [
     fix: 'Remove the override, or return tls.checkServerIdentity(host, cert)',
   },
 ];
+
+/**
+ * Every rule id a waiver pragma can legitimately name.
+ *
+ * Exported so a pragma naming something that is not a rule is reported as a
+ * warning rather than silently doing nothing. A typo in an off switch that
+ * looks like it worked is worse than no off switch.
+ */
+export const MISUSE_RULE_IDS = new Set(MISUSE_PATTERNS.map(p => p.id));
 
 /**
  * The security severity `scan` reports for a weak algorithm.
@@ -355,6 +384,15 @@ export function scanProject(projectDir, options = {}) {
     libraries: [],
     secrets: [],
     weakPatterns: [],
+    // Findings a `cryptoserve-ignore` pragma cleared. They leave `weakPatterns`
+    // -- so they do not fail a gate -- but they are not deleted: `scan`, `gate`
+    // and the JSON output all report them, with the reason the author gave.
+    // Suppression nobody can see is indistinguishable from a missed check.
+    waivedFindings: [],
+    // Pragmas that are malformed, name a rule that does not exist, or waived
+    // nothing. Each one is an off switch that is not doing what its author
+    // believes it is doing.
+    waiverWarnings: [],
     certFiles: [],
     filesScanned: 0,   // source files matched to a language and analyzed
     configFilesScanned: 0, // config/dotenv files read for secrets
@@ -599,20 +637,51 @@ export function scanProject(projectDir, options = {}) {
     }
 
     // API misuse (correct algorithm, incorrect usage).
-    for (const { languages, pattern, issue, severity, fix } of MISUSE_PATTERNS) {
-      if (!languages.includes(language)) continue;
+    const applicable = MISUSE_PATTERNS.filter(p => p.languages.includes(language));
+    const { waivers, malformed } = parseWaiverPragmas(content, language);
+
+    for (const { id, pattern, issue, severity, fix } of applicable) {
       pattern.lastIndex = 0;
-      const m = pattern.exec(content);
-      if (m) {
+      let m;
+      // Keeps reading after a WAIVED match rather than stopping at the first
+      // one. This loop reports only the first match per pattern per file, so
+      // stopping at a waived one would let a pragma on line 3 hide a real
+      // defect on line 40 of the same file -- a waiver that silently widens
+      // itself to the rest of the file. Behaviour is unchanged where no pragma
+      // applies: the first unwaived match is reported, and the loop stops.
+      while ((m = pattern.exec(content)) !== null) {
+        const line = lineNumberAt(content, m.index);
+        const evidence = m[0].slice(0, 80);
+        const waiver = findWaiver(waivers, id, line);
+        if (waiver) {
+          results.waivedFindings.push({
+            rule: id, file: relPath, line, issue, severity, reason: waiver.reason, evidence,
+          });
+          // A zero-length match would spin here forever. None of these patterns
+          // can produce one, and this costs one comparison to guarantee it.
+          if (m.index === pattern.lastIndex) pattern.lastIndex++;
+          continue;
+        }
         results.weakPatterns.push({
           file: relPath,
-          line: lineNumberAt(content, m.index),
+          line,
+          rule: id,
           issue,
           severity,
           fix,
-          evidence: m[0].slice(0, 80),
+          evidence,
         });
+        break;
       }
+    }
+
+    // Appended one at a time rather than spread. `push(...arr)` passes every
+    // element as an argument, so a file with enough pragmas throws RangeError
+    // on the argument limit instead of reporting them. Not reachable at the
+    // default 1MB maxFileSize, but `.cryptoserve.json` can raise that and a
+    // scanner must not crash on a file it was configured to read.
+    for (const w of waiverWarnings(waivers, malformed, MISUSE_RULE_IDS, relPath)) {
+      results.waiverWarnings.push(w);
     }
 
     // Hardcoded secrets

@@ -102,4 +102,53 @@ describe('toSarif', () => {
     assert.deepEqual(doc.runs[0].results, []);
     assert.deepEqual(doc.runs[0].tool.driver.rules, []);
   });
+
+  /**
+   * SARIF is the one artifact a CI job uploads, so it must not be the only
+   * surface that cannot tell a clean tree from a waived one. This repository
+   * has been burned by that already: a gate failed a build on three manifest
+   * violations and uploaded a document naming none of them.
+   */
+  describe('waived findings', () => {
+    const WAIVED = {
+      weakPatterns: [],
+      waivedFindings: [{
+        rule: 'misuse/node-tls-reject-unauthorized',
+        file: 'app.js',
+        line: 4,
+        issue: 'TLS certificate verification disabled process-wide',
+        severity: 'critical',
+        reason: 'a severity table, not an assignment',
+      }],
+    };
+
+    it('reports a waived finding as a suppressed result', () => {
+      // Present and dismissed, not absent. An alert that is missing and an
+      // alert that was deliberately cleared are different claims, and only one
+      // of them is auditable after the fact.
+      const [result] = toSarif(collectFindings(WAIVED)).runs[0].results;
+      assert.equal(result.ruleId, 'cryptoserve/api-misuse');
+      assert.equal(result.suppressions.length, 1);
+      assert.equal(result.suppressions[0].kind, 'inSource');
+      assert.match(result.suppressions[0].justification, /a severity table, not an assignment/);
+    });
+
+    it('names the rule that was waived in the justification', () => {
+      const [result] = toSarif(collectFindings(WAIVED)).runs[0].results;
+      assert.match(result.suppressions[0].justification, /misuse\/node-tls-reject-unauthorized/);
+    });
+
+    it('keeps the location so the dismissed alert points somewhere', () => {
+      const [result] = toSarif(collectFindings(WAIVED)).runs[0].results;
+      assert.equal(result.locations[0].physicalLocation.region.startLine, 4);
+    });
+
+    it('does not put suppressions on findings nobody waived', () => {
+      // The other direction. A stray `suppressions` array on a live finding
+      // would dismiss a real alert in code scanning.
+      for (const result of toSarif(collectFindings(SCAN)).runs[0].results) {
+        assert.equal(result.suppressions, undefined, JSON.stringify(result));
+      }
+    });
+  });
 });

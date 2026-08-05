@@ -638,6 +638,30 @@ async function cmdScan(args) {
     }
   }
 
+  // Waived findings.
+  //
+  // Printed, not just counted. A waiver clears a finding from the gate, and
+  // suppression nobody can see is indistinguishable from a check that never
+  // ran: a reader has to be able to audit what was turned off and why without
+  // reading the source tree for pragmas.
+  if (results.waivedFindings?.length > 0) {
+    console.log(section('Waived Findings'));
+    for (const w of results.waivedFindings) {
+      console.log(`  ${dim(`[WAIVED] ${w.issue}`)}`);
+      console.log(`    ${dim(location(w))}  ${dim(w.rule)}`);
+      console.log(`    ${dim(`Reason: ${w.reason}`)}`);
+    }
+  }
+
+  // Pragmas that are not doing what their author believes they are doing.
+  if (results.waiverWarnings?.length > 0) {
+    console.log(section('Waiver Problems'));
+    for (const w of results.waiverWarnings) {
+      console.log(`  ${warning(`[${w.kind}]`)} ${w.detail}`);
+      console.log(`    ${dim(`${w.file}:${w.line}`)}`);
+    }
+  }
+
   // Source algorithms, with the location that produced each one
   if (results.sourceAlgorithms && results.sourceAlgorithms.length > 0) {
     console.log(section('Source Code Crypto'));
@@ -694,6 +718,16 @@ async function cmdScan(args) {
   }
   console.log(labelValue('Secrets found', results.secrets.length > 0 ? error(String(results.secrets.length)) : success('0')));
   console.log(labelValue('Weak patterns', results.weakPatterns.length > 0 ? warning(String(results.weakPatterns.length)) : success('0')));
+  // A zero here is not printed, so a clean tree does not grow a line telling
+  // the reader that nothing was suppressed. A non-zero one always is: the
+  // summary must not report "Weak patterns 0" while findings sit behind a
+  // pragma one section above.
+  if (results.waivedFindings?.length > 0) {
+    console.log(labelValue('Waived', warning(String(results.waivedFindings.length))));
+  }
+  if (results.waiverWarnings?.length > 0) {
+    console.log(labelValue('Waiver problems', warning(String(results.waiverWarnings.length))));
+  }
   if (results.tlsFindings?.length > 0) {
     console.log(labelValue('TLS issues', warning(String(results.tlsFindings.length))));
   }
@@ -1548,12 +1582,18 @@ async function cmdGate(args) {
       weak: violations.filter(v => v.weak).length,
       secrets: secretFindings.length,
       privateKeys: privateKeys.length,
+      // Findings a `cryptoserve-ignore` pragma cleared before the gate ever saw
+      // them. Reported in the summary because a PASS with waivers behind it is
+      // a different claim from a PASS without any, and a reviewer reading only
+      // the JSON must be able to tell the two apart.
+      waived: scanResults.waivedFindings?.length ?? 0,
+      waiverProblems: scanResults.waiverWarnings?.length ?? 0,
     };
 
     const outputPath = getOption(args, '--output');
 
     if (format === 'sarif') {
-      const { toSarif, violationsToFindings } = await import('../lib/sarif.mjs');
+      const { toSarif, violationsToFindings, waivedToFindings } = await import('../lib/sarif.mjs');
       // Built from the decision, not from a second reading of the tree. This
       // called collectFindings(scanResults), which is what `scan` reports: the
       // document was byte-identical to `scan --format sarif` however the gate
@@ -1565,6 +1605,12 @@ async function cmdGate(args) {
       // been carried across by hand, one flag at a time, which is why the
       // others were missed.
       const findings = violationsToFindings(violations, { maxRisk, maxSeverity });
+      // A waived finding never became a violation, so building only from the
+      // decision would leave SARIF as the one surface that cannot tell a clean
+      // tree from a waived one. They are appended as SUPPRESSED results: code
+      // scanning renders them as dismissed alerts, so the build stays green and
+      // the suppression is still on the record.
+      findings.push(...waivedToFindings(scanResults.waivedFindings));
       // A gate that failed on the score alone has no violation to report, and
       // reporting nothing is how this defect looked from the outside: red
       // build, empty document. The score is a property of the project, so it is
@@ -1601,6 +1647,13 @@ async function cmdGate(args) {
         status: pass ? 'pass' : 'fail',
         score,
         violations,
+        // Named, not just counted. The text rendering lists the rule, location
+        // and reason for every waiver, and JSON is the surface a CI job
+        // actually parses: a reviewer reading only this document has to be able
+        // to see what a PASS was granted on top of. `summary.waived` alone says
+        // that something was suppressed without saying what.
+        waived: scanResults.waivedFindings || [],
+        waiverWarnings: scanResults.waiverWarnings || [],
         summary,
       }, null, 2);
       if (outputPath) {
@@ -1650,6 +1703,26 @@ async function cmdGate(args) {
       if (allowSecrets && (secretFindings.length > 0 || privateKeys.length > 0)) {
         const waived = secretFindings.length + privateKeys.length;
         console.log(`\n  ${warning(`${waived} credential finding${waived === 1 ? '' : 's'} waived by --allow-secrets`)}`);
+      }
+
+      // Named individually, not just counted. A PASS with waivers behind it is
+      // a different claim from a clean PASS, and a reader who cannot see which
+      // findings were cleared has to go looking through the tree for pragmas to
+      // find out what this verdict actually covers.
+      const pragmaWaived = scanResults.waivedFindings || [];
+      if (pragmaWaived.length > 0) {
+        console.log(`\n  ${warning(`${pragmaWaived.length} finding${pragmaWaived.length === 1 ? '' : 's'} waived by a cryptoserve-ignore pragma:`)}`);
+        for (const w of pragmaWaived) {
+          console.log(`    ${dim(`${location(w)} ${w.rule} (${w.reason})`)}`);
+        }
+      }
+
+      // A waiver that is malformed, names a rule that does not exist, or covers
+      // nothing is an off switch that is not doing what its author believes.
+      // Surfaced on the gate as well as on `scan`, because CI is where somebody
+      // notices.
+      for (const w of scanResults.waiverWarnings || []) {
+        console.log(`  ${warning(`[waiver ${w.kind}]`)} ${dim(`${w.file}:${w.line}`)} ${w.detail}`);
       }
 
       if (scoreFail) {

@@ -925,3 +925,85 @@ describe('gate attributes a site to a library of that language', () => {
     assert.equal(js[0].source, 'crypto-js@3.1.9', JSON.stringify(js[0]));
   });
 });
+
+/**
+ * A PASS with waivers behind it is a different claim from a clean PASS, and the
+ * gate must say which one it is on every surface it reports through. JSON is
+ * the one a CI job parses, and it carried only a count until adversarial review
+ * pointed out that a reviewer reading it could not tell WHAT had been
+ * suppressed.
+ */
+describe('gate reports what a waiver cleared', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  // Assembled so this file's own source does not read as a live pragma.
+  const IGNORE = 'cryptoserve' + '-ignore';
+  const RULE = 'misuse/node-tls-reject-unauthorized';
+  const DEFECT = "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n";
+
+  const write = (body) => {
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'app.js'), body);
+  };
+
+  it('fails the tree, then passes it once the finding is waived', () => {
+    // Both directions in one test, on one tree. A gate going GREEN is the thing
+    // that needs proving, and it only means something beside the red run.
+    write(DEFECT);
+    assert.equal(runGate('--format json').exitCode, 1);
+
+    write(`// ${IGNORE} ${RULE} -- the test harness uses a self-signed cert\n${DEFECT}`);
+    assert.equal(runGate('--format json').exitCode, 0);
+  });
+
+  it('names the waived finding in the JSON a CI job parses', () => {
+    write(`// ${IGNORE} ${RULE} -- the test harness uses a self-signed cert\n${DEFECT}`);
+    const doc = JSON.parse(runGate('--format json').output);
+    assert.equal(doc.status, 'pass');
+    assert.equal(doc.summary.waived, 1);
+    assert.equal(doc.waived.length, 1);
+    assert.equal(doc.waived[0].rule, RULE);
+    assert.equal(doc.waived[0].file, 'app.js');
+    assert.equal(doc.waived[0].line, 2);
+    assert.match(doc.waived[0].reason, /self-signed cert/);
+  });
+
+  it('reports a waived finding in SARIF as a suppressed result', () => {
+    // Present and dismissed, not absent. An alert that is missing and an alert
+    // that was deliberately cleared are different claims to a reviewer reading
+    // the Security tab weeks later.
+    write(`// ${IGNORE} ${RULE} -- the test harness uses a self-signed cert\n${DEFECT}`);
+    const { output, exitCode } = runGate('--format sarif');
+    assert.equal(exitCode, 0);
+    const results = JSON.parse(output).runs[0].results;
+    assert.equal(results.length, 1, output);
+    assert.equal(results[0].suppressions[0].kind, 'inSource');
+    assert.match(results[0].suppressions[0].justification, new RegExp(RULE));
+  });
+
+  it('does not let a waiver hide a second defect below it', () => {
+    write(`// ${IGNORE} ${RULE} -- the first one is deliberate\n${DEFECT}const x = 1;\n${DEFECT}`);
+    const { exitCode, output } = runGate('--format json');
+    assert.equal(exitCode, 1);
+    const doc = JSON.parse(output);
+    assert.equal(doc.waived.length, 1);
+    assert.equal(doc.violations.filter(v => v.type === 'misuse').length, 1);
+  });
+
+  it('does not waive on a typo in the rule id', () => {
+    write(`// ${IGNORE} misuse/nod-tls-reject -- typo\n${DEFECT}`);
+    const { exitCode, output } = runGate('--format json');
+    assert.equal(exitCode, 1);
+    const doc = JSON.parse(output);
+    assert.equal(doc.summary.waiverProblems, 1);
+    assert.equal(doc.waiverWarnings[0].kind, 'unknown-rule');
+  });
+
+  it('does not waive without a reason', () => {
+    write(`// ${IGNORE} ${RULE}\n${DEFECT}`);
+    const { exitCode, output } = runGate('--format json');
+    assert.equal(exitCode, 1);
+    assert.equal(JSON.parse(output).waiverWarnings[0].kind, 'malformed');
+  });
+});
