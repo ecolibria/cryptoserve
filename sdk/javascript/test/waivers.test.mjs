@@ -409,6 +409,46 @@ describe('parseWaiverPragmas', () => {
     }
   });
 
+  it('refuses a reason carrying a bidi or isolate override', () => {
+    // The same question as the control-character rule above, asked of the
+    // characters that answer it differently. An override is not a control
+    // character, so a class covering C0, DEL and C1 does not reach it, and it
+    // controls terminal rendering just as effectively: RLO reverses the display
+    // order of everything after it, so the reason a reviewer READS is not the
+    // reason the file HOLDS. The reason is the only part of a waiver a reviewer
+    // can disagree with, which makes an audit trail that renders differently
+    // from its source the whole failure.
+    //
+    // Built with fromCodePoint rather than written as literals: an override is
+    // invisible in a diff, so a literal here would be a fixture nobody can
+    // review.
+    const OVERRIDES = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069];
+    for (const cp of OVERRIDES) {
+      const ch = String.fromCodePoint(cp);
+      const src = `// cryptoserve-ignore misuse/create-cipher -- ok${ch}degrof\n`;
+      const { waivers, malformed } = parse(src);
+      const name = `U+${cp.toString(16).toUpperCase()}`;
+      assert.deepEqual(waivers, [], `${name} was honoured`);
+      assert.equal(malformed.length, 1, `${name} -> ${JSON.stringify(malformed)}`);
+      // The report quotes the line back, so it must not carry the character
+      // that made the line a problem out to whoever prints it.
+      assert.ok(!malformed[0].text.includes(ch),
+        `the report carried ${name} back out: ${JSON.stringify(malformed[0].text)}`);
+    }
+  });
+
+  it('keeps a reason carrying ordinary right-to-left text', () => {
+    // The other direction, and the reason the rule names the OVERRIDES rather
+    // than everything bidirectional. Hebrew and Arabic letters carry their own
+    // direction and forge nothing; refusing them would make a whole class of
+    // legitimate reason unwritable.
+    const { waivers, malformed } = parse(
+      '// cryptoserve-ignore misuse/create-cipher -- מפתח בדיקה בלבד\n',
+    );
+    assert.deepEqual(malformed, []);
+    assert.equal(waivers.length, 1);
+  });
+
   it('keeps a reason carrying a tab', () => {
     // The other direction. A tab is a control character that renders as
     // whitespace and forges nothing, and refusing it would turn an ordinary

@@ -229,7 +229,7 @@ un-waive every finding somebody wrote a pragma for, so they do not get renamed.
 
 | Warning | What it means |
 |---|---|
-| `malformed` | No reason given, or the pragma carries a control character. It waives nothing. |
+| `malformed` | No reason given, or the pragma carries a control character or a bidi override. It waives nothing. |
 | `unknown-rule` | No rule uses that id. Usually a typo, and reported rather than ignored, because an off switch that looks like it worked is worse than none. |
 | `unused` | The pragma is honoured but covered no finding. |
 
@@ -262,8 +262,13 @@ Closing it needs a real parser per language, six of them for the languages here,
 which this package cannot have while it stays dependency-free.
 
 Two further rules follow from a pragma being file content on its way to a
-terminal. A pragma carrying a control character is reported as malformed and
-waives nothing. And the line-ending question is decided once for the whole FILE:
+terminal. A pragma carrying a control character, or a bidi override or isolate
+(U+202A-U+202E, U+2066-U+2069), is reported as malformed and waives nothing: an
+escape sequence can erase the line the scanner just wrote, and a right-to-left
+override reverses the display order of everything after it, so the reason a
+reviewer reads stops being the reason the file holds. Ordinary Hebrew and Arabic
+text is unaffected, and so are the plain direction marks U+200E and U+200F. And
+the line-ending question is decided once for the whole FILE:
 a file holding any terminator that splitting on newlines does not split on (CR,
 VT, FF, NEL, U+2028, U+2029) honours no pragma anywhere in it, and reports the
 line that carries it. Measured over 47,486 source files in 258 trees, 7 hold such

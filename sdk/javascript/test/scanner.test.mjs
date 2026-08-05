@@ -685,6 +685,47 @@ describe('cryptoserve-ignore pragmas', () => {
     assert.match(tls(r)[0].evidence, /process\.env\.NODE_TLS_REJECT_UNAUTHORIZED/);
   });
 
+  it('does not carry a terminal-forging character out in the evidence', () => {
+    // `evidence` is the matched text, so a pattern that matches a control
+    // character puts one straight into every report. `misuse/insecure-random-js`
+    // carries `[^\n]{0,40}`, which matches DEL and the C1 block, and
+    // JSON.stringify escapes NEITHER: both reach a saved `--format json` report
+    // raw, and U+009B is a single-byte CSI that a terminal acts on when the
+    // report is later cat'd. The reason beside it is already guarded; this is
+    // the same surface reached through the other field.
+    const DEL = String.fromCodePoint(0x7f);
+    const CSI = String.fromCodePoint(0x9b);
+    const r = scanWith('rng.js', `const t = Math.random() + "${DEL}${CSI}2K" + token;\n`);
+
+    // Prove the fixture reached the rule before believing anything below it: if
+    // the pattern stops matching this shape, every assertion here would pass
+    // while measuring nothing.
+    const rng = r.weakPatterns.filter(w => w.rule === 'misuse/insecure-random-js');
+    assert.equal(rng.length, 1, `fixture did not reach the rule: ${JSON.stringify(r.weakPatterns)}`);
+
+    assert.ok(!rng[0].evidence.includes(DEL), `evidence carried DEL: ${JSON.stringify(rng[0].evidence)}`);
+    assert.ok(!rng[0].evidence.includes(CSI), `evidence carried C1 CSI: ${JSON.stringify(rng[0].evidence)}`);
+    // Still recognisable as the line it came from, so stripping has not turned
+    // the evidence into something a reader cannot match against their source.
+    assert.match(rng[0].evidence, /Math\.random/);
+  });
+
+  it('does not carry a terminal-forging character out in a waived finding', () => {
+    // The same field, reached through the surface this feature added.
+    // `waived[].evidence` is new in `gate --format json`, so this one is a
+    // carrier the base revision did not have at all.
+    const DEL = String.fromCodePoint(0x7f);
+    const CSI = String.fromCodePoint(0x9b);
+    const r = scanWith('rng.js',
+      `// ${IGNORE} misuse/insecure-random-js -- seeded in tests only\n`
+      + `const t = Math.random() + "${DEL}${CSI}2K" + token;\n`);
+
+    assert.equal(r.waivedFindings.length, 1, JSON.stringify(r.waivedFindings));
+    const w = r.waivedFindings[0];
+    assert.ok(!w.evidence.includes(DEL), `waived evidence carried DEL: ${JSON.stringify(w.evidence)}`);
+    assert.ok(!w.evidence.includes(CSI), `waived evidence carried C1 CSI: ${JSON.stringify(w.evidence)}`);
+  });
+
   it('clears a finding when the pragma trails the same line', () => {
     const r = scanWith('app.js',
       `process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // ${IGNORE} ${RULE} -- deliberate\n`);

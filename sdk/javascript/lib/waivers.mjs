@@ -30,8 +30,10 @@
  *      on the line immediately after it, and nothing else. Anything wider
  *      drifts away from what it was written for as the file changes around it.
  *   5. **It is plain text, in a file with line endings.** A control character
- *      in a pragma is reported as malformed and waives nothing: the reason and
- *      the rule id are file content on their way to a terminal. Line
+ *      in a pragma, or a bidi override or isolate, is reported as malformed and
+ *      waives nothing: the reason and the rule id are file content on their way
+ *      to a terminal, and both families decide how that terminal RENDERS the
+ *      report rather than what the report says. Line
  *      terminators are decided once for the FILE, before any line is chosen --
  *      a file holding any terminator `split('\n')` does not split on honours no
  *      pragma anywhere in it. Asked instead of the pragma's own line, which is
@@ -137,17 +139,45 @@ const OPENERS_BY_LANGUAGE = {
 const SEPARATOR = '--';
 
 /**
- * Every control character except tab.
+ * Everything a pragma must not CONTAIN, because each of these lets file content
+ * decide how a terminal renders the report rather than what the report says.
  *
- * Tab renders as whitespace and forges nothing, so refusing it would turn an
- * ordinary reason into a malformed pragma. This class answers a different
- * question from `UNSPLIT_TERMINATOR`: what a pragma may CONTAIN, rather than
- * whether the string it sits on is one line. The two overlap, deliberately.
+ * Two families, and the second is why this is no longer called CONTROL:
+ *
+ *   - Every control character except tab. Tab renders as whitespace and forges
+ *     nothing, so refusing it would turn an ordinary reason into a malformed
+ *     pragma. DEL and the C1 block matter more than they look: JSON.stringify
+ *     escapes C0 and NEITHER of those, so both survive raw into a saved
+ *     `--format json` report, and U+009B is a one-byte CSI.
+ *   - The bidi overrides and isolates. These are not control characters at all,
+ *     so the family above does not reach them, and they steer rendering just as
+ *     effectively: RLO reverses the display order of everything after it, so
+ *     the reason a reviewer READS stops being the reason the file HOLDS. A
+ *     reason is the only part of a waiver a reviewer can disagree with, which
+ *     makes an audit trail that renders differently from its source the whole
+ *     failure. Found by the pre-push gate and measured as new on this branch:
+ *     the base revision has no reason field to carry one.
+ *
+ * The plain marks U+200E and U+200F are deliberately NOT here. They set
+ * direction without overriding it, and ordinary Hebrew and Arabic letters carry
+ * their own, so a reason written in either stays writable. Refusing a whole
+ * language to close a spoofing shape would be the wrong trade.
+ *
+ * This class answers a different question from `UNSPLIT_TERMINATOR`: what a
+ * pragma may CONTAIN, rather than whether the string it sits on is one line.
+ * The two overlap, deliberately.
  */
-const CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/;
+const TERMINAL_UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 
-/** The same class, applied. Derived from `CONTROL` so the two cannot drift. */
-const stripControl = (s) => s.replace(new RegExp(CONTROL.source, 'g'), '');
+/**
+ * The same class, applied. Derived from `TERMINAL_UNSAFE` so the two cannot
+ * drift.
+ *
+ * Exported because `evidence` is the other half of a finding built from file
+ * content and printed, and it reaches a report through a pattern that matches
+ * these bytes rather than through a pragma.
+ */
+export const stripTerminalUnsafe = (s) => s.replace(new RegExp(TERMINAL_UNSAFE.source, 'g'), '');
 
 /**
  * Every Unicode line terminator except the newline, which is the only one
@@ -311,7 +341,7 @@ export function parseWaiverPragmas(content, language) {
       // this is capped the way `evidence` is, and stripped of the characters
       // that made it a problem rather than carried out of this module for
       // whoever reads the report to print.
-      text: stripControl(
+      text: stripTerminalUnsafe(
         source.slice(source.lastIndexOf('\n', stray) + 1, lineEnd === -1 ? undefined : lineEnd).trim(),
       ).slice(0, 120),
       issue: 'this file does not end its lines the way the scanner reads line endings,'
@@ -349,8 +379,8 @@ export function parseWaiverPragmas(content, language) {
     // The line-terminator question is NOT asked here. It is decided once for
     // the file above, because asking it of a line the loop already selected can
     // only ever see the pragma's own line.
-    const issue = CONTROL.test(text)
-      ? 'a waiver must be plain text; remove the control character from this one'
+    const issue = TERMINAL_UNSAFE.test(text)
+      ? 'a waiver must be plain text; remove the control or direction-override character from this one'
       : !shape.reason
         ? 'a waiver needs a reason: cryptoserve-ignore <rule> -- <why>'
         : null;
@@ -360,7 +390,7 @@ export function parseWaiverPragmas(content, language) {
       // that made it a problem rather than carried out of this module for
       // whoever reads the report to print. Capped for the same reason `evidence`
       // is: on a file with no line endings, "the line" is the whole file.
-      malformed.push({ line, text: stripControl(raw.trim()).slice(0, 120), issue });
+      malformed.push({ line, text: stripTerminalUnsafe(raw.trim()).slice(0, 120), issue });
       continue;
     }
 

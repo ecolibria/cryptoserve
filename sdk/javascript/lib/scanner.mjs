@@ -22,7 +22,7 @@ import { lookupAlgorithm } from './algorithm-db.mjs';
 import { lookupNpmPackage } from './crypto-registry.mjs';
 import { walkProject } from './walker.mjs';
 import { loadScannerConfig } from './config.mjs';
-import { parseWaiverPragmas, findWaiver, waiverWarnings } from './waivers.mjs';
+import { parseWaiverPragmas, findWaiver, waiverWarnings, stripTerminalUnsafe } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // API misuse patterns
@@ -659,7 +659,16 @@ export function scanProject(projectDir, options = {}) {
       // applies: the first unwaived match is reported, and the loop stops.
       while ((m = pattern.exec(content)) !== null) {
         const line = lineAt(offsets ??= newlineOffsets(content), m.index);
-        const evidence = m[0].slice(0, 80);
+        // Stripped where it is BUILT, so every consumer gets the same value:
+        // `weakPatterns` and `waivedFindings`, text and JSON and SARIF. The
+        // reason beside it is already guarded, and this is the same surface
+        // reached through the other field -- `evidence` is the matched text, and
+        // `misuse/insecure-random-js` matches `[^\n]{0,40}`, which spans DEL and
+        // the C1 block. JSON.stringify escapes neither, so both reach a saved
+        // `--format json` report raw and U+009B is a one-byte CSI. Display only:
+        // nothing decides anything on `evidence`, so narrowing it cannot narrow
+        // detection.
+        const evidence = stripTerminalUnsafe(m[0]).slice(0, 80);
         const waiver = findWaiver(waivers, id, line);
         if (waiver) {
           results.waivedFindings.push({

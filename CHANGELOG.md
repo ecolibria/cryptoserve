@@ -36,7 +36,17 @@ A waiver is a security control's off switch, so it is deliberately narrow:
   pragma on its own line ABOVE the finding whenever the finding's line already
   contains a comment opener; see "What a waiver deliberately is not" below.
 - **It must be plain text, in a file whose lines have endings.** A pragma
-  carrying a control character is reported as malformed and waives nothing. The
+  carrying a control character, or a bidi override or isolate (U+202A-U+202E,
+  U+2066-U+2069), is reported as malformed and waives nothing. Both families
+  let file content decide how the report RENDERS rather than what it says: an
+  escape sequence erases the line the scanner just wrote, and a right-to-left
+  override reverses the display order of everything after it, so the reason a
+  reviewer reads stops being the reason the file holds. The plain direction
+  marks U+200E and U+200F are allowed, and so are ordinary Hebrew and Arabic
+  letters, which carry their own direction; refusing a whole language to close a
+  spoofing shape would be the wrong trade. The same characters are stripped from
+  a finding's `evidence`, which is matched source text and reaches
+  `--format json` through a different field. The
   line-ending question is decided once for the whole FILE: a file holding any
   terminator the newline split does not split on (CR, VT, FF, NEL, U+2028,
   U+2029) honours no pragma anywhere in it, and reports the line that carries
