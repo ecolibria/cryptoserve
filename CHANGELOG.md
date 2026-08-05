@@ -32,7 +32,12 @@ A waiver is a security control's off switch, so it is deliberately narrow:
 - **A reason is required.** It is the only part a reviewer can disagree with.
   A pragma without one waives nothing and is reported as malformed.
 - **It must be the first thing in the comment**, the same rule
-  `eslint-disable` uses. Prose that merely mentions a pragma is not one.
+  `eslint-disable` uses. Prose that merely mentions a pragma is not one. Put a
+  pragma on its own line ABOVE the finding whenever the finding's line already
+  contains a comment opener; see "What a waiver deliberately is not" below.
+- **It must be plain text on a line the scanner can see the end of.** A pragma
+  carrying a control character, or sitting on a line with no line ending, is
+  reported as malformed and waives nothing.
 - **It waives one rule on one line**, its own or the one below. There is no
   wildcard, and a rule id that no rule uses is reported rather than ignored.
 - **Nothing is silently dropped.** Waived findings are listed by `scan` and by
@@ -49,15 +54,33 @@ not exist, or covered no finding. A stale waiver is suppression with nothing
 under it, and the next real finding on that line would land under it silently.
 
 **Detection is unchanged by this release.** Verified finding-for-finding against
-0.6.1 on this repository and on four unrelated ones (1,007 files): same misuse
-findings, same lines, nothing added and nothing removed. The only new behaviour
-is that a finding you have explicitly waived stops failing the gate.
+0.6.1 across 22 trees and 10,680 source files, third-party `node_modules` and
+minified bundles included: same misuse findings, same lines, same evidence,
+nothing added and nothing removed. The only new behaviour is that a finding you
+have explicitly waived stops failing the gate.
 
 #### What a waiver deliberately is not
 
 Recognising a comment by its opener is a heuristic, not a parse. The scanner
 does not tokenize your source, so a string literal that both begins with a
 comment opener and ends the line with pragma text would be honoured.
+
+For the same reason, a pragma that is not the first thing in its comment is
+ignored **in silence**. A line that opened a comment earlier gives its first
+opener to that comment, so a pragma appended to it is text rather than an
+instruction:
+
+```js
+const u = "http://x";   // cryptoserve-ignore misuse/create-cipher -- ignored
+```
+
+Telling that apart from documentation that quotes a rule id needs to know where
+the comment really begins, which is the same parse. A version that guessed it by
+re-walking the line shipped in neither release: it was quadratic in the length of
+the line, so a 200KB single line took 42 seconds through a `gate` that has no
+timeout, and it reported prose as a broken waiver. Put the pragma on its own line
+above the finding and the question does not arise. A waiver that IS honoured but
+covers nothing is still reported, as `unused`.
 
 That residual is acceptable because of who a waiver is for. It is authored by
 whoever can already edit the file, so it is not a privilege boundary: anyone

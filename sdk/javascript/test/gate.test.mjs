@@ -1006,6 +1006,34 @@ describe('gate reports what a waiver cleared', () => {
     assert.equal(exitCode, 1);
     assert.equal(JSON.parse(output).waiverWarnings[0].kind, 'malformed');
   });
+
+  it('does not let one pragma waive a whole file that has no newline in it', () => {
+    // A CR-only file arrives at the parser as a single line, so every finding
+    // in it is line 1 and one pragma reaches all of them. Measured: a tree
+    // disabling TLS verification 400 lines below an unrelated waiver exited 0
+    // with `live misuse 0, waived 1`. The gate going from red to green is the
+    // one direction a waiver must never be able to produce.
+    const body = [`// ${IGNORE} ${RULE} -- unrelated, and 400 lines away`]
+      .concat(Array.from({ length: 400 }, (_, i) => `const f${i} = ${i};`))
+      .concat([DEFECT.trim()])
+      .join('\r');
+    write(body);
+    const { exitCode, output } = runGate('--format json');
+    assert.equal(exitCode, 1, output);
+    const doc = JSON.parse(output);
+    assert.equal(doc.waived.length, 0, output);
+    assert.equal(doc.violations.filter(v => v.type === 'misuse').length, 1, output);
+  });
+
+  it('does not print a control character a scanned file put in a reason', () => {
+    // The reason is file content on its way to a terminal. Left raw, a file in
+    // the scanned tree rewrites the scanner's own output. Nothing before this
+    // feature printed file text at all, so the surface arrived with it.
+    write(`// ${IGNORE} ${RULE} -- ok\x1b[2K\rFORGED\n${DEFECT}`);
+    const { exitCode, output } = runGate();
+    assert.equal(exitCode, 1, output);
+    assert.ok(!output.includes('\x1b[2K'), JSON.stringify(output));
+  });
 });
 
 /**
@@ -1063,14 +1091,29 @@ describe('waivers are visible in the text output', () => {
     assert.ok(!/Waiver Problems/.test(output), output);
   });
 
-  it('both commands report a pragma that is not being honoured', () => {
-    // Silent refusal is the failure: a user watching a critical they just
-    // waived stay red has nothing to go on.
+  it('tells a user the placement that always works, not just the id', () => {
+    // A pragma that is not the first thing in its comment is ignored in
+    // silence, and this module cannot diagnose that without a real parse. The
+    // instruction printed next to a live finding is therefore the only thing
+    // standing between a user and a waiver that does nothing, so it has to name
+    // the placement as well as the rule id.
+    write(DEFECT);
+    const { exitCode, output } = runGate();
+    assert.equal(exitCode, 1);
+    assert.match(output, /own line above/);
+    assert.match(runScan(), /own line above/);
+  });
+
+  it('leaves the finding red when a pragma is not the first thing in its comment', () => {
+    // The end of the same story: the limitation costs a waiver, never a
+    // finding. Ignoring it in silence is only acceptable while it fails in this
+    // direction.
     write(`const u = "http://x"; // ${IGNORE} ${RULE} -- why\n${DEFECT}`);
-    const gate = runGate().output;
-    assert.match(gate, /not-honoured/);
-    assert.match(gate, /first thing in its comment/);
-    assert.match(runScan(), /not-honoured/);
+    const { exitCode, output } = runGate('--format json');
+    assert.equal(exitCode, 1, output);
+    const doc = JSON.parse(output);
+    assert.equal(doc.waived.length, 0);
+    assert.equal(doc.violations.filter(v => v.type === 'misuse').length, 1);
   });
 });
 

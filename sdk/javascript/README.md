@@ -172,7 +172,17 @@ scanning shows as a dismissed alert. A pragma that is malformed, names a rule
 that does not exist, or covers no finding is reported too.
 
 The pragma must be the first thing in the comment, the same rule
-`eslint-disable` uses, so a sentence that merely mentions one is not one.
+`eslint-disable` uses, so a sentence that merely mentions one is not one. That
+also means a line which already opened a comment gives its first opener to that
+comment, and a pragma appended after it is ignored in silence:
+
+```js
+const u = "http://x";   // cryptoserve-ignore misuse/create-cipher -- ignored
+```
+
+Put the pragma on its own line above the finding and the question does not
+arise. It is the spelling that always works, and it is what the scanner prints
+next to a finding you might want to waive.
 
 Each pragma waives one rule on one line, its own or the one below. To exclude a
 directory of test fixtures rather than individual lines, use `skipDirs` in

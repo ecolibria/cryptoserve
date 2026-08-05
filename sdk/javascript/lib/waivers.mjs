@@ -11,7 +11,7 @@
  * whose false positives are unresolvable gets excluded entirely, so the absence
  * of this was itself a security defect.
  *
- * Four decisions worth stating, because a waiver is a security control's off
+ * Five decisions worth stating, because a waiver is a security control's off
  * switch and the failure modes are not symmetric:
  *
  *   1. **A reason is required.** A waiver with no stated reason is not
@@ -29,6 +29,11 @@
  *   4. **Its reach is one line.** A pragma covers findings on its own line and
  *      on the line immediately after it, and nothing else. Anything wider
  *      drifts away from what it was written for as the file changes around it.
+ *   5. **It is plain text on a line with an end.** A control character in a
+ *      pragma, or a line the newline split did not actually split, is reported
+ *      as malformed and waives nothing. The reason and the rule id are file
+ *      content on their way to a terminal, and "one line" is not a bound at all
+ *      on a file that has no line endings.
  *
  * Waived findings are never silently dropped: they leave `weakPatterns` and
  * arrive in `waivedFindings`, where `scan`, `gate` and the JSON output all
@@ -49,6 +54,35 @@
  * able to smuggle a pragma through a string could simply write the comment. The
  * property being defended is that data a project merely CONTAINS -- a fixture,
  * a JSON blob, a documentation sample -- does not silently switch a check off.
+ *
+ * ## Known limitation: a pragma this module ignores in silence
+ *
+ * A pragma that is not the first thing in its comment does nothing, and says
+ * nothing about it. A line that already opened a comment earlier -- a URL, a
+ * doc block quoting the anti-pattern -- gives its FIRST opener to that earlier
+ * comment, so a pragma written at the end of it is text inside a comment rather
+ * than a comment carrying a pragma:
+ *
+ *     const u = "http://x";      // cryptoserve-ignore <rule-id> -- ignored
+ *
+ * Telling that apart from prose that merely quotes a rule id needs to know
+ * where the comment really begins, which is the parse this module does not do.
+ * The version that guessed it by re-walking the line was quadratic in the
+ * length of the line -- a 200KB line took 42 seconds through a `gate` that has
+ * no timeout -- and reported documentation as a broken waiver. It was removed
+ * rather than tuned.
+ *
+ * So a pragma goes on its OWN LINE ABOVE the finding whenever the finding's
+ * line already contains a comment opener. These spellings always work:
+ *
+ *     // cryptoserve-ignore <rule-id> -- why      (own line, above the finding)
+ *     # cryptoserve-ignore <rule-id> -- why       (the same, in Python)
+ *     code();  // cryptoserve-ignore <rule-id> -- why   (trailing, only when
+ *                                                       nothing else on the
+ *                                                       line opens a comment)
+ *
+ * A waiver that is honoured and covers nothing IS reported, as `unused`, so a
+ * pragma placed on the wrong line still surfaces from the other direction.
  *
  * Zero dependencies.
  */
@@ -75,6 +109,39 @@ const OPENERS_BY_LANGUAGE = {
 };
 
 const SEPARATOR = '--';
+
+/**
+ * Every control character except tab.
+ *
+ * Tab renders as whitespace and forges nothing, so refusing it would turn an
+ * ordinary reason into a malformed pragma. This class answers a different
+ * question from `UNSPLIT_TERMINATOR`: what a pragma may CONTAIN, rather than
+ * whether the string it sits on is one line. The two overlap, deliberately.
+ */
+const CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/;
+
+/** The same class, applied. Derived from `CONTROL` so the two cannot drift. */
+const stripControl = (s) => s.replace(new RegExp(CONTROL.source, 'g'), '');
+
+/**
+ * Every Unicode line terminator except the newline, which is the only one
+ * `split('\n')` splits on.
+ *
+ * VT, FF and CR end a line for Unicode; NEL does for an EBCDIC-derived file;
+ * U+2028 and U+2029 do for a JavaScript engine. Any of them leaves the split
+ * holding one enormous "line", and that is not cosmetic: `lineNumberAt` counts
+ * newlines too, so every finding in such a file reports as line 1, one pragma
+ * at the top reaches all of them, and the gate goes green over a tree that
+ * disables TLS verification 400 lines further down.
+ *
+ * Written as the whole family, not as the bytes that were reported. CR was the
+ * measured shape and U+2028 reproduced it exactly; a guard covering only those
+ * two then still let VT, FF and NEL through, because the control-character rule
+ * that would otherwise have caught them reads the pragma TEXT, so a separator
+ * appearing only BEFORE the pragma was seen by neither. Asked of the whole raw
+ * line, over the whole family, there is no such gap to find.
+ */
+const UNSPLIT_TERMINATOR = /[\u000b-\u000d\u0085\u2028\u2029]/;
 
 /**
  * Split `<rule-id> -- <reason>` without a regex.
@@ -126,39 +193,8 @@ function splitPragma(text) {
  * which does not begin with the marker, and the example stays an example.
  */
 function pragmaText(rawLine, openers) {
-  return readPragma(rawLine, openers).honoured;
-}
-
-/**
- * What a line says about a pragma: the text of one this module will honour, and
- * separately the text of one it will REFUSE because the marker is not the first
- * thing in its comment.
- *
- * The refusal is returned rather than discarded because refusing in silence is
- * its own defect. A trailing pragma on a line that already contains a `//` -- a
- * URL, or an anti-pattern quoted inside a doc block -- is not the first thing in
- * its comment, so it does nothing, and a user watching a `critical` they just
- * waived stay red has nothing to go on. Measured on real trees, that shape is
- * most of the trailing pragmas anyone would actually write.
- */
-function readPragma(rawLine, openers) {
   const afterMarker = (s) =>
     s.startsWith(MARKER) ? s.slice(MARKER.length).replace(/^[ \t]+/, '') : null;
-
-  // Every place the marker directly follows an opener, so a refusal can be
-  // told apart from prose that merely contains the word.
-  const laterPragma = (from) => {
-    for (let i = from; i < rawLine.length; i++) {
-      for (const tok of openers) {
-        if (!rawLine.startsWith(tok, i)) continue;
-        let after = i + tok.length;
-        while (rawLine[after] === tok[tok.length - 1]) after++;
-        const text = afterMarker(rawLine.slice(after).replace(/^[ \t]+/, ''));
-        if (text !== null) return text;
-      }
-    }
-    return null;
-  };
 
   // A JSDoc continuation is decoration, not an opener: the comment began on an
   // earlier line, so this line's text starts right after the `*`. The marker
@@ -166,12 +202,7 @@ function readPragma(rawLine, openers) {
   // an example being shown rather than a pragma being written, which is what
   // this module's own header contains.
   const continuation = /^[ \t]*\*(?!\/)[ \t]*/.exec(rawLine);
-  if (continuation) {
-    const honoured = afterMarker(rawLine.slice(continuation[0].length));
-    return honoured !== null
-      ? { honoured, refused: null }
-      : { honoured: null, refused: laterPragma(continuation[0].length) };
-  }
+  if (continuation) return afterMarker(rawLine.slice(continuation[0].length));
 
   let at = -1;
   let opener = '';
@@ -179,7 +210,7 @@ function readPragma(rawLine, openers) {
     const i = rawLine.indexOf(tok);
     if (i !== -1 && (at === -1 || i < at)) { at = i; opener = tok; }
   }
-  if (at === -1) return { honoured: null, refused: null };
+  if (at === -1) return null;
 
   // An opener sitting DIRECTLY after a quote is a comment opener inside a
   // string literal, which is how a test fixture or a documentation sample
@@ -188,16 +219,13 @@ function readPragma(rawLine, openers) {
   // data. It errs safe in the one ambiguous direction: a real trailing pragma
   // written with no space after a string (`const s = "a"// cryptoserve-ignore`)
   // is refused, which leaves the finding reported rather than suppressed.
-  if (at > 0 && '\'"`'.includes(rawLine[at - 1])) return { honoured: null, refused: null };
+  if (at > 0 && '\'"`'.includes(rawLine[at - 1])) return null;
 
   // Repeated opener characters (`///`, `/**`, `##`) are still one opener.
   let after = at + opener.length;
   while (rawLine[after] === opener[opener.length - 1]) after++;
 
-  const honoured = afterMarker(rawLine.slice(after).replace(/^[ \t]+/, ''));
-  return honoured !== null
-    ? { honoured, refused: null }
-    : { honoured: null, refused: laterPragma(after) };
+  return afterMarker(rawLine.slice(after).replace(/^[ \t]+/, ''));
 }
 
 /**
@@ -216,50 +244,63 @@ export function parseWaiverPragmas(content, language) {
   const openers = OPENERS_BY_LANGUAGE[language];
   const waivers = [];
   const malformed = [];
-  const refused = [];
-  if (!openers || !content.includes(MARKER)) return { waivers, malformed, refused };
+  if (!openers || !content.includes(MARKER)) return { waivers, malformed };
 
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    // A CRLF file leaves a trailing CR on every line. It needs no stripping
-    // here: `splitPragma` trims the reason and a lone CR cannot end up inside a
-    // rule id, so an explicit strip made no input behave differently. Mutation
-    // testing proved that by removing one and killing nothing, and a defence no
-    // test can tell from its absence is not a defence. CRLF stays covered by
-    // tests either way.
-    const raw = lines[i];
+    // A trailing CR from a CRLF file is line terminator, not pragma text.
+    const raw = lines[i].replace(/\r$/, '');
     if (!raw.includes(MARKER)) continue;
 
+    const text = pragmaText(raw, openers);
+    if (text === null) continue;   // a mention, not a pragma
+
     const line = i + 1;
-    const read = readPragma(raw, openers);
-
-    if (read.honoured === null) {
-      // Not the first thing in its comment. Recorded so it can be reported IF
-      // it names a real rule; a placeholder like `<rule-id>` in prose is
-      // documentation and stays silent.
-      const shape = read.refused === null ? null : splitPragma(read.refused);
-      if (shape) refused.push({ line, rule: shape.rule, text: raw.trim() });
-      continue;
-    }
-
-    const shape = splitPragma(read.honoured);
+    const shape = splitPragma(text);
     // A bare marker with no rule at all is not a pragma anybody wrote by
     // mistake; it is prose, and reporting it would fire on this module's own
     // documentation.
     if (!shape) continue;
 
-    if (shape.reason) {
-      waivers.push({ rule: shape.rule, reason: shape.reason, line, used: false });
-    } else {
-      malformed.push({
-        line,
-        text: raw.trim(),
-        issue: 'a waiver needs a reason: cryptoserve-ignore <rule> -- <why>',
-      });
+    // Three ways a pragma this module can see is still not one it will honour.
+    // All of them REPORT: every refusal above this point is prose that never
+    // claimed to be a pragma, and every refusal below it is somebody's waiver,
+    // which must never disappear without a word.
+    //
+    // A terminator this split does not split on means the string is not one
+    // line, and every finding in the file then reports as line 1 with one
+    // pragma reaching all of them: measured for CR and again for U+2028, a tree
+    // disabling TLS verification 400 lines below an unrelated waiver PASSED the
+    // gate. Refusing leaves the finding reported, which is the only safe
+    // direction for an off switch. Asked of the RAW line, because a separator
+    // that appears only before the pragma never reaches the pragma text.
+    //
+    // The control-character check runs on the pragma text, so it covers the
+    // rule id and the reason together. Both are file content and both are
+    // printed to a terminal by `scan` and `gate`, so a reason of
+    // `ok<ESC>[2K<CR>FORGED` erases the line the scanner just wrote and prints
+    // its own. Nothing before this feature put file text on that surface at all.
+    const issue = UNSPLIT_TERMINATOR.test(raw)
+      ? 'a waiver must sit on its own line: this one has no line ending the scanner recognises'
+      : CONTROL.test(text)
+        ? 'a waiver must be plain text: this one carries a control character'
+        : !shape.reason
+          ? 'a waiver needs a reason: cryptoserve-ignore <rule> -- <why>'
+          : null;
+
+    if (issue) {
+      // The offending line is quoted back, so it is stripped of the characters
+      // that made it a problem rather than carried out of this module for
+      // whoever reads the report to print. Capped for the same reason `evidence`
+      // is: on a file with no line endings, "the line" is the whole file.
+      malformed.push({ line, text: stripControl(raw.trim()).slice(0, 120), issue });
+      continue;
     }
+
+    waivers.push({ rule: shape.rule, reason: shape.reason, line, used: false });
   }
 
-  return { waivers, malformed, refused };
+  return { waivers, malformed };
 }
 
 /**
@@ -289,27 +330,11 @@ export function findWaiver(waivers, rule, line) {
  * @param {Set<string>} knownRules - every rule id the scanner can emit
  * @param {string} file - the path these came from
  */
-export function waiverWarnings(waivers, malformed, refused, knownRules, file) {
+export function waiverWarnings(waivers, malformed, knownRules, file) {
   const warnings = [];
 
   for (const m of malformed) {
     warnings.push({ file, line: m.line, kind: 'malformed', detail: m.issue, text: m.text });
-  }
-
-  // Only when it names a REAL rule. A doc example writing `<rule-id>` is
-  // documentation and must stay silent, or this module's own header becomes a
-  // warning on every scan.
-  for (const r of refused) {
-    if (!knownRules.has(r.rule)) continue;
-    warnings.push({
-      file,
-      line: r.line,
-      kind: 'not-honoured',
-      detail: 'a pragma must be the first thing in its comment, and this line opens a comment earlier'
-        + ' (a URL, or a doc block); move it to its own line above the finding',
-      rule: r.rule,
-      text: r.text,
-    });
   }
 
   for (const w of waivers) {

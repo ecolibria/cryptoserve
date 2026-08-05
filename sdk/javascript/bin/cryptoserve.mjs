@@ -635,7 +635,11 @@ async function cmdScan(args) {
       console.log(`  ${w.severity === 'critical' ? error(headline) : warning(headline)}`);
       console.log(`    ${dim(location(w))}`);
       if (w.fix) console.log(`    ${info(`Fix: ${w.fix}`)}`);
-      if (w.rule) console.log(`    ${dim(`Waive: cryptoserve-ignore ${w.rule} -- <why>`)}`);
+      // The placement is part of the instruction. A pragma that is not the
+      // FIRST thing in its comment is ignored in silence, so a user who appends
+      // one to a line that already carries a `//` gets no waiver and no word
+      // about it. Its own line above the finding always works.
+      if (w.rule) console.log(`    ${dim(`Waive: put cryptoserve-ignore ${w.rule} -- <why> on its own line above`)}`);
     }
   }
 
@@ -1706,7 +1710,7 @@ async function cmdGate(args) {
           // A finding a user believes is wrong needs a next step, and for a
           // misuse that step is the pragma. Printing the rule id is what makes
           // it reachable without reading the source of the scanner.
-          if (v.rule) console.log(`      ${dim(`waive with: cryptoserve-ignore ${v.rule} -- <why>`)}`);
+          if (v.rule) console.log(`      ${dim(`waive with: cryptoserve-ignore ${v.rule} -- <why> on its own line above`)}`);
         }
       }
 
