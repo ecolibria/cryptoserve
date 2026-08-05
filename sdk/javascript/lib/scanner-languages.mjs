@@ -439,8 +439,11 @@ export function scanSourceFile(filePath, content, language) {
           // `sourceAlgorithms[].evidence` carrying whatever sat there. DEL and
           // the C1 block survive `JSON.stringify` unescaped and U+009B is a
           // one-byte CSI, so a saved `--format json` report can drive the
-          // terminal that later reads it. Display only: nothing decides
-          // anything on evidence.
+          // terminal that later reads it. Nothing DECIDES on evidence -- no
+          // branch, dedupe or map key reads it, so narrowing it cannot narrow
+          // detection, and parity over 3,926 files confirms it did not. It is
+          // not display-only either: `finding-records.mjs` copies it into
+          // corpus records as `functionCall`.
           evidence: stripTerminalUnsafe(m[0]).slice(0, 80),
         });
       }

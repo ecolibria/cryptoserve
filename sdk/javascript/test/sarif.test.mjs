@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { collectFindings, toSarif } from '../lib/sarif.mjs';
@@ -165,7 +165,23 @@ describe('toSarif', () => {
       // `--output` no file was written at all, so a CI upload step received
       // nothing. The identical hazard was found and fixed at the waiver-warning
       // site in lib/scanner.mjs; these two sites are the rest of that class.
-      const waivedFindings = Array.from({ length: 200_000 }, (_, i) => ({
+      // Sized from the limit MEASURED on this engine rather than from a
+      // constant. The spread limit is a function of stack size, not a fixed
+      // number: at `--stack-size=2000` it is about 253,000, so a hardcoded
+      // 200,000 would quietly pass against the unfixed code and stop being a
+      // regression test at all.
+      let spreadLimit = 1;
+      for (;;) {
+        try {
+          const probe = new Array(spreadLimit * 2);
+          [].push(...probe);
+          spreadLimit *= 2;
+          if (spreadLimit > 1e8) break;   // no limit worth testing; stop doubling
+        } catch { break; }
+      }
+      const count = spreadLimit * 2;
+
+      const waivedFindings = Array.from({ length: count }, (_, i) => ({
         rule: 'misuse/tls-verify-disabled',
         file: 'src/bulk.js',
         line: i + 1,
@@ -176,9 +192,46 @@ describe('toSarif', () => {
       }));
 
       const findings = collectFindings({ ...SCAN, waivedFindings });
-      assert.equal(findings.length, 200_000 + 4);
+      assert.equal(findings.length, count + 4, `measured spread limit ${spreadLimit}`);
       // And the document still builds from them.
-      assert.equal(toSarif(findings).runs[0].results.length, 200_000 + 4);
+      assert.equal(toSarif(findings).runs[0].results.length, count + 4);
+    });
+
+    it('spreads no array into push anywhere in the shipped code', () => {
+      // The test above measures ONE of the two sites that threw. The other is
+      // the gate's SARIF path in `bin/cryptoserve.mjs`, and reaching its limit
+      // behaviourally costs a ~100MB document, so the class is pinned at the
+      // source instead: reintroducing the spread at ANY site fails here.
+      //
+      // The rule is `push(...arr)` outright rather than "unbounded arrays
+      // only", because which arrays are bounded is exactly the judgement that
+      // was got wrong twice: `waivedFindings` was bounded before this feature
+      // let the misuse loop read past a waived match, and the two call sites
+      // were written while it still was. Array-literal and object spread are
+      // untouched by this; they pass no argument list.
+      const dir = join(HERE, '..');
+      const sources = [];
+      const walk = (d) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          if (e.name === 'node_modules' || e.name === 'test') continue;
+          const p = join(d, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (e.name.endsWith('.mjs')) sources.push(p);
+        }
+      };
+      walk(join(dir, 'lib'));
+      walk(join(dir, 'bin'));
+      assert.ok(sources.length > 10, `found only ${sources.length} sources to check`);
+
+      const offenders = [];
+      for (const file of sources) {
+        readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+          // Skip comment lines: this module's own history is discussed in them.
+          if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+          if (/\.push\(\s*\.\.\./.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        });
+      }
+      assert.deepEqual(offenders, [], `push(...arr) throws past the argument limit:\n${offenders.join('\n')}`);
     });
   });
 });

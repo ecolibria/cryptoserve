@@ -285,13 +285,15 @@ Waiver Problems
 `unused` is the one to act on: a stale waiver is suppression with nothing under
 it, and the next real finding on that line would land under it silently.
 
-Recognising a comment by its opener is a heuristic, not a parse. A string that
-contains a comment opener followed by the pragma can be honoured, in any of the
-six languages. So a waiver is not a defence against a hostile file: what it
-guarantees is that this can never happen SILENTLY, because every waived finding
-is listed, counted in `summary.waived`, and emitted to SARIF as suppressed. The
-rule ids, the warnings, and the full limitation are in
-[docs/cli.md](docs/cli.md#clearing-a-false-positive).
+Recognising a comment by its opener is a heuristic, not a parse. Data a project
+merely contains can operate this control, in any of the six languages, so a
+waiver is not a defence against a hostile file. What it guarantees is that this
+can never happen silently: every waived finding is listed by `scan` and `gate`,
+counted in `gate --format json` as `summary.waived`, and emitted to SARIF as
+suppressed. That is a fair trade only because a waiver is written by whoever can
+already edit the file, so anyone able to smuggle one through a string could just
+write the comment instead. The rule ids, the warnings, and the measured shapes
+are in [docs/cli.md](docs/cli.md#clearing-a-false-positive).
 
 ## SDKs
 

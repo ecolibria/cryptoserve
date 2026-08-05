@@ -665,9 +665,10 @@ export function scanProject(projectDir, options = {}) {
         // reached through the other field -- `evidence` is the matched text, and
         // `misuse/insecure-random-js` matches `[^\n]{0,40}`, which spans DEL and
         // the C1 block. JSON.stringify escapes neither, so both reach a saved
-        // `--format json` report raw and U+009B is a one-byte CSI. Display only:
-        // nothing decides anything on `evidence`, so narrowing it cannot narrow
-        // detection.
+        // `--format json` report raw and U+009B is a one-byte CSI. Nothing
+        // DECIDES on `evidence` -- no branch, dedupe or map key reads it -- so
+        // narrowing it cannot narrow detection. It is not display-only, though:
+        // `finding-records.mjs` copies it into corpus records.
         const evidence = stripTerminalUnsafe(m[0]).slice(0, 80);
         const waiver = findWaiver(waivers, id, line);
         if (waiver) {

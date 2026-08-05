@@ -239,27 +239,36 @@ under it, and the next real finding on that line would land under it silently.
 ##### What a waiver deliberately is not
 
 Recognising a comment by its opener is a heuristic, not a parse. The scanner does
-not tokenize your source, so it cannot tell a comment from a string that contains
-a comment opener. Two shapes are honoured that a parser would refuse, and both
-are pinned by tests in `test/waivers.test.mjs` rather than left to be
-rediscovered:
+not tokenize your source, so it cannot reliably tell a comment from string data
+that looks like one. The shapes measured so far, each pinned by a test in
+`test/waivers.test.mjs` rather than left to be rediscovered:
 
 - an opener inside a string wherever the character before it is not a quote:
   `" // cryptoserve-ignore ..."`, or a `#` inside an ordinary Python string,
   including one that is merely part of a URL fragment
-- a block-comment continuation inside a template literal, a backtick-delimited
-  line starting ` * cryptoserve-ignore ...`
+- a block-comment continuation line, which needs no comment opener on it at all:
+  any line matching ` * cryptoserve-ignore ...` inside a multi-line string, in
+  any language whose comment syntax includes a block comment. A JavaScript
+  template literal spells it, and so do a Go or Rust raw string and a Java text
+  block
 
-An opener written DIRECTLY after a quote is refused, so the guard is not absent,
+An opener written directly after a quote is refused, so the guard is not absent,
 only narrow.
 
-So the property is weaker than "data a project merely contains cannot switch a
-check off", which is how earlier drafts put it. Two versions of that claim were
-each disproved, first by a Python docstring and then by an ordinary Python
-string. What holds is this: contained data CAN operate the control, in any of the
-six languages, when it holds a comment opener followed by the pragma, and it can
-never do so silently, because every waived finding is listed, counted in
-`summary.waived`, and emitted to SARIF as a suppressed result.
+The claim, and deliberately no more than this: **data your project merely
+contains can operate this control, in any of the six languages, and can never do
+so silently.** Every waived finding is listed by `scan` and `gate`, counted in
+`gate --format json` as `summary.waived`, and emitted to SARIF as a suppressed
+result.
+
+Earlier drafts tried to bound WHICH data could do it, first excluding languages
+without block comments, then requiring a comment opener. Review falsified each
+in turn, with a Python docstring, an ordinary Python string, and a Go raw
+string. The bound kept describing the last example rather than the mechanism, so
+it is gone. What makes the residual acceptable is not the difficulty of these
+shapes but who a waiver is for: it is authored by whoever can already edit the
+file, so anyone able to smuggle one through a string could simply write the
+comment instead.
 
 The residual is bounded by who a waiver is for and by where the scanner looks. It
 is authored by whoever can already edit the file, so it is not a privilege

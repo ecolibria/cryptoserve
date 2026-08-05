@@ -120,11 +120,23 @@ SETUP = "https://vendor.example/tls/setup#cryptoserve-ignore misuse/python-cert-
 ctx.verify_mode = ssl.CERT_NONE
 ```
 
-What holds, and all that holds: contained data CAN operate the control, in any of
-the six languages, when it holds a comment opener followed by the pragma. It can
-never do so silently -- a waived finding is listed by `scan` and `gate`, counted
-in `summary.waived`, and emitted to SARIF as a suppressed result. Each shape is
-pinned by a test in `test/waivers.test.mjs`.
+Requiring a comment opener produced a third version, and a Go raw string
+disproved that one too: the block-comment continuation branch needs no opener on
+the line at all, so ` * cryptoserve-ignore ...` inside any multi-line string
+reaches it, in any language whose comment syntax has block comments.
+
+What holds, and all that holds: **data a project merely contains CAN operate this
+control, in any of the six languages, and can never do so silently.** A waived
+finding is listed by `scan` and `gate`, counted in `gate --format json` as
+`summary.waived`, and emitted to SARIF as a suppressed result. Each measured
+shape is pinned by a test in `test/waivers.test.mjs`.
+
+The qualifier is gone deliberately. Every bounded version of this claim was
+written just after closing the previous example and described that example
+rather than the mechanism. What makes the residual acceptable is who a waiver is
+for: it is authored by whoever can already edit the file, so it is not a
+privilege boundary, and anyone able to smuggle a pragma through a string could
+simply write the comment instead.
 
 Doing better needs a real parser per language, which this package cannot have
 while it stays dependency-free. A hand-written comment tokenizer was built for

@@ -396,12 +396,40 @@ describe('parseWaiverPragmas', () => {
       'the Python string limitation changed; update the docs and this test together');
     assert.deepEqual(malformed, []);
 
-    // The half that must hold: a waiver produced this way is still a waiver
-    // like any other, so it is reported, counted, and marked used rather than
-    // quietly deleting the finding. `unused` bookkeeping is what makes it
-    // visible in `scan` and `gate` output.
+    // `parseWaiverPragmas` returns waivers unused by construction; whether the
+    // finding is REPORTED is a property of the scan, and `scanner.test.mjs`
+    // measures it there rather than here. Asserting `used === false` at this
+    // point would only restate how this function initialises the field.
     assert.equal(waivers[0].rule, 'misuse/python-cert-none');
-    assert.equal(waivers[0].used, false);
+  });
+
+  it('records that a continuation line needs no comment opener at all', () => {
+    // The third shape to falsify a bounded version of the module's claim, and
+    // the reason the claim now carries no bound. Requiring "a comment opener
+    // followed by the marker" excluded this one: the continuation branch runs
+    // BEFORE the opener scan, so a line inside a multi-line string operates
+    // the control with no opener anywhere on it.
+    //
+    // Not JavaScript-specific, which is what the earlier wording implied by
+    // naming template literals. The branch is gated on the LANGUAGE having
+    // block comments, so a Go or Rust raw string and a Java text block all
+    // reach it. Pinned in Go, because the previous wording said "backtick-
+    // delimited" as though that were a JavaScript-only spelling.
+    const go = [
+      'package main',
+      'var doc = `',
+      ` * ${IGNORE} misuse/tls-verify-disabled -- smuggled through a raw string\``,
+      'var c = &tls.Config{InsecureSkipVerify: true}',
+    ].join('\n') + '\n';
+    const { waivers } = parse(go, 'go');
+    assert.equal(waivers.length, 1,
+      'the raw-string continuation limitation changed; update the docs and this test together');
+    assert.equal(waivers[0].rule, 'misuse/tls-verify-disabled');
+
+    // And the language gate still holds in the other direction: Python has no
+    // block comment, so the same line is not a continuation there.
+    const py = `DOC = """\n * ${IGNORE} misuse/python-cert-none -- example\n"""\n`;
+    assert.deepEqual(parse(py, 'python').waivers, []);
   });
 
   it('stays linear in the length of one line', () => {

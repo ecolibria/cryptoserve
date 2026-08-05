@@ -48,39 +48,61 @@
  * ## What this is NOT
  *
  * Recognising a comment by its opener is a heuristic, not a parse. This module
- * does not tokenize the file, so in a language that HAS block comments there
- * are three shapes it cannot tell from a real pragma. All three are measured
- * and pinned by tests rather than left to be rediscovered:
+ * does not tokenize the file, so it cannot reliably tell a comment from string
+ * data that looks like one. The shapes measured so far, each pinned by a test:
  *
- *   - a string that begins with an opener: `"// <marker> <rule> -- why"`
- *   - an opener that is not directly after the quote: `" // <marker> ..."`,
- *     because the adjacency guard reads exactly one character
- *   - a block-comment continuation inside a template literal: a line of
- *     backtick-delimited text starting ` * <marker>`
+ *   - an opener inside a string wherever the character before it is not a
+ *     quote: `" // <marker> ..."`, or a `#` inside an ordinary Python string,
+ *     including one that is merely part of a URL fragment. The adjacency guard
+ *     reads exactly one character, so a space defeats it, and so does any
+ *     other preceding character.
+ *   - a block-comment continuation line, which needs NO comment opener on it
+ *     at all: any line matching ` * <marker>` inside a multi-line string, in
+ *     any language whose openers include a block comment. A JavaScript
+ *     template literal spells it, and so do a Go or Rust raw string and a Java
+ *     text block.
  *
- * So the property defended here is NARROWER than "data a project merely
- * contains cannot switch a check off". That is what an earlier version of this
- * comment claimed, and a Python docstring disproved it. What actually holds:
+ * Refused, despite belonging to the same family: an opener DIRECTLY after a
+ * quote (`"// <marker> ..."`), which the adjacency guard does catch.
  *
- *   In a language with no block comments, contained data cannot operate the
- *   control at all -- the continuation branch is gated on the language having
- *   the opener it is a continuation of. In the C family it can, but only from a
- *   string shaped like a comment, and never SILENTLY: a waived finding is still
- *   listed by `scan` and `gate`, counted in `summary.waived`, and emitted to
- *   SARIF as a suppressed result.
+ * THE CLAIM, and deliberately no more than this:
  *
- * The residual is bounded by who a waiver is for and by where the scanner
- * looks. It is authored by whoever can already edit the file, so it is not a
- * privilege boundary: anyone able to smuggle a pragma through a string could
- * simply write the comment instead. And `walker.mjs` skips `node_modules`,
- * `vendor`, `.venv` and `venv` by default, so the code this applies to is
- * first-party, not a dependency's.
+ *   Data a project merely contains CAN operate this control, in any of the six
+ *   languages. It can never do so SILENTLY: a waived finding is still listed by
+ *   `scan` and `gate`, counted in `gate --format json` as `summary.waived`, and
+ *   emitted to SARIF as a suppressed result.
+ *
+ * The qualifier is gone on purpose. Three successive versions of this comment
+ * tried to bound WHICH data can do it -- "not in a language without block
+ * comments", then "only from something holding a comment opener" -- and review
+ * falsified each in turn with a Python docstring, an ordinary Python string,
+ * and a Go raw string. Each version was written immediately after closing the
+ * previous shape, which is the pattern: the bound always describes the last
+ * example rather than the mechanism. The unqualified claim is the one that has
+ * survived, and a reader deciding how far to trust a security control's off
+ * switch is owed that one rather than the one that reads best.
+ *
+ * What makes the residual acceptable is NOT the difficulty of the shapes. It is
+ * who a waiver is for: it is authored by whoever can already edit the file, so
+ * it is not a privilege boundary, and anyone able to smuggle a pragma through a
+ * string could simply write the comment instead.
+ *
+ * The residual is bounded further by where the scanner looks: `walker.mjs`
+ * skips `node_modules`, `vendor`, `.venv` and `venv` by default, so the code
+ * this applies to is first-party, not a dependency's.
  *
  * Closing it needs a real parser per language -- six of them for the languages
  * here, not one -- which this package cannot have while it stays
  * dependency-free. A hand-written tokenizer was built for this and removed:
  * adversarial review measured it mis-reading ordinary JSX and minified bundles
  * badly enough to LOSE real findings.
+ *
+ * Widening the heuristic instead is the thing NOT to do, and that is a measured
+ * conclusion rather than a preference. Four rounds have now each closed one
+ * spelling and been defeated by the next: `\r`, then the rest of the terminator
+ * family, then which LINE carries the terminator, then a Python docstring, and
+ * now a Python string. Each round left the property overstated in the same
+ * direction. The narrow claim above is what this module defends.
  *
  * ## Known limitation: a pragma this module ignores in silence
  *
