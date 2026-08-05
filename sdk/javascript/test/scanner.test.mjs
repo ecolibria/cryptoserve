@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   scanProject, toLibraryInventory, toOwnershipInventory,
   weakAlgorithmSeverity, exceedsSeverity, SEVERITY_ORDER,
-  libraryCoversLanguage, ECOSYSTEM_LANGUAGES,
+  libraryCoversLanguage, libraryLanguages, ECOSYSTEM_LANGUAGES,
 } from '../lib/scanner.mjs';
 import { LANGUAGE_PATTERNS } from '../lib/scanner-languages.mjs';
 
@@ -210,6 +210,28 @@ describe('library language attribution', () => {
     assert.equal(libraryCoversLanguage({ ecosystem: 'npm' }, ''), false);
   });
 
+  it('never hands out the shared language table', () => {
+    // `libraryLanguages` used to return the exported array itself, so a single
+    // push through any inventory entry rewrote ECOSYSTEM_LANGUAGES process-wide
+    // -- for every library, both inventories, and every subsequent scan in the
+    // same process. Nothing mutates it today, which is exactly why the
+    // hardening needs a test: it is invisible until something does.
+    const first = libraryLanguages({ ecosystem: 'npm' });
+    first.push('python');
+    assert.deepEqual(ECOSYSTEM_LANGUAGES.npm, ['javascript'],
+      'the exported table was mutated through a returned array');
+    assert.deepEqual(libraryLanguages({ ecosystem: 'npm' }), ['javascript']);
+
+    const lib = { ecosystem: 'source', languages: ['c'] };
+    libraryLanguages(lib).push('go');
+    assert.deepEqual(lib.languages, ['c'], 'the caller\'s own array was mutated');
+
+    assert.ok(Object.isFrozen(ECOSYSTEM_LANGUAGES));
+    for (const [eco, langs] of Object.entries(ECOSYSTEM_LANGUAGES)) {
+      assert.ok(Object.isFrozen(langs), `${eco} is not frozen`);
+    }
+  });
+
   it('covers nothing when the ecosystem is unknown or absent', () => {
     // Fails CLOSED. An ecosystem the table does not know claims no sites, and
     // the ownership inventory then mints a synthetic owner for them, so the
@@ -291,6 +313,32 @@ describe('ownership inventory is separate from the scored census', () => {
     const owners = toOwnershipInventory(scanProject(TEST_DIR));
     assert.equal(owners.filter(l => l.name === 'python:md5').length, 0);
     assert.ok(owners.some(l => l.name === 'hashlib'));
+  });
+
+  it('a same-language library claims only the algorithms it declares', () => {
+    // Both halves of the ownership test have to hold. Covering the language is
+    // not enough: `openssl` here is a C library, so it covers a C site, but it
+    // declares only `rsa`. Dropping the name half let it claim the `md5` site
+    // as well, which suppresses `c:md5` and drops the finding through to the
+    // weak-pattern sweep as a `misuse` row named after the file.
+    //
+    // `openssl/rsa.h` is a recognised include and mints a source library;
+    // `openssl/md5.h` is not, which is what leaves the md5 site unowned.
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'rsa.c'),
+      '#include <openssl/rsa.h>\nvoid g(void){ RSA_public_encrypt(0,0,0,0,0); }\n');
+    writeFileSync(join(TEST_DIR, 'hash.c'), 'void f(void){ MD5_CTX c; MD5_Init(&c); }\n');
+
+    const owners = toOwnershipInventory(scanProject(TEST_DIR));
+    const openssl = owners.find(l => l.name === 'openssl');
+    assert.ok(openssl, 'fixture must produce a C source library');
+    assert.deepEqual(openssl.languages, ['c']);
+    assert.ok(!openssl.algorithms.some(a => a.toLowerCase() === 'md5'),
+      `fixture is void: openssl already declares md5 (${JSON.stringify(openssl.algorithms)})`);
+
+    assert.ok(owners.some(l => l.name === 'c:md5'),
+      `md5 was claimed by a C library that does not declare it: `
+      + JSON.stringify(owners.map(l => `${l.name}[${l.algorithms}]`)));
   });
 
   it('does NOT add that owner to the scored census', () => {

@@ -755,8 +755,10 @@ export function toLibraryInventory(scanResults) {
  *     `algorithm` is the issue prose. The violation survives; the attribution
  *     does not.
  *   - one that is only QUANTUM-risky has no weakPattern to fall back on, so it
- *     disappears entirely. `node-rsa` in a manifest with `RSA_public_encrypt`
- *     in a `.c` file loses the `.c` violation and keeps only the manifest row.
+ *     disappears entirely. The example has to use a call whose header is NOT a
+ *     recognised include: `#include <openssl/rsa.h>` mints an `openssl` source
+ *     library that owns the site, so it demonstrates nothing. `openssl/md5.h`
+ *     and `openssl/sha.h` are the unrecognised ones.
  *
  * Measured twice, and wrong twice before this wording. The first version
  * claimed the synthetic owner is what keeps `md5@hash.c` a violation at all;
