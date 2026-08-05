@@ -181,6 +181,118 @@ having the check.
 An unknown flag exits `2` rather than warning and continuing, because
 `gate . --min-scoree 95` used to fall back to the default threshold and pass.
 
+#### Clearing a false positive
+
+A misuse finding that is wrong for your code is waived in place, with a comment
+on the finding's line or the line directly above it:
+
+```js
+// cryptoserve-ignore misuse/tls-verify-disabled -- talks only to the local test server's self-signed cert
+const agent = new https.Agent({ rejectUnauthorized: false });
+```
+
+`scan` and `gate` both print the exact pragma to write, rule id included, beside
+the finding, so the id never has to be looked up. Whatever comment syntax the
+file's language uses works: `#` in Python, `//` in the C family.
+
+A waived finding stops failing the gate and is still reported. `scan` and `gate`
+list it with the reason given, `gate --format json` counts it in
+`summary.waived` and lists it under `waived[]`, and SARIF emits it as a
+suppressed result, which code scanning renders as a dismissed alert rather than
+as an absent one.
+
+##### The rules a pragma can name
+
+| Rule id | What it reports | Languages |
+|---|---|---|
+| `misuse/create-cipher` | `createCipher` derives an IV from the key | JavaScript |
+| `misuse/insecure-random-js` | `Math.random()` is not a CSPRNG | JavaScript |
+| `misuse/insecure-random-python` | the `random` module is not a CSPRNG | Python |
+| `misuse/tls-verify-disabled` | TLS certificate verification disabled | JavaScript, Python, Go, Java |
+| `misuse/node-tls-reject-unauthorized` | verification disabled process-wide via the `NODE_TLS_REJECT_UNAUTHORIZED` env override | JavaScript |
+| `misuse/python-cert-none` | verification disabled with `ssl.CERT_NONE` | Python |
+| `misuse/python-unverified-context` | verification disabled with `ssl._create_unverified_context` | Python |
+| `misuse/python-check-hostname` | hostname verification disabled with `check_hostname = False` | Python |
+| `misuse/js-check-server-identity` | hostname verification disabled by a no-op `checkServerIdentity` | JavaScript |
+
+These are the whole waivable set. Weak algorithms, hardcoded secrets, committed
+private keys and certificate findings are deliberately not waivable this way: a
+pragma naming one is reported as `unknown-rule`, and a pragma written next to
+one covers nothing and is reported as `unused`. Use `skipDirs` in
+`.cryptoserve.json` for a directory of fixtures, and `--allow-secrets` for
+credential findings.
+
+The ids are part of the CLI's contract with your source tree. Renaming one would
+un-waive every finding somebody wrote a pragma for, so they do not get renamed.
+
+##### What `scan` and `gate` say about a broken pragma
+
+| Warning | What it means |
+|---|---|
+| `malformed` | No reason given, or the pragma carries a control character or a bidi override. It waives nothing. |
+| `unknown-rule` | No rule uses that id. Usually a typo, and reported rather than ignored, because an off switch that looks like it worked is worse than none. |
+| `unused` | The pragma is honoured but covered no finding. |
+
+`unused` is the one worth acting on. A stale waiver is suppression with nothing
+under it, and the next real finding on that line would land under it silently.
+
+##### What a waiver deliberately is not
+
+Recognising a comment by its opener is a heuristic, not a parse. The scanner does
+not tokenize your source, so it cannot reliably tell a comment from string data
+that looks like one. The shapes measured so far, each pinned by a test in
+`test/waivers.test.mjs` rather than left to be rediscovered:
+
+- an opener inside a string wherever the character before it is not a quote:
+  `" // cryptoserve-ignore ..."`, or a `#` inside an ordinary Python string,
+  including one that is merely part of a URL fragment
+- a block-comment continuation line, which needs no comment opener on it at all:
+  any line matching ` * cryptoserve-ignore ...` inside a multi-line string, in
+  any language whose comment syntax includes a block comment. A JavaScript
+  template literal spells it, and so do a Go or Rust raw string and a Java text
+  block
+
+An opener written directly after a quote is refused, so the guard is not absent,
+only narrow.
+
+The claim, and deliberately no more than this: **data your project merely
+contains can operate this control, in any of the six languages, and can never do
+so silently.** Every waived finding is listed by `scan` and `gate`, counted in
+`gate --format json` as `summary.waived`, and emitted to SARIF as a suppressed
+result.
+
+Earlier drafts tried to bound WHICH data could do it, first excluding languages
+without block comments, then requiring a comment opener. Review falsified each
+in turn, with a Python docstring, an ordinary Python string, and a Go raw
+string. The bound kept describing the last example rather than the mechanism, so
+it is gone. What makes the residual acceptable is not the difficulty of these
+shapes but who a waiver is for: it is authored by whoever can already edit the
+file, so anyone able to smuggle one through a string could simply write the
+comment instead.
+
+The residual is bounded by who a waiver is for and by where the scanner looks. It
+is authored by whoever can already edit the file, so it is not a privilege
+boundary: anyone able to smuggle a pragma through a string could simply write the
+comment instead. And `node_modules`, `vendor`, `.venv` and `venv` are skipped by
+default, so this applies to first-party code rather than a dependency's.
+
+Closing it needs a real parser per language, six of them for the languages here,
+which this package cannot have while it stays dependency-free.
+
+Two further rules follow from a pragma being file content on its way to a
+terminal. A pragma carrying a control character, or a bidi override or isolate
+(U+202A-U+202E, U+2066-U+2069), is reported as malformed and waives nothing: an
+escape sequence can erase the line the scanner just wrote, and a right-to-left
+override reverses the display order of everything after it, so the reason a
+reviewer reads stops being the reason the file holds. Ordinary Hebrew and Arabic
+text is unaffected, and so are the plain direction marks U+200E and U+200F. And
+the line-ending question is decided once for the whole FILE:
+a file holding any terminator that splitting on newlines does not split on (CR,
+VT, FF, NEL, U+2028, U+2029) honours no pragma anywhere in it, and reports the
+line that carries it. Measured over 47,486 source files in 258 trees, 7 hold such
+a terminator and all 7 are minified build output or a fixture embedding one
+deliberately.
+
 ### `census`: Ecosystem Census
 
 Analyze cryptographic library adoption across package ecosystems.

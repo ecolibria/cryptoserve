@@ -124,7 +124,43 @@ export function collectFindings(scanResults) {
     });
   }
 
+  // Appended one at a time rather than spread, for the reason the waiver-warning
+  // site in `scanner.mjs` already gives: `push(...arr)` passes every element as
+  // a separate argument and throws RangeError past the argument limit. That was
+  // safe here before waivers existed, because the misuse loop reported at most
+  // one finding per pattern per file. It now keeps reading past a waived match,
+  // so this array is unbounded per file: four ~1MB files, each UNDER the default
+  // maxFileSize, took `scan --format sarif` to "Maximum call stack size
+  // exceeded" and wrote no output file at all.
+  for (const w of waivedToFindings(scanResults.waivedFindings)) findings.push(w);
+
   return findings;
+}
+
+/**
+ * Findings a `cryptoserve-ignore` pragma cleared, as SUPPRESSED SARIF results.
+ *
+ * Omitting them would make the one artifact CI uploads the only surface that
+ * cannot tell a clean tree from a waived one. This repository has already been
+ * burned by SARIF drifting from the other renderings: a gate failed a build on
+ * three manifest violations and uploaded a document naming none of them.
+ *
+ * SARIF models this directly. A result carrying `suppressions` is rendered by
+ * code scanning as a dismissed alert rather than as an open one, so the finding
+ * stays visible and auditable without turning a build red. `inSource` is the
+ * spec's name for a suppression written in the code itself, which is what a
+ * pragma is.
+ */
+export function waivedToFindings(waived) {
+  return (waived || []).map(w => ({
+    kind: 'misuse',
+    message: w.issue,
+    severity: w.severity,
+    file: w.file,
+    line: w.line,
+    suppressed: true,
+    justification: `waived by ${w.rule}: ${w.reason}`,
+  }));
 }
 
 /**
@@ -236,6 +272,10 @@ export function toSarif(findings) {
       level,
       message: { text },
       locations: physicalLocation(finding),
+      // A suppressed result is reported and then dismissed, not withheld.
+      ...(finding.suppressed
+        ? { suppressions: [{ kind: 'inSource', justification: finding.justification || 'waived in source' }] }
+        : {}),
     };
   });
 

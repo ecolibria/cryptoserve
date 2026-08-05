@@ -152,6 +152,46 @@ cryptoserve gate . --format json
   run: npx cryptoserve gate . --max-risk high --min-score 50 --fail-on-weak
 ```
 
+### Waiving a false positive
+
+An API misuse finding that is not a defect can be cleared with a comment on the
+offending line, or on the line above it:
+
+```js
+// cryptoserve-ignore misuse/tls-verify-disabled -- local test server, self-signed cert
+const agent = new https.Agent({ rejectUnauthorized: false });
+```
+
+The rule id is printed with the finding by `scan --format json` and appears in
+the gate's output. The reason is required.
+
+A waiver clears the finding from the gate but does not delete it. `scan` and
+`gate` both list what was waived and why, `gate --format json` counts it as
+`summary.waived`, and SARIF reports it as a suppressed result, which code
+scanning shows as a dismissed alert. A pragma that is malformed, names a rule
+that does not exist, or covers no finding is reported too.
+
+The pragma must be the first thing in the comment, the same rule
+`eslint-disable` uses, so a sentence that merely mentions one is not one. That
+also means a line which already opened a comment gives its first opener to that
+comment, and a pragma appended after it is ignored in silence:
+
+```js
+const u = "http://x";   // cryptoserve-ignore misuse/create-cipher -- ignored
+```
+
+Put the pragma on its own line above the finding and the question does not
+arise. It is the spelling that always works, and it is what the scanner prints
+next to a finding you might want to waive.
+
+Each pragma waives one rule on one line, its own or the one below. To exclude a
+directory of test fixtures rather than individual lines, use `skipDirs` in
+`.cryptoserve.json`:
+
+```json
+{ "scanner": { "skipDirs": ["test/fixtures"] } }
+```
+
 ## Encrypt / Decrypt
 
 AES-256-GCM, AES-128-GCM, and ChaCha20-Poly1305 encryption with password-based key derivation (scrypt).

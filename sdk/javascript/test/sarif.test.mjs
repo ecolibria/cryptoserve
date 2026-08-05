@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { collectFindings, toSarif } from '../lib/sarif.mjs';
@@ -101,5 +101,137 @@ describe('toSarif', () => {
     const doc = toSarif([]);
     assert.deepEqual(doc.runs[0].results, []);
     assert.deepEqual(doc.runs[0].tool.driver.rules, []);
+  });
+
+  /**
+   * SARIF is the one artifact a CI job uploads, so it must not be the only
+   * surface that cannot tell a clean tree from a waived one. This repository
+   * has been burned by that already: a gate failed a build on three manifest
+   * violations and uploaded a document naming none of them.
+   */
+  describe('waived findings', () => {
+    const WAIVED = {
+      weakPatterns: [],
+      waivedFindings: [{
+        rule: 'misuse/node-tls-reject-unauthorized',
+        file: 'app.js',
+        line: 4,
+        issue: 'TLS certificate verification disabled process-wide',
+        severity: 'critical',
+        reason: 'a severity table, not an assignment',
+      }],
+    };
+
+    it('reports a waived finding as a suppressed result', () => {
+      // Present and dismissed, not absent. An alert that is missing and an
+      // alert that was deliberately cleared are different claims, and only one
+      // of them is auditable after the fact.
+      const [result] = toSarif(collectFindings(WAIVED)).runs[0].results;
+      assert.equal(result.ruleId, 'cryptoserve/api-misuse');
+      assert.equal(result.suppressions.length, 1);
+      assert.equal(result.suppressions[0].kind, 'inSource');
+      assert.match(result.suppressions[0].justification, /a severity table, not an assignment/);
+    });
+
+    it('names the rule that was waived in the justification', () => {
+      const [result] = toSarif(collectFindings(WAIVED)).runs[0].results;
+      assert.match(result.suppressions[0].justification, /misuse\/node-tls-reject-unauthorized/);
+    });
+
+    it('keeps the location so the dismissed alert points somewhere', () => {
+      const [result] = toSarif(collectFindings(WAIVED)).runs[0].results;
+      assert.equal(result.locations[0].physicalLocation.region.startLine, 4);
+    });
+
+    it('does not put suppressions on findings nobody waived', () => {
+      // The other direction. A stray `suppressions` array on a live finding
+      // would dismiss a real alert in code scanning.
+      for (const result of toSarif(collectFindings(SCAN)).runs[0].results) {
+        assert.equal(result.suppressions, undefined, JSON.stringify(result));
+      }
+    });
+
+    it('collects a waived finding count that no argument limit can reject', () => {
+      // `push(...arr)` passes every element as a separate argument, so a large
+      // enough array throws RangeError instead of being appended. The misuse
+      // loop deliberately keeps reading past a waived match, so this array is
+      // unbounded per file where the pre-waiver code reported at most one
+      // finding per pattern per file -- which is why the same spread was safe
+      // before and is not now.
+      //
+      // Measured rather than assumed: four ~1MB files, each under the DEFAULT
+      // maxFileSize with no config change, took `scan --format sarif` and
+      // `gate --format sarif` to "Maximum call stack size exceeded", and with
+      // `--output` no file was written at all, so a CI upload step received
+      // nothing. The identical hazard was found and fixed at the waiver-warning
+      // site in lib/scanner.mjs; these two sites are the rest of that class.
+      // Sized from the limit MEASURED on this engine rather than from a
+      // constant. The spread limit is a function of stack size, not a fixed
+      // number: at `--stack-size=2000` it is about 253,000, so a hardcoded
+      // 200,000 would quietly pass against the unfixed code and stop being a
+      // regression test at all.
+      let spreadLimit = 1;
+      for (;;) {
+        try {
+          const probe = new Array(spreadLimit * 2);
+          [].push(...probe);
+          spreadLimit *= 2;
+          if (spreadLimit > 1e8) break;   // no limit worth testing; stop doubling
+        } catch { break; }
+      }
+      const count = spreadLimit * 2;
+
+      const waivedFindings = Array.from({ length: count }, (_, i) => ({
+        rule: 'misuse/tls-verify-disabled',
+        file: 'src/bulk.js',
+        line: i + 1,
+        issue: 'TLS certificate verification disabled',
+        severity: 'critical',
+        reason: 'bulk',
+        evidence: 'rejectUnauthorized: false',
+      }));
+
+      const findings = collectFindings({ ...SCAN, waivedFindings });
+      assert.equal(findings.length, count + 4, `measured spread limit ${spreadLimit}`);
+      // And the document still builds from them.
+      assert.equal(toSarif(findings).runs[0].results.length, count + 4);
+    });
+
+    it('spreads no array into push anywhere in the shipped code', () => {
+      // The test above measures ONE of the two sites that threw. The other is
+      // the gate's SARIF path in `bin/cryptoserve.mjs`, and reaching its limit
+      // behaviourally costs a ~100MB document, so the class is pinned at the
+      // source instead: reintroducing the spread at ANY site fails here.
+      //
+      // The rule is `push(...arr)` outright rather than "unbounded arrays
+      // only", because which arrays are bounded is exactly the judgement that
+      // was got wrong twice: `waivedFindings` was bounded before this feature
+      // let the misuse loop read past a waived match, and the two call sites
+      // were written while it still was. Array-literal and object spread are
+      // untouched by this; they pass no argument list.
+      const dir = join(HERE, '..');
+      const sources = [];
+      const walk = (d) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          if (e.name === 'node_modules' || e.name === 'test') continue;
+          const p = join(d, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (e.name.endsWith('.mjs')) sources.push(p);
+        }
+      };
+      walk(join(dir, 'lib'));
+      walk(join(dir, 'bin'));
+      assert.ok(sources.length > 10, `found only ${sources.length} sources to check`);
+
+      const offenders = [];
+      for (const file of sources) {
+        readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+          // Skip comment lines: this module's own history is discussed in them.
+          if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+          if (/\.push\(\s*\.\.\./.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        });
+      }
+      assert.deepEqual(offenders, [], `push(...arr) throws past the argument limit:\n${offenders.join('\n')}`);
+    });
   });
 });

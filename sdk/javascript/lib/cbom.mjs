@@ -105,7 +105,8 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
   // alone here because aligning it means REMOVING components, and an
   // attribution fix should not quietly shrink a bill of materials; the
   // direction wants deciding on its own. Tracked in
-  // `todo/roadmap/gate-algorithm-site-attribution.md`.
+  // https://github.com/ecolibria/cryptoserve/issues/73, which carries the
+  // reproduction and the three ways it could be aligned.
   for (const algo of (scanResults.sourceAlgorithms || [])) {
     const ownedByLibrary = (scanResults.libraries || []).some(lib =>
       libraryCoversLanguage(lib, algo.language) && (lib.algorithms || []).includes(algo.algorithm)

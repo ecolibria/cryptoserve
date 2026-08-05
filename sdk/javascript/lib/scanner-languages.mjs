@@ -19,6 +19,7 @@
 
 import { extname } from 'node:path';
 import { canonicalizeAlgorithmToken, lookupAlgorithm } from './algorithm-db.mjs';
+import { stripTerminalUnsafe } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // Per-language regex patterns
@@ -315,7 +316,7 @@ export function detectLanguage(filePath) {
  * Build the sorted list of newline offsets so a match index can be resolved to
  * a 1-based line number in O(log n) instead of re-splitting the file per match.
  */
-function newlineOffsets(content) {
+export function newlineOffsets(content) {
   const offsets = [];
   let i = content.indexOf('\n');
   while (i !== -1) {
@@ -325,7 +326,7 @@ function newlineOffsets(content) {
   return offsets;
 }
 
-function lineAt(offsets, index) {
+export function lineAt(offsets, index) {
   let lo = 0;
   let hi = offsets.length;
   while (lo < hi) {
@@ -432,7 +433,18 @@ export function scanSourceFile(filePath, content, language) {
           algorithm: name,
           category: resolvedCategory,
           line: lineAt(offsets, m.index),
-          evidence: m[0].slice(0, 80),
+          // Stripped for the same reason as the misuse site in `scanner.mjs`,
+          // and in the same round: several algorithm patterns span arbitrary
+          // characters between their anchors, so matched text reaches
+          // `sourceAlgorithms[].evidence` carrying whatever sat there. DEL and
+          // the C1 block survive `JSON.stringify` unescaped and U+009B is a
+          // one-byte CSI, so a saved `--format json` report can drive the
+          // terminal that later reads it. Nothing DECIDES on evidence -- no
+          // branch, dedupe or map key reads it, so narrowing it cannot narrow
+          // detection, and parity over 3,926 files confirms it did not. It is
+          // not display-only either: `finding-records.mjs` copies it into
+          // corpus records as `functionCall`.
+          evidence: stripTerminalUnsafe(m[0]).slice(0, 80),
         });
       }
       if (m[0].length === 0) regex.lastIndex++;
