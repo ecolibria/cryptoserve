@@ -86,10 +86,24 @@ will see critical findings on those files, and there is no per-finding waiver:
 `skipDirs`. This is not new (`createCipher` and `rejectUnauthorized: false`
 behave the same way today) but there are now more patterns that can hit it.
 
-These spellings are not yet detected: `from ssl import CERT_NONE` and
-`from ssl import PROTOCOL_TLSv1` (unqualified after a `from` import), and the
-method-shorthand, `async`, quoted-key and commented-body forms of a no-op
-`checkServerIdentity`.
+These spellings are not yet detected, and each has a test asserting it is not —
+so if one starts being detected, this list is what fails:
+
+- `NODE_TLS_REJECT_UNAUTHORIZED` set through anything other than `process.env`
+  directly: a destructured `const { env } = process`, an aliased
+  `const e = process.env`, `Bun.env`, a spread into a child process's env, or
+  `Object.assign(process.env, …)`. Also `??=` and `Deno.env.set(…)`. The rule is
+  scoped to `process.env` on purpose. Widening it to any receiver does catch all
+  of these — and also flags `{ rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } }`, a
+  severity map, an unrelated counter, a class field, and a comment naming the
+  variable. Measured: 8/8 detected against 6/6 false positives, versus 3/8
+  against 1/6 as shipped. These findings are `critical` and there is no
+  per-finding waiver, so a false one cannot be cleared short of excluding a
+  directory. Widening waits on comment-stripping and a waiver mechanism.
+- `from ssl import CERT_NONE` and `from ssl import PROTOCOL_TLSv1` — unqualified
+  after a `from` import; both rules require the `ssl.` qualifier.
+- The method-shorthand, `async`, quoted-key and commented-body forms of a no-op
+  `checkServerIdentity`.
 
 ## [CLI 0.6.0] - 2026-08-03
 

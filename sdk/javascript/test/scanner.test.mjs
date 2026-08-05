@@ -443,26 +443,56 @@ describe('TLS verification disabled in source', () => {
     assert.equal(found(wp, /certificate verification/i)[0].severity, 'critical');
   });
 
-  it('flags every receiver and shape that sets the override to 0', () => {
-    // Narrowing this to `process.env.X = 0` to stop it matching its own
-    // documentation lost five real defects. What makes it a defect is assigning
-    // 0 to that name, not which object happens to hold the environment.
+  it('flags the process.env spellings that set the override to 0', () => {
     for (const body of [
       "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
       "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';\n",
       'process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;\n',
       "process.env.NODE_TLS_REJECT_UNAUTHORIZED ||= '0';\n",
       "process . env . NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('app.js', body);
+      assert.equal(found(wp, /certificate verification/i).length, 1, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('does not flag an unrelated property that happens to share the name', () => {
+    // The reason this rule is scoped to `process.env` and not widened to any
+    // receiver. Each of these is a real construct in real code, none is a
+    // defect, and every one of them is `critical` with no per-finding waiver if
+    // the rule matches it.
+    for (const body of [
+      '// Never write NODE_TLS_REJECT_UNAUTHORIZED: 0 anywhere.\n',
+      'module.exports = { rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } };\n',
+      'const SEVERITY = { NODE_TLS_REJECT_UNAUTHORIZED: 0, OTHER: 2 };\n',
+      'counts.NODE_TLS_REJECT_UNAUTHORIZED = 0;\n',
+      'class A { constructor(){ this.NODE_TLS_REJECT_UNAUTHORIZED = 0; } }\n',
+    ]) {
+      cleanup(); setup();
+      const wp = misuseIn('app.js', body);
+      assert.equal(found(wp, /certificate verification/i).length, 0, `${body} -> ${JSON.stringify(wp)}`);
+    }
+  });
+
+  it('records the spellings this rule knowingly does not reach', () => {
+    // Not aspiration: these are measured gaps, listed in the changelog, and
+    // this test fails if one starts being detected -- at which point the
+    // changelog is stale and needs updating with it. A known gap that silently
+    // closes is how documentation drifts away from behaviour.
+    for (const body of [
       "const { env } = process;\nenv.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
       "const e = process.env;\ne.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
       "Bun.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
       "spawn('node', ['x.js'], { env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0' } });\n",
       "Object.assign(process.env, { NODE_TLS_REJECT_UNAUTHORIZED: '0' });\n",
-      "Object.assign(process.env, { 'NODE_TLS_REJECT_UNAUTHORIZED': 0 });\n",
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED ??= '0';\n",
+      "Deno.env.set('NODE_TLS_REJECT_UNAUTHORIZED', '0');\n",
     ]) {
       cleanup(); setup();
       const wp = misuseIn('app.js', body);
-      assert.equal(found(wp, /certificate verification/i).length, 1, `${body} -> ${JSON.stringify(wp)}`);
+      assert.equal(found(wp, /certificate verification/i).length, 0,
+        `now detected -- update the changelog's known-gaps list: ${body}`);
     }
   });
 
@@ -489,9 +519,11 @@ describe('TLS verification disabled in source', () => {
       'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0.5;\n',
       'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0x1;\n',
       "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '00';\n",
-      'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 10;\n',
-      "Object.assign(process.env, { NODE_TLS_REJECT_UNAUTHORIZED: 0.5 });\n",
       "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0x0;\n",
+      // `= 10` needs no boundary to be rejected -- the leading digit is `1`, so
+      // nothing matches either way. Kept as documentation of intent, but the
+      // four above are the ones that actually measure the guard.
+      'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 10;\n',
     ]) {
       cleanup(); setup();
       const wp = misuseIn('app.js', body);

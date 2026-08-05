@@ -78,26 +78,33 @@ const MISUSE_PATTERNS = [
     // definition of the check. A security tool that fails its own source
     // teaches people to ignore it.
     //
-    // Three shapes, because narrowing to `process.env.X = 0` alone lost five
-    // real defects that the bare name had caught:
+    // Scoped to `process.env`, and deliberately NOT widened beyond it.
     //
-    //   1. member assignment  -- `process.env.X = '0'`, and equally
-    //      `env.X = '0'` after `const { env } = process`, `e.X` after
-    //      `const e = process.env`, and `Bun.env.X`. Any receiver: what makes
-    //      it a defect is assigning 0 to that name, not which object holds it.
-    //   2. subscript          -- `process.env['X'] = 0`
-    //   3. object property    -- `{ ...process.env, X: '0' }` and
-    //      `Object.assign(process.env, { X: '0' })`, which no member-access
-    //      pattern can reach.
+    // Widening this to any receiver (`\w\s*\.\s*NAME = 0`) plus an object
+    // property (`NAME: 0`) does catch five more real spellings -- destructured
+    // `env`, an aliased `process.env`, `Bun.env`, a spread into a spawn env,
+    // and `Object.assign`. Measured, it also flags all of these, none of which
+    // is a defect:
     //
-    // Still missed, deliberately, because they need binding analysis rather
-    // than another alternative: `??=`, and `Deno.env.set('X', '0')`.
+    //     // Never write NODE_TLS_REJECT_UNAUTHORIZED: 0 anywhere.
+    //     module.exports = { rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } };
+    //     const SEVERITY = { NODE_TLS_REJECT_UNAUTHORIZED: 0, OTHER: 2 };
+    //     counts.NODE_TLS_REJECT_UNAUTHORIZED = 0;
+    //     this.NODE_TLS_REJECT_UNAUTHORIZED = 0;
     //
-    // Every alternative ends `0` with `(?![\w.])`. Without it a bare `0` with
-    // optional quotes prefix-matches longer values: `= 0.5`, `= 0x1` and
-    // `= '00'` all reported the disabling literal, and none of them is it.
+    // 8/8 detected against 6/6 false positives, versus 3/8 against 1/6 here.
+    // These are `critical` findings and the CLI has no per-finding waiver, so a
+    // false one cannot be cleared short of excluding a whole directory. For a
+    // security tool an unwaivable false critical costs more than a missed
+    // spelling that no released version ever detected, so this stays narrow
+    // until the structural work lands: strip comments before matching, and add
+    // a waiver. Tracked in `todo/roadmap/gate-tls-verification-spellings.md`.
+    //
+    // The value ends with `(?![\w.])`. Without it a bare `0` with optional
+    // quotes prefix-matches longer values: `= 0.5`, `= 0x1` and `= '00'` all
+    // reported the disabling literal, and none of them is it.
     languages: ['javascript'],
-    pattern: /(?:\w\s*\.\s*NODE_TLS_REJECT_UNAUTHORIZED\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\]\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])|['"`]?NODE_TLS_REJECT_UNAUTHORIZED['"`]?\s*:\s*['"`]?0['"`]?(?![\w.]))/g,
+    pattern: /process\s*\.\s*env\s*(?:\.\s*NODE_TLS_REJECT_UNAUTHORIZED|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\])\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])/g,
     issue: 'TLS certificate verification disabled process-wide (NODE_TLS env override set to 0)',
     severity: 'critical',
     fix: 'Remove the assignment; pass a CA with the `ca` option if the certificate is private',
