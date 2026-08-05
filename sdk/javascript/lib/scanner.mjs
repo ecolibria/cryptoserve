@@ -638,7 +638,7 @@ export function scanProject(projectDir, options = {}) {
 
     // API misuse (correct algorithm, incorrect usage).
     const applicable = MISUSE_PATTERNS.filter(p => p.languages.includes(language));
-    const { waivers, malformed } = parseWaiverPragmas(content, language);
+    const { waivers, malformed, refused } = parseWaiverPragmas(content, language);
 
     for (const { id, pattern, issue, severity, fix } of applicable) {
       pattern.lastIndex = 0;
@@ -680,7 +680,7 @@ export function scanProject(projectDir, options = {}) {
     // on the argument limit instead of reporting them. Not reachable at the
     // default 1MB maxFileSize, but `.cryptoserve.json` can raise that and a
     // scanner must not crash on a file it was configured to read.
-    for (const w of waiverWarnings(waivers, malformed, MISUSE_RULE_IDS, relPath)) {
+    for (const w of waiverWarnings(waivers, malformed, refused, MISUSE_RULE_IDS, relPath)) {
       results.waiverWarnings.push(w);
     }
 

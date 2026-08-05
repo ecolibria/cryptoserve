@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 A per-finding waiver, written as a comment next to the code it covers:
 
 ```js
-// cryptoserve-ignore misuse/node-tls-reject-unauthorized -- a severity table, not an assignment
-const SEVERITY = { NODE_TLS_REJECT_UNAUTHORIZED: 0, OTHER: 2 };
+// cryptoserve-ignore misuse/tls-verify-disabled -- local test server, self-signed cert
+const agent = new https.Agent({ rejectUnauthorized: false });
 ```
 
 Until now a false `critical` could not be cleared at all. `--max-severity` only

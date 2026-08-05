@@ -635,6 +635,7 @@ async function cmdScan(args) {
       console.log(`  ${w.severity === 'critical' ? error(headline) : warning(headline)}`);
       console.log(`    ${dim(location(w))}`);
       if (w.fix) console.log(`    ${info(`Fix: ${w.fix}`)}`);
+      if (w.rule) console.log(`    ${dim(`Waive: cryptoserve-ignore ${w.rule} -- <why>`)}`);
     }
   }
 
@@ -1456,6 +1457,11 @@ async function cmdGate(args) {
       violations.push({
         type: 'misuse',
         algorithm: wp.issue,
+        // The id a `cryptoserve-ignore` pragma has to name. Without it the only
+        // surface carrying it was `scan --format json`, so a user looking at a
+        // red gate had no way to find out what to write, and the remediation
+        // for a false positive was a dead end.
+        rule: wp.rule,
         // A misuse is a statement about how the code uses an algorithm, not
         // about quantum resistance. `risk` used to be set to the SECURITY
         // severity here, which is exactly the conflation of the two axes.
@@ -1697,6 +1703,10 @@ async function cmdGate(args) {
           const label = (!v.severity && v.weak ? warning : error)(`${tag} ${v.algorithm}`);
           const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
           console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
+          // A finding a user believes is wrong needs a next step, and for a
+          // misuse that step is the pragma. Printing the rule id is what makes
+          // it reachable without reading the source of the scanner.
+          if (v.rule) console.log(`      ${dim(`waive with: cryptoserve-ignore ${v.rule} -- <why>`)}`);
         }
       }
 

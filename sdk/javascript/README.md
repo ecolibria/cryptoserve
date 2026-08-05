@@ -158,8 +158,8 @@ An API misuse finding that is not a defect can be cleared with a comment on the
 offending line, or on the line above it:
 
 ```js
-// cryptoserve-ignore misuse/node-tls-reject-unauthorized -- a severity table, not an assignment
-const SEVERITY = { NODE_TLS_REJECT_UNAUTHORIZED: 0, OTHER: 2 };
+// cryptoserve-ignore misuse/tls-verify-disabled -- local test server, self-signed cert
+const agent = new https.Agent({ rejectUnauthorized: false });
 ```
 
 The rule id is printed with the finding by `scan --format json` and appears in

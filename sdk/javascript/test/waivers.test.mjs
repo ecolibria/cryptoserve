@@ -123,6 +123,61 @@ describe('parseWaiverPragmas', () => {
     }
   });
 
+  it('reports a separator that is missing or misspelled', () => {
+    // `<rule> <reason>` with no `--`, or with a single hyphen or a colon, used
+    // to produce no waiver AND no report: the pragma vanished and the finding
+    // stayed red with nothing to explain it. The docs promise malformed says so.
+    for (const src of [
+      '// cryptoserve-ignore misuse/create-cipher a reason with no separator\n',
+      '// cryptoserve-ignore misuse/create-cipher - single hyphen\n',
+      '// cryptoserve-ignore misuse/create-cipher : colon\n',
+    ]) {
+      const { waivers, malformed } = parse(src);
+      assert.deepEqual(waivers, [], src);
+      assert.equal(malformed.length, 1, `${src} -> ${JSON.stringify(malformed)}`);
+    }
+  });
+
+  it('records a pragma it refuses, so the refusal is not silent', () => {
+    // A trailing pragma on a line that already opened a comment earlier (a URL,
+    // or a doc block quoting the anti-pattern) is not the first thing in its
+    // comment, so it does nothing. Refusing in silence leaves a user watching a
+    // critical they just waived stay red with nothing to go on.
+    const { waivers, refused } = parse(`const u = "http://x"; // ${IGNORE} misuse/create-cipher -- why\n`);
+    assert.deepEqual(waivers, []);
+    assert.equal(refused.length, 1, JSON.stringify(refused));
+    assert.equal(refused[0].rule, 'misuse/create-cipher');
+    assert.equal(refused[0].line, 1);
+  });
+
+  it('does not record a refusal for prose', () => {
+    // The refusal report must not fire on documentation, or every comment in
+    // this repository that describes the feature becomes a warning.
+    for (const src of [
+      '// The format is `cryptoserve-ignore misuse/create-cipher -- why`.\n',
+      '// with a cryptoserve-ignore misuse/create-cipher pragma -- see the docs\n',
+    ]) {
+      assert.deepEqual(parse(src).refused, [], src);
+    }
+  });
+
+  it('parses a long reason in linear time', () => {
+    // The regex this replaced backtracked cubically on its tail: one comment
+    // line carrying `-- r` and 4KB of trailing whitespace took 7.8 SECONDS to
+    // reject, against 2ms before the feature existed, and no finding had to
+    // exist in the tree to trigger it. A scanner one crafted comment can hang
+    // is a denial of service on every CI job that runs it.
+    const time = (n) => {
+      const src = '// cryptoserve-ignore misuse/create-cipher -- r' + ' '.repeat(n) + 'x';
+      const t = process.hrtime.bigint();
+      parseWaiverPragmas(src, 'javascript');
+      return Number(process.hrtime.bigint() - t) / 1e6;
+    };
+    time(4000);
+    assert.ok(time(4000) < 200, `4KB of trailing whitespace took ${time(4000).toFixed(0)}ms`);
+    assert.ok(time(16000) < 200, `16KB of trailing whitespace took ${time(16000).toFixed(0)}ms`);
+  });
+
   it('ignores prose that merely mentions the marker', () => {
     // Found by running the scanner over its own source: every comment in this
     // repository that DESCRIBES the pragma was being parsed as one, and each
@@ -190,6 +245,16 @@ describe('parseWaiverPragmas', () => {
     assert.equal(waivers[0].reason, 'see RFC 5280 -- section 6');
   });
 
+  it('does not leave a CR in the rule id of a CRLF pragma', () => {
+    // A reason-less pragma on a CRLF line must still report as needing a reason
+    // rather than as naming a rule that does not exist, which is what a stray
+    // CR inside the rule id would produce.
+    const { malformed, waivers } = parse('// cryptoserve-ignore misuse/create-cipher\r\n');
+    assert.deepEqual(waivers, []);
+    assert.equal(malformed.length, 1, JSON.stringify(malformed));
+    assert.match(malformed[0].issue, /needs a reason/);
+  });
+
   it('handles CRLF line endings', () => {
     const { waivers } = parse('// cryptoserve-ignore misuse/create-cipher -- why\r\ncode;\r\n');
     assert.equal(waivers.length, 1);
@@ -251,7 +316,7 @@ describe('findWaiver', () => {
 describe('waiverWarnings', () => {
   it('reports a rule id no rule uses', () => {
     const waivers = [{ rule: 'misuse/typo', reason: 'why', line: 3, used: false }];
-    const warnings = waiverWarnings(waivers, [], KNOWN, 'app.js');
+    const warnings = waiverWarnings(waivers, [], [], KNOWN, 'app.js');
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0].kind, 'unknown-rule');
     assert.equal(warnings[0].file, 'app.js');
@@ -262,24 +327,38 @@ describe('waiverWarnings', () => {
     // Two warnings for one typo reads as two problems. The rule not existing is
     // the reason it covered nothing, so it is one finding.
     const waivers = [{ rule: 'misuse/typo', reason: 'why', line: 3, used: false }];
-    const warnings = waiverWarnings(waivers, [], KNOWN, 'app.js');
+    const warnings = waiverWarnings(waivers, [], [], KNOWN, 'app.js');
     assert.equal(warnings.filter(w => w.kind === 'unused').length, 0);
   });
 
   it('reports a known rule that covered nothing', () => {
     const waivers = [{ rule: 'misuse/create-cipher', reason: 'why', line: 3, used: false }];
-    const warnings = waiverWarnings(waivers, [], KNOWN, 'app.js');
+    const warnings = waiverWarnings(waivers, [], [], KNOWN, 'app.js');
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0].kind, 'unused');
   });
 
+  it('reports a refused pragma only when it names a real rule', () => {
+    // A doc example writing `<rule-id>` is documentation and must stay silent,
+    // or every comment in this repository that describes the feature becomes a
+    // warning on every scan. A refusal naming a REAL rule is somebody's waiver
+    // quietly doing nothing, which they need told. Found by mutation testing.
+    const refused = (rule) => [{ line: 3, rule, text: '// ...' }];
+    assert.deepEqual(waiverWarnings([], [], refused('<rule-id>'), KNOWN, 'app.js'), []);
+
+    const warnings = waiverWarnings([], [], refused('misuse/create-cipher'), KNOWN, 'app.js');
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].kind, 'not-honoured');
+    assert.match(warnings[0].detail, /first thing in its comment/);
+  });
+
   it('says nothing about a waiver that did its job', () => {
     const waivers = [{ rule: 'misuse/create-cipher', reason: 'why', line: 3, used: true }];
-    assert.deepEqual(waiverWarnings(waivers, [], KNOWN, 'app.js'), []);
+    assert.deepEqual(waiverWarnings(waivers, [], [], KNOWN, 'app.js'), []);
   });
 
   it('passes malformed pragmas through with the file they came from', () => {
-    const warnings = waiverWarnings([], [{ line: 2, text: '// cryptoserve-ignore x', issue: 'needs a reason' }], KNOWN, 'app.js');
+    const warnings = waiverWarnings([], [{ line: 2, text: '// cryptoserve-ignore x', issue: 'needs a reason' }], [], KNOWN, 'app.js');
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0].kind, 'malformed');
     assert.equal(warnings[0].file, 'app.js');

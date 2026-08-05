@@ -1007,3 +1007,116 @@ describe('gate reports what a waiver cleared', () => {
     assert.equal(JSON.parse(output).waiverWarnings[0].kind, 'malformed');
   });
 });
+
+/**
+ * The TEXT renderings, which the JSON and SARIF tests above do not cover.
+ *
+ * Mutation testing found that deleting the whole waiver section from `scan`'s
+ * and `gate`'s text output killed no test at all: the surfaces this change
+ * exists to produce were the ones nothing checked.
+ */
+describe('waivers are visible in the text output', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  const IGNORE = 'cryptoserve' + '-ignore';
+  const RULE = 'misuse/node-tls-reject-unauthorized';
+  const DEFECT = "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n";
+  const CLI_DIR = join(__dirname, '..');
+
+  const runScan = (args = '') => {
+    try {
+      return execSync(`${process.execPath} ${join(CLI_DIR, 'bin', 'cryptoserve.mjs')} scan ${TEST_DIR} ${args}`,
+        { encoding: 'utf-8', timeout: 30000 });
+    } catch (e) { return e.stdout || ''; }
+  };
+
+  const write = (body) => {
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'app.js'), body);
+  };
+
+  it('gate names the rule, the location and the reason it was waived', () => {
+    write(`// ${IGNORE} ${RULE} -- the harness uses a self-signed cert\n${DEFECT}`);
+    const { output } = runGate();
+    assert.match(output, /waived by a cryptoserve-ignore pragma/);
+    assert.match(output, /app\.js:2/);
+    assert.match(output, new RegExp(RULE));
+    assert.match(output, /self-signed cert/);
+  });
+
+  it('scan lists the waived finding and counts it in the summary', () => {
+    write(`// ${IGNORE} ${RULE} -- the harness uses a self-signed cert\n${DEFECT}`);
+    const output = runScan();
+    assert.match(output, /Waived Findings/);
+    assert.match(output, new RegExp(RULE));
+    assert.match(output, /self-signed cert/);
+    assert.match(output, /Waived\s+.*1/);
+  });
+
+  it('scan says nothing about waivers on a tree that has none', () => {
+    // The other direction: a clean tree must not grow a section telling the
+    // reader that nothing was suppressed.
+    write(DEFECT);
+    const output = runScan();
+    assert.ok(!/Waived Findings/.test(output), output);
+    assert.ok(!/Waiver Problems/.test(output), output);
+  });
+
+  it('both commands report a pragma that is not being honoured', () => {
+    // Silent refusal is the failure: a user watching a critical they just
+    // waived stay red has nothing to go on.
+    write(`const u = "http://x"; // ${IGNORE} ${RULE} -- why\n${DEFECT}`);
+    const gate = runGate().output;
+    assert.match(gate, /not-honoured/);
+    assert.match(gate, /first thing in its comment/);
+    assert.match(runScan(), /not-honoured/);
+  });
+});
+
+/**
+ * A finding a user believes is wrong needs a next step. For a misuse that step
+ * is the pragma, so the rule id has to be reachable from the failing output.
+ * It was carried only by `scan --format json`, which meant the remediation path
+ * for a false positive was a dead end everywhere a user would actually look.
+ */
+describe('a live misuse finding names the rule you would waive', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  const write = () => {
+    writeFileSync(join(TEST_DIR, 'package.json'), '{}');
+    writeFileSync(join(TEST_DIR, 'app.js'), "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n");
+  };
+
+  it('prints the rule id and the pragma to write, in the gate text', () => {
+    write();
+    const { output, exitCode } = runGate();
+    assert.equal(exitCode, 1);
+    assert.match(output, /misuse\/node-tls-reject-unauthorized/);
+    assert.match(output, /waive with: cryptoserve-ignore/);
+  });
+
+  it('carries the rule id in the gate JSON', () => {
+    write();
+    const doc = JSON.parse(runGate('--format json').output);
+    const misuse = doc.violations.filter(v => v.type === 'misuse');
+    assert.equal(misuse.length, 1, JSON.stringify(doc.violations));
+    assert.equal(misuse[0].rule, 'misuse/node-tls-reject-unauthorized');
+  });
+
+  it('round-trips: the id the gate prints is the id that waives it', () => {
+    // The property that matters. A rule id a user copies out of the output and
+    // pastes into a pragma has to be the one the parser matches, or the whole
+    // remediation path is decoration.
+    write();
+    const doc = JSON.parse(runGate('--format json').output);
+    const rule = doc.violations.find(v => v.type === 'misuse').rule;
+
+    const IGNORE = 'cryptoserve' + '-ignore';
+    writeFileSync(join(TEST_DIR, 'app.js'),
+      `// ${IGNORE} ${rule} -- copied from the gate output\n`
+      + "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n");
+    assert.equal(runGate().exitCode, 0);
+  });
+});
