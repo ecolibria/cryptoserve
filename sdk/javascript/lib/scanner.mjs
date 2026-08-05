@@ -60,6 +60,89 @@ const MISUSE_PATTERNS = [
     severity: 'critical',
     fix: 'Remove the override and trust the system CA store',
   },
+  // `gate --help` promises to fail on "critical API misuse such as a disabled
+  // TLS certificate check", and the entry above was the only spelling of that
+  // it knew. A tree turning verification off in JavaScript and in Python scored
+  // 100/100 and exited 0 (#66). Each defect is listed in both languages,
+  // because a project that disables a check in one of them is not safer than
+  // one that disables it in the other.
+  //
+  // Separate entries rather than one alternation on purpose: the loop that
+  // applies these runs `exec` ONCE per pattern per file, so folding them
+  // together would report whichever spelling appeared first and hide the rest
+  // of the file.
+  {
+    // Anchored on an ASSIGNMENT, not on the bare name. Matching the name alone
+    // flagged every mention of it -- including this rule's own `issue:` string
+    // one screen up, so `gate` reported a critical finding against the
+    // definition of the check. A security tool that fails its own source
+    // teaches people to ignore it.
+    //
+    // Scoped to `process.env`, and deliberately NOT widened beyond it.
+    //
+    // Widening this to any receiver (`\w\s*\.\s*NAME = 0`) plus an object
+    // property (`NAME: 0`) does catch five more real spellings -- destructured
+    // `env`, an aliased `process.env`, `Bun.env`, a spread into a spawn env,
+    // and `Object.assign`. Measured, it also flags all of these, none of which
+    // is a defect:
+    //
+    //     // Never write NODE_TLS_REJECT_UNAUTHORIZED: 0 anywhere.
+    //     module.exports = { rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } };
+    //     const SEVERITY = { NODE_TLS_REJECT_UNAUTHORIZED: 0, OTHER: 2 };
+    //     counts.NODE_TLS_REJECT_UNAUTHORIZED = 0;
+    //     this.NODE_TLS_REJECT_UNAUTHORIZED = 0;
+    //
+    // 8/8 detected against 6/6 false positives, versus 3/8 against 1/6 here.
+    // These are `critical` findings and the CLI has no per-finding waiver, so a
+    // false one cannot be cleared short of excluding a whole directory. For a
+    // security tool an unwaivable false critical costs more than a missed
+    // spelling that no released version ever detected, so this stays narrow
+    // until the structural work lands: strip comments before matching, and add
+    // a waiver. Tracked in `todo/roadmap/gate-tls-verification-spellings.md`.
+    //
+    // The value ends with `(?![\w.])`. Without it a bare `0` with optional
+    // quotes prefix-matches longer values: `= 0.5`, `= 0x1` and `= '00'` all
+    // reported the disabling literal, and none of them is it.
+    languages: ['javascript'],
+    pattern: /process\s*\.\s*env\s*(?:\.\s*NODE_TLS_REJECT_UNAUTHORIZED|\[\s*['"`]NODE_TLS_REJECT_UNAUTHORIZED['"`]\s*\])\s*(?:\|\|)?=\s*['"`]?0['"`]?(?![\w.])/g,
+    issue: 'TLS certificate verification disabled process-wide (NODE_TLS env override set to 0)',
+    severity: 'critical',
+    fix: 'Remove the assignment; pass a CA with the `ca` option if the certificate is private',
+  },
+  {
+    languages: ['python'],
+    pattern: /(?:verify_mode|cert_reqs)\s*=\s*ssl\.CERT_NONE/g,
+    issue: 'TLS certificate verification disabled (ssl.CERT_NONE)',
+    severity: 'critical',
+    fix: 'Use ssl.CERT_REQUIRED, or ssl.create_default_context() which sets it',
+  },
+  {
+    // Both spellings. Assigning it to `_create_default_https_context` is the
+    // canonical process-wide Python bypass and never calls the function here,
+    // so requiring the opening parenthesis missed exactly the worst form.
+    languages: ['python'],
+    pattern: /ssl\._create_unverified_context\s*\(|_create_default_https_context\s*=\s*ssl\._create_unverified_context/g,
+    issue: 'TLS certificate verification disabled (ssl._create_unverified_context)',
+    severity: 'critical',
+    fix: 'Use ssl.create_default_context()',
+  },
+  {
+    languages: ['python'],
+    pattern: /check_hostname\s*=\s*False/g,
+    issue: 'TLS hostname verification disabled (check_hostname = False)',
+    severity: 'critical',
+    fix: 'Leave check_hostname True; a certificate for another host is not a certificate for yours',
+  },
+  {
+    // The JavaScript spelling of the same defect: an override that returns
+    // nothing accepts every certificate for every host. A real implementation
+    // calls back into `tls.checkServerIdentity`, so only the empty bodies match.
+    languages: ['javascript'],
+    pattern: /checkServerIdentity\s*:\s*(?:function\s*)?\([^)]*\)\s*(?:=>\s*)?(?:undefined\b|null\b|true\b|\{\s*\}|\{\s*return\s*(?:undefined|null|true)?\s*;?\s*\})/g,
+    issue: 'TLS hostname verification disabled (checkServerIdentity overridden with a no-op)',
+    severity: 'critical',
+    fix: 'Remove the override, or return tls.checkServerIdentity(host, cert)',
+  },
 ];
 
 /**
@@ -100,6 +183,65 @@ export function exceedsSeverity(severity, threshold) {
   const idx = SEVERITY_ORDER.indexOf(severity);
   if (idx === -1) return true;
   return idx > SEVERITY_ORDER.indexOf(threshold);
+}
+
+// ---------------------------------------------------------------------------
+// Which languages a library can own a call site in
+// ---------------------------------------------------------------------------
+
+/**
+ * The source languages each manifest ecosystem can produce call sites in.
+ *
+ * A library must not be named as the source of a call it cannot have made.
+ * `crypto-js` declares MD5, so a Python `hashlib.md5()` was reported with
+ * `source: crypto-js@3.1.9` (#67): every consumer paired libraries with sites on
+ * the algorithm NAME alone and dropped the language the scanner had recorded.
+ *
+ * `source` libraries have no ecosystem to derive this from, so they carry the
+ * languages of the files their import was actually read in -- see the
+ * `languages` field `scanProject` records.
+ *
+ * No manifest ecosystem produces C, and that gap is load-bearing rather than an
+ * omission: a `#include <openssl/md5.h>` site has no owning library at all, so
+ * it depends on the synthetic owner `toOwnershipInventory` mints for it.
+ * Narrowing the claim without that fallback would delete the violation instead
+ * of re-attributing it.
+ */
+export const ECOSYSTEM_LANGUAGES = Object.freeze({
+  npm: Object.freeze(['javascript']),
+  go: Object.freeze(['go']),
+  pypi: Object.freeze(['python']),
+  cargo: Object.freeze(['rust']),
+  maven: Object.freeze(['java']),
+  source: Object.freeze([]), // recorded per library, from the files the import was seen in
+});
+
+/**
+ * The languages a library can own a call site in.
+ *
+ * Returns a COPY. Handing out the table's own array made an exported constant
+ * writable through any inventory entry that derived from it -- one
+ * `entry.languages.push(...)` would have rewritten `ECOSYSTEM_LANGUAGES.npm`
+ * process-wide, for every library and both inventories at once. Nothing mutates
+ * it today; the frozen table and the copy mean nothing can start to.
+ */
+export function libraryLanguages(lib) {
+  if (!lib) return [];
+  if (Array.isArray(lib.languages)) return [...lib.languages];
+  return [...(ECOSYSTEM_LANGUAGES[lib.ecosystem] || [])];
+}
+
+/**
+ * One predicate, because three consumers ask this question and disagreeing
+ * answers are what the fail-open is made of: the gate pairing libraries with
+ * sites, the inventory deciding whether a site already has an owner, and the
+ * CBOM deciding whether an algorithm is standalone. If the gate stops letting a
+ * library claim a site but the inventory still counts it as claimed, the site
+ * loses its only claimant and the violation disappears.
+ */
+export function libraryCoversLanguage(lib, language) {
+  if (!language) return false;
+  return libraryLanguages(lib).includes(language);
 }
 
 // Modes that are not weak on their own but carry a caveat worth surfacing.
@@ -305,7 +447,10 @@ export function scanProject(projectDir, options = {}) {
   });
   results.filesWalked = walked.totalFiles;
   const seenSourceAlgos = new Set();
-  const sourceLibraries = new Map(); // library name -> algorithm set
+  // library name -> { algorithms: Set, languages: Set }. Keyed by name across
+  // the whole tree, so the languages are a set: `openssl` read from a .c file
+  // and a .py file is one entry that owns sites in both.
+  const sourceLibraries = new Map();
 
   // Cert files from walker. A public certificate and the private key that
   // signs it were reported in one undifferentiated list, so a committed
@@ -404,12 +549,20 @@ export function scanProject(projectDir, options = {}) {
     // exactly one crypto library. With two or more, which call belongs to which
     // import is not decidable without dataflow analysis, and a guess here would
     // print a wrong algorithm list next to a real package name.
+    //
+    // The LANGUAGE is recorded for every import, not only the unambiguous ones.
+    // Which algorithm belongs to which of two imports is undecidable here, but
+    // which language the file is written in is not, and it is what stops a
+    // library from being named as the source of a call in another language.
     for (const imp of langResult.imports) {
-      if (!sourceLibraries.has(imp.library)) sourceLibraries.set(imp.library, new Set());
+      if (!sourceLibraries.has(imp.library)) {
+        sourceLibraries.set(imp.library, { algorithms: new Set(), languages: new Set() });
+      }
+      sourceLibraries.get(imp.library).languages.add(language);
     }
     if (langResult.imports.length === 1) {
       const only = sourceLibraries.get(langResult.imports[0].library);
-      for (const algo of langResult.algorithms) only.add(algo.algorithm);
+      for (const algo of langResult.algorithms) only.algorithms.add(algo.algorithm);
     }
 
     // Keys generated below the current minimum size.
@@ -482,9 +635,9 @@ export function scanProject(projectDir, options = {}) {
   // Source-detected libraries (node:crypto, hashlib, openssl, ...) become
   // inventory entries carrying the algorithms actually observed in that file
   // set, rather than a hardcoded guess derived from which helper was imported.
-  for (const [name, algoSet] of sourceLibraries) {
+  for (const [name, seen] of sourceLibraries) {
     if (seenPkgs.has(name)) continue; // already inventoried from a manifest
-    const algorithms = [...algoSet];
+    const algorithms = [...seen.algorithms];
     const risks = algorithms.map(a => lookupAlgorithm(a)?.quantumRisk).filter(Boolean);
     const quantumRisk = risks.includes('critical') ? 'critical'
       : risks.includes('high') ? 'high'
@@ -502,6 +655,10 @@ export function scanProject(projectDir, options = {}) {
       category: hasAsymmetric ? 'asymmetric' : 'symmetric',
       source: 'source-code',
       ecosystem: 'source',
+      // A source library has no ecosystem to derive its languages from, so it
+      // carries the ones it was actually read in. Without this every consumer
+      // has to fall back to matching on the algorithm name alone.
+      languages: [...seen.languages],
     });
   }
 
@@ -521,14 +678,18 @@ export function scanProject(projectDir, options = {}) {
 // Format results as library inventory (for PQC engine input)
 // ---------------------------------------------------------------------------
 
-export function toLibraryInventory(scanResults) {
-  const inventory = scanResults.libraries.map(lib => {
+function inventoryEntries(scanResults) {
+  return scanResults.libraries.map(lib => {
     const entry = {
       name: lib.name,
       version: lib.version,
       algorithms: lib.algorithms,
       quantumRisk: lib.quantumRisk,
       category: lib.category,
+      // Carried through because ownership is decided from the INVENTORY, and
+      // `ecosystem` does not survive this mapping. Without it there is nothing
+      // to decide ownership on but the algorithm name.
+      languages: libraryLanguages(lib),
       isDeprecated: lib.isDeprecated || false,
     };
     // Enrich with algorithm-db data
@@ -540,23 +701,103 @@ export function toLibraryInventory(scanResults) {
     }
     return entry;
   });
+}
 
-  // Also add source-detected algorithms as synthetic library entries
+/**
+ * The CENSUS: what cryptography this project contains. Feeds `analyzeOffline`,
+ * and through it every score.
+ *
+ * A source algorithm gets a synthetic entry only when NO library lists that
+ * name, in any language. That is deliberately a weaker test than the ownership
+ * one below, and the two must not be merged: this list decides SCORES, and
+ * `calculateQuantumScore` counts ROWS -- `deprecatedCount * 10`, uncapped --
+ * while `classifyAlgorithms` deduplicates by algorithm name. So one row per
+ * language for the same algorithm moves the score without changing the set of
+ * algorithms present, in both directions:
+ *
+ *   - down: `md5` used from Python and C costs 20 points rather than 10, and a
+ *     tree with four such pairs saturates at 0, where the score stops
+ *     discriminating at all.
+ *   - UP: a library declaring `AES-GCM` beside a Python `aes-gcm` site adds a
+ *     second SAFE classification (the two spellings differ, and that dedup is
+ *     case-sensitive), raising `safe / total`. A gate at `--min-score 30` on
+ *     such a tree went 25/100 FAIL to 40/100 PASS -- a security gate turning
+ *     green because attribution got more precise.
+ *
+ * Neither is a real change in exposure. Measured on this repository:
+ * `classifyAlgorithms` returns the same 56 entries either way. So the census
+ * keeps the name-only rule it has always had, and ownership is answered
+ * separately, by the function below.
+ */
+export function toLibraryInventory(scanResults) {
+  const inventory = inventoryEntries(scanResults);
+
   for (const algo of (scanResults.sourceAlgorithms || [])) {
     const alreadyInLib = inventory.some(lib =>
       lib.algorithms.some(a => a.toLowerCase() === algo.algorithm.toLowerCase())
     );
     if (!alreadyInLib) {
-      inventory.push({
-        name: `${algo.language}:${algo.algorithm}`,
-        version: 'source-code',
-        algorithms: [algo.algorithm],
-        quantumRisk: algo.quantumRisk || 'unknown',
-        category: algo.category,
-        isDeprecated: algo.isWeak || false,
-      });
+      inventory.push(syntheticOwner(algo));
     }
   }
 
   return inventory;
+}
+
+/**
+ * OWNERSHIP: which library each call site belongs to. Feeds the gate's
+ * violations, and nothing that is scored.
+ *
+ * Here the suppression is language-aware, which is the #67 fix: `crypto-js` is
+ * npm and declares MD5, so it does not own a Python `hashlib.md5()` or an `md5`
+ * in a `.c` file. Where no same-language library claims a site, a synthetic
+ * owner is minted for it.
+ *
+ * That synthetic owner is the fail-open guard for the whole change. Refusing a
+ * foreign library's claim without it leaves a site with no claimant, and what
+ * happens next depends on the algorithm:
+ *
+ *   - a WEAK one is still caught by the weakPatterns sweep at the end of the
+ *     gate, but as a `type: 'misuse'` row whose `source` is the FILE and whose
+ *     `algorithm` is the issue prose. The violation survives; the attribution
+ *     does not.
+ *   - one that is only QUANTUM-risky has no weakPattern to fall back on, so it
+ *     disappears entirely. The example has to use a call whose header is NOT a
+ *     recognised include: `#include <openssl/rsa.h>` mints an `openssl` source
+ *     library that owns the site, so it demonstrates nothing. `openssl/md5.h`
+ *     and `openssl/sha.h` are the unrecognised ones.
+ *
+ * Measured twice, and wrong twice before this wording. The first version
+ * claimed the synthetic owner is what keeps `md5@hash.c` a violation at all;
+ * mutating the gate to iterate the census showed the sweep still reports it.
+ * The second claimed the sweep's row carries no risk and no CWE; it carries
+ * both, from `lookupAlgorithm`. What actually distinguishes the two is `source`
+ * and the row type, which is what the regression test pins.
+ */
+export function toOwnershipInventory(scanResults) {
+  const inventory = inventoryEntries(scanResults);
+
+  for (const algo of (scanResults.sourceAlgorithms || [])) {
+    const claimed = inventory.some(lib =>
+      libraryCoversLanguage(lib, algo.language)
+      && lib.algorithms.some(a => a.toLowerCase() === algo.algorithm.toLowerCase())
+    );
+    if (!claimed) {
+      inventory.push(syntheticOwner(algo));
+    }
+  }
+
+  return inventory;
+}
+
+function syntheticOwner(algo) {
+  return {
+    name: `${algo.language}:${algo.algorithm}`,
+    version: 'source-code',
+    algorithms: [algo.algorithm],
+    languages: algo.language ? [algo.language] : [],
+    quantumRisk: algo.quantumRisk || 'unknown',
+    category: algo.category,
+    isDeprecated: algo.isWeak || false,
+  };
 }

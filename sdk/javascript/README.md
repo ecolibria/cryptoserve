@@ -67,7 +67,12 @@ cryptoserve scan . --binary          # Include binary crypto detection
 
 ### Additional Detection
 
-- **TLS/SSL versions**: nginx, Apache, Node.js, Go, Java configs
+- **TLS/SSL versions**: nginx and Apache configs, Dockerfiles, and source: Node.js
+  (`minVersion`, `secureProtocol`), Python (`ssl.PROTOCOL_*`), Go (`tls.Config`) and
+  Java (`SSLContext`). A deprecated protocol is rated the same wherever it is written.
+- **Disabled TLS verification**: `rejectUnauthorized: false`,
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`, a no-op `checkServerIdentity`, `ssl.CERT_NONE`,
+  `check_hostname = False`, `ssl._create_unverified_context`, Go `InsecureSkipVerify`
 - **Binary signatures**: AES S-box, DES tables, SHA constants, ChaCha20 sigma (with `--binary`)
 - **80+ algorithms** classified by quantum risk, weakness, and category
 - **Hardcoded secrets**: AWS, OpenAI, Anthropic, GitHub, Stripe, and more

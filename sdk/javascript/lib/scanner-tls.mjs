@@ -79,6 +79,53 @@ const PATTERNS = [
       return [{ protocol, context: 'Go tls.Config MinVersion' }];
     },
   },
+  // Python: ssl.PROTOCOL_* constants.
+  //
+  // The same defect was critical in `nginx.conf` and invisible in `app.py`
+  // (#66). It goes through this table rather than becoming a second,
+  // differently-rated finding, so one defect keeps one severity whatever file
+  // type it is written in.
+  //
+  // The trailing `\b` is what makes this correct, not the order of the
+  // alternatives -- measured both ways. `_` is a word character, so `TLSv1`
+  // inside `PROTOCOL_TLSv1_2` has no boundary after it and the engine
+  // backtracks to the longer alternative whichever order they are written in.
+  // Drop the `\b` and `PROTOCOL_TLSv1_2` reads as TLSv1, which rates current
+  // practice critical, and `PROTOCOL_SSLv23` -- which means "negotiate the best
+  // available" despite its name -- reads as SSLv2.
+  {
+    extensions: ['.py'],
+    regex: /\bssl\.PROTOCOL_(SSLv2|SSLv3|TLSv1_2|TLSv1_1|TLSv1)\b/g,
+    extract: (match) => {
+      const versionMap = {
+        'SSLv2': 'SSLv2',
+        'SSLv3': 'SSLv3',
+        'TLSv1': 'TLSv1',
+        'TLSv1_1': 'TLSv1.1',
+        'TLSv1_2': 'TLSv1.2',
+      };
+      return [{ protocol: versionMap[match[1]], context: 'Python ssl.PROTOCOL_*' }];
+    },
+  },
+  // Node.js: secureProtocol pins one version, where minVersion sets a floor.
+  //
+  // Extensions match `LANGUAGE_PATTERNS.javascript` exactly. Listing a subset
+  // made the two new surfaces disagree about what a JavaScript file is: a
+  // `.tsx` file got the misuse findings but not this one.
+  {
+    extensions: ['.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx'],
+    regex: /secureProtocol\s*:\s*['"`](SSLv2|SSLv3|TLSv1_2|TLSv1_1|TLSv1)_method['"`]/g,
+    extract: (match) => {
+      const versionMap = {
+        'SSLv2': 'SSLv2',
+        'SSLv3': 'SSLv3',
+        'TLSv1': 'TLSv1',
+        'TLSv1_1': 'TLSv1.1',
+        'TLSv1_2': 'TLSv1.2',
+      };
+      return [{ protocol: versionMap[match[1]], context: 'Node.js secureProtocol' }];
+    },
+  },
   // Java: SSLContext.getInstance
   {
     extensions: ['.java', '.kt', '.scala'],

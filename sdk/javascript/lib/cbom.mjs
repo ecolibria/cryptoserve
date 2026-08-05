@@ -13,6 +13,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { VERSION } from './version.mjs';
+import { libraryCoversLanguage } from './scanner.mjs';
 
 // ---------------------------------------------------------------------------
 // Package URL generation
@@ -88,10 +89,28 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
     });
   }
 
-  // Add standalone algorithms detected in source code (not tied to a library)
-  const libAlgos = new Set(components.flatMap(c => c.algorithms));
+  // Add standalone algorithms detected in source code (not tied to a library).
+  //
+  // "Tied to a library" means a library OF THAT LANGUAGE declares it. The same
+  // name-only match that misattributed a Python `hashlib.md5()` to `crypto-js`
+  // in the gate (#67) is here too: an `md5` in a .c file was dropped from the
+  // CBOM because some npm package in the same tree happened to list MD5. The
+  // LANGUAGE half of the question is answered by the predicate the scanner
+  // exports, so that half cannot drift.
+  //
+  // The NAME half still can, and does. This comparison is case-sensitive while
+  // the inventory's is not, so `crypto-js` declaring `MD5` beside a JavaScript
+  // `md5` site suppresses the synthetic inventory entry but still emits a
+  // standalone CBOM component. That disagreement is pre-existing. It is left
+  // alone here because aligning it means REMOVING components, and an
+  // attribution fix should not quietly shrink a bill of materials; the
+  // direction wants deciding on its own. Tracked in
+  // `todo/roadmap/gate-algorithm-site-attribution.md`.
   for (const algo of (scanResults.sourceAlgorithms || [])) {
-    if (!libAlgos.has(algo.algorithm)) {
+    const ownedByLibrary = (scanResults.libraries || []).some(lib =>
+      libraryCoversLanguage(lib, algo.language) && (lib.algorithms || []).includes(algo.algorithm)
+    );
+    if (!ownedByLibrary) {
       components.push({
         bomRef: randomUUID(),
         type: 'algorithm',

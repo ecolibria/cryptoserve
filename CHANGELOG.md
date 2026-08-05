@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+`gate` now fails a tree that disables TLS certificate verification
+([#66](https://github.com/ecolibria/cryptoserve/issues/66)).
+
+`gate --help` promises it fails on "critical API misuse such as a disabled TLS
+certificate check". It knew one spelling of that, `rejectUnauthorized: false`,
+so a project turning verification off in JavaScript AND in Python scored 100/100
+and exited 0. `scan` was equally blind, so the two commands agreed with each
+other and were both wrong. Reproduced on released 0.5.0 as well: pre-existing,
+not a regression.
+
+Now reported, each in both languages:
+
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` and a no-op `checkServerIdentity`
+- `ssl.CERT_NONE` (as `verify_mode=` and `cert_reqs=`), `check_hostname = False`
+  and `ssl._create_unverified_context()`
+- `ssl.PROTOCOL_TLSv1` and `secureProtocol: 'TLSv1_method'`, which go through
+  the same TLS version table `nginx.conf` uses. A deprecated protocol was
+  critical in a config file and invisible in source; one defect keeps one
+  severity whatever file type it is written in.
+
+Restoring verification passes the same tree, and each spelling on its own fails
+the gate at DEFAULT thresholds. A finding `scan` prints that `gate` cannot
+reach at its default settings is the defect this release already fixed once for
+medium severity.
+
+A library is no longer named as the source of a call it cannot have made
+([#67](https://github.com/ecolibria/cryptoserve/issues/67)).
+
+`gate` indexed call sites on the algorithm NAME alone and dropped the language
+the scanner had recorded, then paired every inventory library with every site of
+any algorithm it declares. `crypto-js` declares MD5, so a Python
+`hashlib.md5()` was reported with `source: crypto-js@3.1.9`. Manifest libraries
+are inventoried before source ones, so the wrong owner won the first-writer
+race every time; SHA-1 stayed correct only because `crypto-js` does not declare
+it. A library now claims a site only in a language its ecosystem produces, and
+`source` libraries carry the languages the import was actually read in.
+
+The same name-only match was in the CBOM, which dropped an `md5` read from a
+`.c` file out of the bill of materials because an npm package elsewhere in the
+tree listed MD5. Both now use one shared language predicate.
+
+Ownership is now answered by its own list, separate from the inventory that
+feeds scoring. A site no same-language library claims gets a synthetic owner,
+without which barring a foreign claim would leave a `#include <openssl/md5.h>`
+site with no claimant at all, since a C include produces no library entry in
+any ecosystem. Keeping that list separate is what makes this change score-neutral:
+
+**No score changes.** `quantumReadinessScore` is byte-identical to 0.6.0 on
+every tree measured, including mixed-language ones. That is deliberate and is
+regression-tested. `calculateQuantumScore` counts inventory ROWS
+(`deprecatedCount * 10`, uncapped) while `classifyAlgorithms` deduplicates by
+algorithm name, so one row per language for the same algorithm moves the score
+without the set of algorithms present having changed. It moves it in both
+directions, and the upward one is the dangerous one: a tree with `jose`
+(declaring `AES-GCM`) and a Python `aes-gcm` site went from 25/100 FAIL to
+40/100 PASS at `--min-score 30`, because the second spelling added a SAFE
+classification. A security gate must not turn green because attribution got
+more precise. The row-counting itself is a pre-existing property of the scoring
+model and is unchanged here.
+
+A dependency violation also no longer borrows its remediation from an unrelated
+file. `MD5 crypto-js@3.1.9` at `package.json` said "Replace with SHA-256", a fix
+written for a call site in another language, which a reader has no line of
+`package.json` to apply. It now says what the other dependency-only violations
+say.
+
+### Known limitations
+
+The disabled-verification patterns match code, not prose, but they cannot tell
+code from a test fixture that contains code. A repository whose own sources
+carry these strings (a linter, a security guide, this scanner's test suite)
+will see critical findings on those files, and there is no per-finding waiver:
+`--max-severity` only tightens and refuses `high`/`critical` by name,
+`--allow-secrets` does not reach misuse, and `.cryptoserve.json` offers only
+`skipDirs`. This is not new (`createCipher` and `rejectUnauthorized: false`
+behave the same way today) but there are now more patterns that can hit it.
+
+These spellings are not yet detected, and each has a test asserting it is not,
+so if one starts being detected, this list is what fails:
+
+- `NODE_TLS_REJECT_UNAUTHORIZED` set through anything other than `process.env`
+  directly: a destructured `const { env } = process`, an aliased
+  `const e = process.env`, `Bun.env`, a spread into a child process's env, or
+  `Object.assign(process.env, …)`. Also `??=` and `Deno.env.set(…)`. The rule is
+  scoped to `process.env` on purpose. Widening it to any receiver does catch all
+  of these, and also flags `{ rules: { NODE_TLS_REJECT_UNAUTHORIZED: 0 } }`, a
+  severity map, an unrelated counter, a class field, and a comment naming the
+  variable. Measured: 8/8 detected against 6/6 false positives, versus 3/8
+  against 1/6 as shipped. These findings are `critical` and there is no
+  per-finding waiver, so a false one cannot be cleared short of excluding a
+  directory. Widening waits on comment-stripping and a waiver mechanism.
+- `from ssl import CERT_NONE` and `from ssl import PROTOCOL_TLSv1`: unqualified
+  after a `from` import; both rules require the `ssl.` qualifier.
+- The method-shorthand, `async`, quoted-key and commented-body forms of a no-op
+  `checkServerIdentity`.
+
 ## [CLI 0.6.0] - 2026-08-03
 
 A minor rather than a patch because the shape of a `gate` violation changed. A
