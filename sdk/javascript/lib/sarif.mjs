@@ -124,7 +124,15 @@ export function collectFindings(scanResults) {
     });
   }
 
-  findings.push(...waivedToFindings(scanResults.waivedFindings));
+  // Appended one at a time rather than spread, for the reason the waiver-warning
+  // site in `scanner.mjs` already gives: `push(...arr)` passes every element as
+  // a separate argument and throws RangeError past the argument limit. That was
+  // safe here before waivers existed, because the misuse loop reported at most
+  // one finding per pattern per file. It now keeps reading past a waived match,
+  // so this array is unbounded per file: four ~1MB files, each UNDER the default
+  // maxFileSize, took `scan --format sarif` to "Maximum call stack size
+  // exceeded" and wrote no output file at all.
+  for (const w of waivedToFindings(scanResults.waivedFindings)) findings.push(w);
 
   return findings;
 }

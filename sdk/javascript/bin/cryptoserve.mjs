@@ -1620,7 +1620,11 @@ async function cmdGate(args) {
       // tree from a waived one. They are appended as SUPPRESSED results: code
       // scanning renders them as dismissed alerts, so the build stays green and
       // the suppression is still on the record.
-      findings.push(...waivedToFindings(scanResults.waivedFindings));
+      // One at a time, not spread: `waivedFindings` is unbounded per file now
+      // that the misuse loop reads past a waived match, and `push(...arr)`
+      // throws RangeError past the argument limit. Measured on four ~1MB files
+      // under the default maxFileSize.
+      for (const w of waivedToFindings(scanResults.waivedFindings)) findings.push(w);
       // A gate that failed on the score alone has no violation to report, and
       // reporting nothing is how this defect looked from the outside: red
       // build, empty document. The score is a property of the project, so it is

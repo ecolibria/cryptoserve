@@ -372,6 +372,38 @@ describe('parseWaiverPragmas', () => {
       'the quote-adjacency limitation changed; update the docs with it');
   });
 
+  it('records that a language with no block comments is not exempt either', () => {
+    // The module claimed the opposite, and this is the third distinct shape to
+    // falsify a version of that claim. Gating the continuation branch fixed the
+    // `*` spelling in Python and was written up as "in a language with no block
+    // comments, contained data cannot operate the control AT ALL". It cannot:
+    // the FIRST-OPENER scan reaches Python too, and `#` is an opener there, so
+    // any string containing one followed by the marker is read as a pragma.
+    //
+    // The quote-adjacency guard does not help. It reads exactly one character
+    // before the opener, and in the shape below that character is `p`, not a
+    // quote. Found by adversarial review of the fix for the `*` spelling.
+    //
+    // Pinned, not fixed. Refusing this needs to know where a Python string
+    // really ends, which is the parse this module does not do, and three
+    // rounds of widening the heuristic each ended in another shape like this
+    // one. What is defended instead is that it is never SILENT, which the
+    // assertions below hold to.
+    const urlFragment =
+      `SETUP = "https://vendor.example/tls/setup#${IGNORE} misuse/python-cert-none -- documented"\n`;
+    const { waivers, malformed } = parse(urlFragment, 'python');
+    assert.equal(waivers.length, 1,
+      'the Python string limitation changed; update the docs and this test together');
+    assert.deepEqual(malformed, []);
+
+    // The half that must hold: a waiver produced this way is still a waiver
+    // like any other, so it is reported, counted, and marked used rather than
+    // quietly deleting the finding. `unused` bookkeeping is what makes it
+    // visible in `scan` and `gate` output.
+    assert.equal(waivers[0].rule, 'misuse/python-cert-none');
+    assert.equal(waivers[0].used, false);
+  });
+
   it('stays linear in the length of one line', () => {
     // Walking every start index of an opener run to find a later pragma was
     // quadratic in the line: `// x cryptoserve-ignore ` followed by N slashes

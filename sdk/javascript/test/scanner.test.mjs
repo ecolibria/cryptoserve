@@ -710,6 +710,32 @@ describe('cryptoserve-ignore pragmas', () => {
     assert.match(rng[0].evidence, /Math\.random/);
   });
 
+  it('does not carry a terminal-forging character out in an algorithm site', () => {
+    // The OTHER place `evidence` is built. Stripping it in the misuse loop
+    // alone left this one raw, and it reaches `sourceAlgorithms[].evidence` and
+    // the weak-algorithm entries of `weakPatterns[].evidence`, both of which
+    // `scan --format json` emits. Found by adversarial review of the fix that
+    // closed the misuse site: fixing the reported site is not fixing the class.
+    //
+    // `from\s+cryptography.*import.*Fernet` spans arbitrary characters between
+    // its anchors, which is how a control character gets into a matched span.
+    const DEL = String.fromCodePoint(0x7f);
+    const CSI = String.fromCodePoint(0x9b);
+    const r = scanWith('crypto_use.py',
+      `from cryptography${DEL}${CSI}2K.fernet import Fernet\n`);
+
+    // Prove the fixture reached a match before believing the assertions below.
+    const withEvidence = [...(r.sourceAlgorithms || []), ...(r.weakPatterns || [])]
+      .filter(e => typeof e.evidence === 'string' && /cryptography|Fernet/.test(e.evidence));
+    assert.ok(withEvidence.length > 0,
+      `fixture reached no algorithm site: ${JSON.stringify(r.sourceAlgorithms)}`);
+
+    for (const e of withEvidence) {
+      assert.ok(!e.evidence.includes(DEL), `evidence carried DEL: ${JSON.stringify(e.evidence)}`);
+      assert.ok(!e.evidence.includes(CSI), `evidence carried C1 CSI: ${JSON.stringify(e.evidence)}`);
+    }
+  });
+
   it('does not carry a terminal-forging character out in a waived finding', () => {
     // The same field, reached through the surface this feature added.
     // `waived[].evidence` is new in `gate --format json`, so this one is a

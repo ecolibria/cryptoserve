@@ -106,15 +106,25 @@ also bounded by where the scanner looks: `node_modules`, `vendor`, `.venv` and
 `venv` are skipped by default, so this is first-party code, not a dependency's.
 
 The property being defended is narrower than "data a project merely CONTAINS
-does not switch a check off", which is how an earlier draft of this entry put
-it. A Python docstring disproved that: the block-comment continuation branch ran
-without consulting the language's comment openers, and `*` is not a comment
-character in Python at all. What holds now is that a language with no block
-comments cannot have its checks operated by contained data, and that in the C
-family a comment-shaped string can still be honoured but never silently -- a
-waived finding is listed by `scan` and `gate`, counted in `summary.waived`, and
-emitted to SARIF as a suppressed result. The three C-family shapes that remain
-are pinned by tests in `test/waivers.test.mjs`.
+does not switch a check off", which is how earlier drafts of this entry put it.
+Two versions of that stronger claim were each disproved during review. First a
+Python docstring: the block-comment continuation branch ran without consulting
+the language's comment openers, and `*` is not a comment character in Python at
+all. Gating that branch produced the second version, "a language with no block
+comments cannot have its checks operated by contained data at all", and an
+ordinary Python STRING disproved that too, because the first-opener scan reaches
+every language whatever its comment style:
+
+```python
+SETUP = "https://vendor.example/tls/setup#cryptoserve-ignore misuse/python-cert-none -- documented"
+ctx.verify_mode = ssl.CERT_NONE
+```
+
+What holds, and all that holds: contained data CAN operate the control, in any of
+the six languages, when it holds a comment opener followed by the pragma. It can
+never do so silently -- a waived finding is listed by `scan` and `gate`, counted
+in `summary.waived`, and emitted to SARIF as a suppressed result. Each shape is
+pinned by a test in `test/waivers.test.mjs`.
 
 Doing better needs a real parser per language, which this package cannot have
 while it stays dependency-free. A hand-written comment tokenizer was built for

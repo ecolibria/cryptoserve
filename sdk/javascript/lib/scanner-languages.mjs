@@ -19,6 +19,7 @@
 
 import { extname } from 'node:path';
 import { canonicalizeAlgorithmToken, lookupAlgorithm } from './algorithm-db.mjs';
+import { stripTerminalUnsafe } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // Per-language regex patterns
@@ -432,7 +433,15 @@ export function scanSourceFile(filePath, content, language) {
           algorithm: name,
           category: resolvedCategory,
           line: lineAt(offsets, m.index),
-          evidence: m[0].slice(0, 80),
+          // Stripped for the same reason as the misuse site in `scanner.mjs`,
+          // and in the same round: several algorithm patterns span arbitrary
+          // characters between their anchors, so matched text reaches
+          // `sourceAlgorithms[].evidence` carrying whatever sat there. DEL and
+          // the C1 block survive `JSON.stringify` unescaped and U+009B is a
+          // one-byte CSI, so a saved `--format json` report can drive the
+          // terminal that later reads it. Display only: nothing decides
+          // anything on evidence.
+          evidence: stripTerminalUnsafe(m[0]).slice(0, 80),
         });
       }
       if (m[0].length === 0) regex.lastIndex++;

@@ -150,5 +150,35 @@ describe('toSarif', () => {
         assert.equal(result.suppressions, undefined, JSON.stringify(result));
       }
     });
+
+    it('collects a waived finding count that no argument limit can reject', () => {
+      // `push(...arr)` passes every element as a separate argument, so a large
+      // enough array throws RangeError instead of being appended. The misuse
+      // loop deliberately keeps reading past a waived match, so this array is
+      // unbounded per file where the pre-waiver code reported at most one
+      // finding per pattern per file -- which is why the same spread was safe
+      // before and is not now.
+      //
+      // Measured rather than assumed: four ~1MB files, each under the DEFAULT
+      // maxFileSize with no config change, took `scan --format sarif` and
+      // `gate --format sarif` to "Maximum call stack size exceeded", and with
+      // `--output` no file was written at all, so a CI upload step received
+      // nothing. The identical hazard was found and fixed at the waiver-warning
+      // site in lib/scanner.mjs; these two sites are the rest of that class.
+      const waivedFindings = Array.from({ length: 200_000 }, (_, i) => ({
+        rule: 'misuse/tls-verify-disabled',
+        file: 'src/bulk.js',
+        line: i + 1,
+        issue: 'TLS certificate verification disabled',
+        severity: 'critical',
+        reason: 'bulk',
+        evidence: 'rejectUnauthorized: false',
+      }));
+
+      const findings = collectFindings({ ...SCAN, waivedFindings });
+      assert.equal(findings.length, 200_000 + 4);
+      // And the document still builds from them.
+      assert.equal(toSarif(findings).runs[0].results.length, 200_000 + 4);
+    });
   });
 });

@@ -239,18 +239,27 @@ under it, and the next real finding on that line would land under it silently.
 ##### What a waiver deliberately is not
 
 Recognising a comment by its opener is a heuristic, not a parse. The scanner does
-not tokenize your source, so in a language that HAS block comments there are
-string shapes it cannot tell from a real pragma: a string literal beginning with
-an opener, an opener not directly after the quote, and a block-comment
-continuation line inside a template literal. All three are pinned by tests in
-`test/waivers.test.mjs` rather than left to be rediscovered.
+not tokenize your source, so it cannot tell a comment from a string that contains
+a comment opener. Two shapes are honoured that a parser would refuse, and both
+are pinned by tests in `test/waivers.test.mjs` rather than left to be
+rediscovered:
 
-So the property defended here is narrower than "data a project merely contains
-cannot switch a check off", which is how an earlier draft put it. A Python
-docstring disproved that version. What holds now: a language with no block
-comments cannot have its checks operated by contained data at all, and in the C
-family a comment-shaped string can be honoured but never silently, since every
-waived finding is listed, counted and emitted to SARIF.
+- an opener inside a string wherever the character before it is not a quote:
+  `" // cryptoserve-ignore ..."`, or a `#` inside an ordinary Python string,
+  including one that is merely part of a URL fragment
+- a block-comment continuation inside a template literal, a backtick-delimited
+  line starting ` * cryptoserve-ignore ...`
+
+An opener written DIRECTLY after a quote is refused, so the guard is not absent,
+only narrow.
+
+So the property is weaker than "data a project merely contains cannot switch a
+check off", which is how earlier drafts put it. Two versions of that claim were
+each disproved, first by a Python docstring and then by an ordinary Python
+string. What holds is this: contained data CAN operate the control, in any of the
+six languages, when it holds a comment opener followed by the pragma, and it can
+never do so silently, because every waived finding is listed, counted in
+`summary.waived`, and emitted to SARIF as a suppressed result.
 
 The residual is bounded by who a waiver is for and by where the scanner looks. It
 is authored by whoever can already edit the file, so it is not a privilege
