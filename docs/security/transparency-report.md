@@ -291,7 +291,7 @@ CryptoServe provides three FIPS compliance modes:
 | Dependency audit | pip-audit against known vulnerability databases |
 | Test gate | All 1,380+ tests must pass before publish |
 | Package verification | twine check on all built artifacts |
-| Release provenance | SHA-256 checksums on all release artifacts |
+| Release provenance | `SHA256SUMS.txt` and SLSA provenance on each CLI release from `js-v0.4.0`; no Python release has attestations or a checksum file that verifies ([Verifying releases](../../README.md#verifying-releases)) |
 
 ### 6.3 Container Security
 

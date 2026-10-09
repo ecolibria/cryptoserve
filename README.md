@@ -88,19 +88,19 @@ The Python SDK lives under `sdk/python/` (editable install via `pip install -e s
 
 ## Verifying releases
 
-Every published tag attaches a `SHA256SUMS.txt` to its GitHub Release, covering
-every wheel, sdist and npm tarball uploaded with it. Entries use bare filenames,
-so verification works in whatever directory you download into.
+Each CLI release from `js-v0.4.0` onward attaches a `SHA256SUMS.txt` to its
+GitHub Release, covering the npm tarball uploaded with it. Entries use bare
+filenames, so verification works in whatever directory you download into.
 
 ```bash
-# Python SDK
-gh release download v1.4.3 -R ecolibria/cryptoserve
-sha256sum -c SHA256SUMS.txt
-
-# CLI (npm)
 gh release download js-v0.4.0 -R ecolibria/cryptoserve
 sha256sum -c SHA256SUMS.txt
 ```
+
+No Python SDK release verifies this way yet. `v1.4.3` has no release assets.
+The checksum files on earlier Python tags record build directory paths rather
+than bare filenames and list sdists that were never attached, and most of their
+entries do not match the file PyPI serves under the same name.
 
 Both publish workflows are triggered by a tag push and refuse to publish when
 the tag disagrees with the package version in the tree. npm publishes through
@@ -133,8 +133,13 @@ JSON.parse(require("fs").readFileSync(0, "utf8")).attestations
 `npm audit signatures`, in a project that depends on cryptoserve, verifies the
 signature chain over that attestation.
 
-Versions at or before `0.3.4` were published under the previous token-based
-workflow and carry no attestations. Verify those with `SHA256SUMS.txt` only.
+CLI versions before `0.4.0` were published under the previous token-based
+workflow. None has a GitHub Release with checksums, and only `0.2.1` carries an
+attestation.
+
+PyPI versions at or before `1.4.3` carry no attestations, and neither does any
+published version of `cryptoserve-core`, `cryptoserve-client` or
+`cryptoserve-auto`.
 
 ## Which command do I want
 

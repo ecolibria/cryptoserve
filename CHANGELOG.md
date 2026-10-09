@@ -214,6 +214,16 @@ written for a call site in another language, which a reader has no line of
 `package.json` to apply. It now says what the other dependency-only violations
 say.
 
+The release verification instructions now describe the releases that exist.
+The README told Python users to run `gh release download v1.4.3` and
+`sha256sum -c SHA256SUMS.txt`, against a GitHub Release with no assets, and
+two documents said SHA-256 checksums covered every release artifact. Only the
+CLI releases from `js-v0.4.0` verify that way. The checksum files on earlier
+Python tags record build directory paths, so the documented commands fail on
+every entry, and most entries do not match the file PyPI serves. The README now
+says so, and states that PyPI versions at or before `1.4.3` carry no
+attestations. A test holds the README and both documents to those facts.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
