@@ -18,15 +18,22 @@
  *   and include sdists that were never attached, so the documented commands fail
  *   on every entry. Most of those entries also differ from the file PyPI serves
  *   under the same name.
+ * - Python tags v1.5.0 to v1.8.0 are numbered after v1.4.3 but were pushed
+ *   before the current workflow: the v1.5.0 and v1.6.0 GitHub Releases have no
+ *   assets, v1.7.0 has no GitHub Release, and the v1.8.0 checksum file lists
+ *   build directory paths.
  * - CLI tags from js-v0.4.0: SHA256SUMS.txt with bare filenames, and it verifies.
- *   No CLI version before 0.4.0 has a GitHub Release.
+ *   No js-v tag before js-v0.4.0 has a GitHub Release. CLI 0.2.0 and 0.3.4 were
+ *   tagged v0.2.0 and v0.3.4, and the GitHub Releases on those tags hold Python
+ *   wheels, not the CLI.
  * - PyPI: no file of cryptoserve, cryptoserve-core, cryptoserve-client or
  *   cryptoserve-auto carries provenance.
  *
  * There is no way to read a GitHub Release from a unit test, so these facts are
  * written down here and the documents are checked against them. A Python tag
- * after v1.4.3 is accepted: it would be published by the current workflow,
- * which writes bare filenames and checks the file before attaching it.
+ * after v1.4.3, other than v1.5.0 to v1.8.0, is accepted: it would be published
+ * by the current workflow, which writes bare filenames and checks the file
+ * before attaching it.
  */
 
 import { describe, it } from 'node:test';
@@ -67,6 +74,17 @@ function compareVersions(a, b) {
 }
 
 /**
+ * Python tags after v1.4.3 that the current workflow did not publish, so the
+ * version comparison alone would accept them, with the reason each cannot verify.
+ */
+const PYTHON_TAGS_BEFORE_CURRENT_WORKFLOW = new Map([
+  ['v1.5.0', 'the v1.5.0 GitHub Release has no assets'],
+  ['v1.6.0', 'the v1.6.0 GitHub Release has no assets'],
+  ['v1.7.0', 'v1.7.0 has no GitHub Release'],
+  ['v1.8.0', 'the v1.8.0 checksum file lists build directory paths'],
+]);
+
+/**
  * Whether `gh release download <tag>` followed by `sha256sum -c SHA256SUMS.txt`
  * can succeed for this tag. Returns the reason when it cannot.
  */
@@ -75,10 +93,12 @@ function checksumProblem(tag) {
   if (js) {
     return compareVersions(parseVersion(js[1]), [0, 4, 0]) >= 0
       ? null
-      : 'CLI versions before 0.4.0 have no GitHub Release';
+      : 'no js-v tag before js-v0.4.0 has a GitHub Release';
   }
   const py = /^v(\d+\.\d+\.\d+)$/.exec(tag);
   if (py) {
+    const pushedBeforeWorkflow = PYTHON_TAGS_BEFORE_CURRENT_WORKFLOW.get(tag);
+    if (pushedBeforeWorkflow) return pushedBeforeWorkflow;
     return compareVersions(parseVersion(py[1]), [1, 4, 3]) > 0
       ? null
       : 'Python releases up to v1.4.3 have no assets or a checksum file of build directory paths';
@@ -95,6 +115,12 @@ describe('README release verification instructions', () => {
       .map((tag) => [tag, checksumProblem(tag)])
       .filter(([, problem]) => problem !== null);
     assert.deepEqual(broken, [], 'README tells users to verify a release that cannot verify');
+  });
+
+  it('does not accept the Python tags after v1.4.3 that were pushed before the current workflow', () => {
+    for (const tag of ['v1.5.0', 'v1.6.0', 'v1.7.0', 'v1.8.0']) {
+      assert.notEqual(checksumProblem(tag), null, `${tag} is accepted`);
+    }
   });
 
   it('discloses that the published PyPI versions carry no attestations', () => {
