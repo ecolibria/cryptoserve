@@ -220,7 +220,7 @@ DEV_MODE=true STARTUP_VALIDATION_LEVEL=skip pytest -v
 | Static analysis | `bandit` in CI with medium+ severity threshold |
 | Action pinning | All GitHub Actions pinned to SHA commit hashes |
 | Package publishing | PyPI OIDC Trusted Publishers (no stored API tokens) |
-| Release artifacts | SHA-256 checksums on all published packages |
+| Release artifacts | `SHA256SUMS.txt` on each CLI GitHub Release from `js-v0.4.0`; no Python release verifies yet ([Verifying releases](../README.md#verifying-releases)) |
 | Container security | Multi-stage Docker build, non-root runtime user |
 
 ---
