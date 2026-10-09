@@ -1161,7 +1161,7 @@ async function cmdCbom(args) {
 
 async function cmdGate(args) {
   const { scanProject, toLibraryInventory, toOwnershipInventory, weakAlgorithmSeverity, exceedsSeverity, libraryCoversLanguage } = await import('../lib/scanner.mjs');
-  const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
+  const { analyzeOffline, scoreContributors } = await import('../lib/pqc-engine.mjs');
   const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
   const { existsSync } = await import('node:fs');
 
@@ -1259,6 +1259,12 @@ async function cmdGate(args) {
     const owners = toOwnershipInventory(scanResults);
     const pqcResult = analyzeOffline(libraries);
     const score = pqcResult.quantumReadinessScore;
+    // What the score is lower because of, by library, from the same inventory
+    // that produced it. Every violation names a file and a line; a gate failed
+    // on the score alone named only a number, and the number measures
+    // post-quantum readiness, which no single line of code fixes. Naming the
+    // libraries and the points each would recover is the next step it lacked.
+    const contributors = scoreContributors(libraries);
 
     // EVERY place each algorithm was seen, so a violation points at code rather
     // than at an inventory row -- and at all of it. This read
@@ -1569,6 +1575,22 @@ async function cmdGate(args) {
     const scoreFail = score < minScore;
     const pass = violations.length === 0 && !scoreFail;
 
+    // One rendering of a contributor for every format. A library the scanner
+    // minted from a call site (`javascript:RSA`) is not a name anyone can look
+    // up, so it is pointed at the code it came from, the way a violation is.
+    function describeContributor(c) {
+      const entry = libraries.find(l => l.name === c.library);
+      const places = entry?.version !== 'source-code' ? [] : (entry.algorithms || [])
+        .flatMap(a => sites.get(a.toLowerCase()) || [])
+        .filter(p => !entry.languages?.length || entry.languages.includes(p.language));
+      return {
+        what: [...c.algorithms, ...(c.deprecated ? ['deprecated or weak'] : [])].join(', '),
+        where: places.length === 0 ? ''
+          : `${location(places[0])}${places.length > 1 ? ` and ${places.length - 1} more` : ''}`,
+        gain: c.recoverable > 0 ? `+${c.recoverable} recoverable` : 'no change on its own',
+      };
+    }
+
     const summary = {
       // How much was actually looked at. A gate that scanned nothing and a gate
       // that scanned a clean tree both report zero violations; only the count
@@ -1630,6 +1652,11 @@ async function cmdGate(args) {
       // build, empty document. The score is a property of the project, so it is
       // reported against the manifest that describes it.
       if (scoreFail) {
+        const named = contributors.slice(0, 3).map(c => {
+          const d = describeContributor(c);
+          return `${c.library}${d.where ? ` at ${d.where}` : ''} (${d.what}: ${d.gain})`;
+        });
+        if (contributors.length > 3) named.push(`${contributors.length - 3} more`);
         findings.push({
           kind: 'score',
           title: 'Quantum readiness score below the configured minimum',
@@ -1639,7 +1666,8 @@ async function cmdGate(args) {
           // from. Named as a verdict on the project so the anchor is not read
           // as blame on that file.
           message: `Quantum readiness score ${score} is below the minimum ${minScore} required by `
-            + '--min-score. The score is a verdict on the project, not on this file',
+            + '--min-score. The score is a verdict on the project, not on this file'
+            + (named.length > 0 ? `. Lowered by ${named.join('; ')}` : ''),
           level: 'error',
           file: scanResults.manifestsFound?.[0] || scanResults.algorithmSites?.[0]?.file,
           fix: 'run `cryptoserve pqc` for the migration plan behind this score',
@@ -1660,6 +1688,9 @@ async function cmdGate(args) {
       const document = JSON.stringify({
         status: pass ? 'pass' : 'fail',
         score,
+        // Reported on a pass as well: the score is, and a team deciding what
+        // --min-score to adopt needs to see what holds it down before it fails.
+        scoreContributors: contributors,
         violations,
         // Named, not just counted. The text rendering lists the rule, location
         // and reason for every waiver, and JSON is the surface a CI job
@@ -1745,6 +1776,21 @@ async function cmdGate(args) {
 
       if (scoreFail) {
         console.log(`\n  ${error(`Score ${score} is below minimum ${minScore}`)}`);
+        // The score measures post-quantum readiness, so the action is a library
+        // to migrate rather than a line to fix. Capped, because a large tree
+        // can list dozens; the JSON carries every one.
+        const SHOWN = 5;
+        if (contributors.length > 0) {
+          console.log(`    ${dim('Post-quantum readiness is held down by:')}`);
+          for (const c of contributors.slice(0, SHOWN)) {
+            const d = describeContributor(c);
+            console.log(`      ${bold(c.library)}${d.where ? ` ${dim(d.where)}` : ''} ${dim(`(${d.what})`)} ${d.gain}`);
+          }
+          if (contributors.length > SHOWN) {
+            console.log(`      ${dim(`and ${contributors.length - SHOWN} more, listed under scoreContributors in --format json`)}`);
+          }
+        }
+        console.log(`    ${dim('Run `cryptoserve pqc` for the migration plan behind this score.')}`);
       }
 
       console.log();

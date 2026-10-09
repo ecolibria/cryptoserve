@@ -140,6 +140,31 @@ into a kill switch for a disabled TLS certificate check. It also does not reach
 credential findings: secrets and committed private keys are waivable only by
 name, with `--allow-secrets`.
 
+#### When the score fails the gate
+
+`--min-score` measures post-quantum readiness, so a gate that fails on it alone
+has no line of code to point at. It names the libraries instead: the
+quantum-vulnerable algorithms each one uses, and the points the score would
+recover if that library no longer used them.
+
+```
+  x Score 25 is below minimum 50
+    Post-quantum readiness is held down by:
+      jose (RS256, ES256, EdDSA) +75 recoverable
+    Run `cryptoserve pqc` for the migration plan behind this score.
+```
+
+The recoverable points are measured, not estimated: the same inventory is scored
+again without that library's contribution. A deprecated library, or one that
+uses a weak algorithm, is listed as `deprecated or weak`. Two libraries that
+both use RSA each show `no change on its own`, because the score moves only
+when both do. A library the scanner derived from a call site is shown with the
+file and line it was read from.
+
+The text output shows the first five. `--format json` lists every one under
+`scoreContributors`, on a pass as well as a fail, and the SARIF result for a
+score failure names the first three.
+
 #### What the SARIF contains
 
 `gate --format sarif` reports the decision this run made: the violations that

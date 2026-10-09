@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeOffline, DATA_PROFILES, classifyAlgorithms, calculateQuantumScore } from '../lib/pqc-engine.mjs';
+import { analyzeOffline, DATA_PROFILES, classifyAlgorithms, calculateQuantumScore, scoreContributors } from '../lib/pqc-engine.mjs';
 
 const SAMPLE_LIBRARIES = [
   { name: 'jsonwebtoken', version: '9.0.0', algorithms: ['RS256', 'HS256'], quantumRisk: 'high', category: 'token' },
@@ -162,5 +162,68 @@ describe('calculateQuantumScore', () => {
       { category: 'pqc' },
     ]);
     assert.ok(withPqc > withoutPqc, `expected ${withPqc} > ${withoutPqc}`);
+  });
+});
+
+describe('scoreContributors', () => {
+  const score = (libs) => calculateQuantumScore(libs, classifyAlgorithms(libs));
+  const JOSE = { name: 'jose', version: '^5.3.0', algorithms: ['RS256', 'ES256', 'EdDSA', 'AES-GCM'] };
+
+  it('names the library holding the score down and the quantum-vulnerable algorithms it uses', () => {
+    const [jose, ...rest] = scoreContributors([JOSE]);
+    assert.deepEqual(rest, []);
+    assert.equal(jose.library, 'jose');
+    assert.deepEqual(jose.algorithms, ['RS256', 'ES256', 'EdDSA']);
+    assert.equal(jose.deprecated, false);
+  });
+
+  it('measures the recoverable points by scoring without that library\'s contribution', () => {
+    const libs = [JOSE, { name: 'node:crypto', algorithms: ['AES-256-GCM', 'SHA-256'] }];
+    const [jose] = scoreContributors(libs);
+    const without = [{ ...JOSE, algorithms: ['AES-GCM'] }, libs[1]];
+    assert.ok(jose.recoverable > 0, JSON.stringify(jose));
+    assert.equal(jose.recoverable, Math.round((score(without) - score(libs)) * 10) / 10);
+  });
+
+  it('does not list a library that costs the score nothing', () => {
+    const libs = [JOSE, { name: 'node:crypto', algorithms: ['AES-256-GCM', 'SHA-256'] }];
+    assert.deepEqual(scoreContributors(libs).map(c => c.library), ['jose']);
+  });
+
+  it('lists a deprecated library by the points its deprecation costs', () => {
+    const libs = [{ name: 'crypto-js', algorithms: ['AES-256-GCM', 'SHA-256'], isDeprecated: true }];
+    assert.deepEqual(scoreContributors(libs), [
+      { library: 'crypto-js', algorithms: [], deprecated: true, recoverable: 100 - score(libs) },
+    ]);
+  });
+
+  it('still names both libraries that share an algorithm, though neither moves the score alone', () => {
+    const libs = [
+      { name: 'jsonwebtoken', algorithms: ['RS256', 'HS256'] },
+      { name: 'node-jose', algorithms: ['RS256', 'AES-256-GCM'] },
+    ];
+    const contributors = scoreContributors(libs);
+    assert.deepEqual(contributors.map(c => c.library), ['jsonwebtoken', 'node-jose']);
+    for (const c of contributors) {
+      assert.deepEqual(c.algorithms, ['RS256']);
+      assert.equal(c.recoverable, 0, JSON.stringify(c));
+    }
+  });
+
+  it('orders contributors by points recoverable, most first', () => {
+    const libs = [
+      { name: 'one', algorithms: ['RS256'] },
+      { name: 'two', algorithms: ['ES256', 'EdDSA'] },
+      { name: 'safe', algorithms: ['AES-256-GCM', 'SHA-256', 'SHA-512'] },
+    ];
+    const contributors = scoreContributors(libs);
+    assert.deepEqual(contributors.map(c => c.library), ['two', 'one']);
+    assert.ok(contributors[0].recoverable > contributors[1].recoverable, JSON.stringify(contributors));
+  });
+
+  it('leaves the inventory it was given untouched', () => {
+    const libs = [structuredClone(JOSE)];
+    scoreContributors(libs);
+    assert.deepEqual(libs, [JOSE]);
   });
 });

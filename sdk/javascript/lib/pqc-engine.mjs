@@ -560,6 +560,50 @@ function calculateQuantumScore(libraries, classifications) {
   return Math.round(score * 10) / 10;
 }
 
+/**
+ * Which libraries the quantum readiness score is lower because of, and by how
+ * many points. A gate that fails on the score alone has no violation to point
+ * at, so without this the only explanation it could give was the number.
+ *
+ * `recoverable` is measured, not estimated: it is what `calculateQuantumScore`
+ * returns for the same inventory with this one library's quantum-vulnerable
+ * algorithms removed and its deprecation cleared, minus the score as it
+ * stands. An algorithm another library also lists stays counted, so two
+ * libraries that share RSA can each show 0 here; each still names the
+ * algorithm, because moving both is what moves the score.
+ *
+ * Ordered by points recoverable, most first.
+ */
+function scoreContributors(libraries) {
+  const classifications = classifyAlgorithms(libraries);
+  const score = calculateQuantumScore(libraries, classifications);
+  const vulnerable = new Set(
+    classifications.filter(c => c.category === 'asymmetric').map(c => c.algo)
+  );
+
+  const contributors = [];
+  for (const lib of libraries) {
+    const algorithms = (lib.algorithms || []).filter(a => vulnerable.has(a));
+    const deprecated = Boolean(lib.isDeprecated);
+    if (algorithms.length === 0 && !deprecated) continue;
+
+    const without = libraries.map(other => other !== lib ? other : {
+      ...other,
+      algorithms: (other.algorithms || []).filter(a => !vulnerable.has(a)),
+      isDeprecated: false,
+    });
+    const recovered = calculateQuantumScore(without, classifyAlgorithms(without));
+    contributors.push({
+      library: lib.name,
+      algorithms,
+      deprecated,
+      recoverable: Math.round((recovered - score) * 10) / 10,
+    });
+  }
+
+  return contributors.sort((a, b) => b.recoverable - a.recoverable);
+}
+
 function getComplianceReferences(urgency) {
   const refs = [];
   const allKeys = ['cnsa_2_0', 'nist_sp_800_208', 'bsi', 'anssi'];
@@ -805,4 +849,4 @@ export function analyzeOffline(libraries, dataProfile = null, scanMeta = {}) {
   };
 }
 
-export { classifyAlgorithms, assessSndl, calculateQuantumScore };
+export { classifyAlgorithms, assessSndl, calculateQuantumScore, scoreContributors };
