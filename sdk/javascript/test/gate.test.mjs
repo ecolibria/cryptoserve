@@ -1163,3 +1163,75 @@ describe('a live misuse finding names the rule you would waive', () => {
     assert.equal(runGate().exitCode, 0);
   });
 });
+
+describe('a gate failed on the score alone names what holds the score down', () => {
+  // The reported shape: a project whose only dependency is `jose`, the modern
+  // JOSE library, failed at default thresholds with `Score 25 is below minimum
+  // 50` and nothing else. Every other failure path names a file and a line;
+  // this one named a number.
+  let DIR;
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-score-')); });
+  afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
+
+  function run(args = '') {
+    try {
+      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
+        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+    } catch (e) {
+      return { exitCode: e.status, output: e.stdout || '' };
+    }
+  }
+
+  const joseOnly = () => writeFileSync(join(DIR, 'package.json'),
+    JSON.stringify({ name: 'm', dependencies: { jose: '^5.3.0' } }));
+
+  it('lists each contributing library with its algorithms and the points it would recover', () => {
+    joseOnly();
+    const json = JSON.parse(run('--format json').output);
+    assert.equal(json.violations.length, 0, 'fixture must fail on the score only');
+    assert.equal(json.status, 'fail', JSON.stringify(json));
+
+    const [jose] = json.scoreContributors;
+    assert.equal(jose.library, 'jose', JSON.stringify(json.scoreContributors));
+    assert.ok(jose.algorithms.length > 0, JSON.stringify(jose));
+    // Measured, not estimated: jose is the whole inventory, so taking its
+    // quantum-vulnerable algorithms away leaves nothing for the score to deduct.
+    assert.equal(json.score + jose.recoverable, 100, JSON.stringify(json));
+
+    const { exitCode, output } = run();
+    assert.equal(exitCode, 1);
+    assert.match(output, /Score \d+(\.\d+)? is below minimum 50/);
+    const row = output.split('\n').find(l => /^\s+jose \(/.test(l));
+    assert.ok(row, output);
+    for (const a of jose.algorithms) assert.ok(row.includes(a), `${a} missing from: ${row}`);
+    assert.ok(row.includes(`+${jose.recoverable} recoverable`), row);
+    assert.match(output, /cryptoserve pqc/);
+  });
+
+  it('names the contributing library in the SARIF result as well', () => {
+    joseOnly();
+    const { exitCode, output } = run('--format sarif');
+    assert.equal(exitCode, 1);
+    const results = JSON.parse(output).runs[0].results;
+    assert.equal(results.length, 1, JSON.stringify(results));
+    assert.match(results[0].message.text, /Lowered by jose \(.*recoverable\)/);
+  });
+
+  it('points a library derived from source at the line it was read from', () => {
+    // A C include of an unrecognised header produces no library in any
+    // ecosystem, so the scanner names the site `c:md5`. That is not a name a
+    // reader can look up; the file and line are.
+    writeFileSync(join(DIR, 'h.c'), '#include <openssl/md5.h>\nvoid f(){ MD5_Init(0); }\n');
+    const { output } = run('--min-score 99');
+    const row = output.split('\n').find(l => /^\s+c:md5 /.test(l));
+    assert.ok(row, output);
+    assert.ok(row.includes('h.c:2'), row);
+  });
+
+  it('prints no contributor list when the score passes', () => {
+    joseOnly();
+    const { exitCode, output } = run('--min-score 0');
+    assert.equal(exitCode, 0, output);
+    assert.doesNotMatch(output, /held down by/);
+  });
+});
