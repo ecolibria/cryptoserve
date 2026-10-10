@@ -283,6 +283,24 @@ SARIF result for a score failure names the first three.
 codes are unchanged. Whether the gate should check post-quantum readiness by
 default is still open in #60.
 
+The release documentation now matches the publish workflow and the releases
+([#79](https://github.com/ecolibria/cryptoserve/issues/79)).
+
+`docs/security/ci-security-pipeline.md` said PyPI publishes with a
+`PYPI_API_TOKEN` repository secret and that the GitHub Release attaches the
+wheels. The workflow publishes through PyPI Trusted Publishing with no token,
+and attaches the wheels, the sdists and a `SHA256SUMS.txt` of bare filenames.
+The README now says what the GitHub Releases on `v0.2.0` and `v0.3.4`, the tags
+of CLI `0.2.0` and `0.3.4`, hold: Python wheels and a checksum file that does
+not cover the CLI tarball. Every `LICENSE` in the repository, including the
+copies in the npm and PyPI packages, is now the published Apache License 2.0
+text with its APPENDIX; the license is still Apache-2.0.
+
+The documentation test now rejects a sentence saying checksums cover all, every
+or each of something, however it is worded or wrapped, unless it is limited to
+the CLI releases from `js-v0.4.0`. It accepts a download command only for a tag
+on a list of releases checked to verify, so a mistyped tag fails.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
