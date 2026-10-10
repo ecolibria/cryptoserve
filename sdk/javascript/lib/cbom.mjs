@@ -14,6 +14,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { VERSION } from './version.mjs';
 import { libraryCoversLanguage } from './scanner.mjs';
+import { stripTerminalUnsafe } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // Package URL generation
@@ -48,11 +49,14 @@ function getGitMetadata(projectDir) {
   try {
     result.gitCommit = execSync('git rev-parse HEAD', opts).trim();
   } catch { /* not a git repo */ }
+  // The branch and remote are the scanned repository's own text: git refuses
+  // C0 and DEL in a ref name but accepts the C1 block and the bidi overrides,
+  // and a clone checks out whatever its remote's default branch is called.
   try {
-    result.gitBranch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
+    result.gitBranch = stripTerminalUnsafe(execSync('git rev-parse --abbrev-ref HEAD', opts).trim());
   } catch { /* ignore */ }
   try {
-    result.gitRepo = execSync('git remote get-url origin', opts).trim();
+    result.gitRepo = stripTerminalUnsafe(execSync('git remote get-url origin', opts).trim());
   } catch { /* ignore */ }
   return result;
 }
@@ -173,7 +177,8 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
     id: randomUUID(),
     version: '1.0.0',
     createdAt: new Date().toISOString(),
-    projectName: projectName || 'unknown',
+    // The scanned directory's name, which a clone takes from its remote.
+    projectName: stripTerminalUnsafe(projectName || '') || 'unknown',
     components,
     quantumReadiness: {
       score,

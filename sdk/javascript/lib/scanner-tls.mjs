@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { extname, relative } from 'node:path';
 import { walkProject } from './walker.mjs';
+import { printablePath } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // TLS version risk levels
@@ -181,7 +182,9 @@ export function scanTlsConfigs(projectDir, preFilteredFiles) {
 
     const ext = extname(filePath).toLowerCase();
     const name = filePath.split('/').pop();
-    const relPath = relative(projectDir, filePath);
+    // Printable where it is built, as in `scanProject`: this is the `file` of
+    // every TLS finding, and a file name is the tree's own text.
+    const relPath = printablePath(relative(projectDir, filePath));
 
     for (const pattern of PATTERNS) {
       // Check if pattern applies to this file
