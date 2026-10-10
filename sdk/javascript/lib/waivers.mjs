@@ -29,6 +29,13 @@
  *   4. **Its reach is one line.** A pragma covers findings on its own line and
  *      on the line immediately after it, and nothing else. Anything wider
  *      drifts away from what it was written for as the file changes around it.
+ *      A finding's line is the line its match STARTS on, so a match that spans
+ *      lines is covered whole: `misuse/js-check-server-identity` matches a
+ *      parameter list of any length, and a pragma above `checkServerIdentity:
+ *      (` waives it however far below the no-op body sits. Attributing the
+ *      finding to that body instead would move its reported line, which is a
+ *      detection change rather than a waiver one, so the reach is stated here
+ *      and in the docs rather than narrowed.
  *   5. **It is plain text, in a file with line endings.** A control character
  *      in a pragma, or a bidi override or isolate, is reported as malformed and
  *      waives nothing: the reason and the rule id are file content on their way
@@ -149,16 +156,37 @@ const BLOCK_OPENER = '/*';
 const C_FAMILY = ['//', BLOCK_OPENER];
 const HASH = ['#'];
 
-const OPENERS_BY_LANGUAGE = {
+/**
+ * Exported so a test can hold it to the same language set as
+ * `LANGUAGE_PATTERNS`. A language scanned without an entry here has every
+ * pragma in it ignored, with no warning, which is the silence this module
+ * exists to prevent.
+ */
+export const OPENERS_BY_LANGUAGE = Object.freeze({
   javascript: C_FAMILY,
   go: C_FAMILY,
   java: C_FAMILY,
   c: C_FAMILY,
   rust: C_FAMILY,
   python: HASH,
-};
+});
 
 const SEPARATOR = '--';
+
+/**
+ * Caps on the two fields a waiver carries out of the file, the same order as
+ * the 120 on `malformed.text` and the 80 on `evidence`, and for the same
+ * reason: both are file content on their way to a terminal, `--format json`
+ * and a SARIF `justification`, and one pragma could put 200,000 characters in
+ * each.
+ *
+ * Applied after every decision about the pragma, so neither changes which
+ * pragmas are honoured. The rule cap is longer than every rule id, so a
+ * truncated id can never come to equal a real one: it stays unknown and is
+ * reported as `unknown-rule`, as it was before.
+ */
+const RULE_CAP = 80;
+const REASON_CAP = 200;
 
 /**
  * Everything a pragma must not CONTAIN, because each of these lets file content
@@ -436,7 +464,12 @@ export function parseWaiverPragmas(content, language) {
       continue;
     }
 
-    waivers.push({ rule: shape.rule, reason: shape.reason, line, used: false });
+    waivers.push({
+      rule: shape.rule.slice(0, RULE_CAP),
+      reason: shape.reason.slice(0, REASON_CAP),
+      line,
+      used: false,
+    });
   }
 
   return { waivers, malformed };

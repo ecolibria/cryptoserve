@@ -268,7 +268,8 @@ A waiver is a security control's off switch, so it is deliberately narrow:
 - **It must be the first thing in the comment**, the rule `eslint-disable` uses,
   so prose that merely mentions a pragma is not one.
 - **It waives one rule on one line**, its own or the one below. There is no
-  wildcard.
+  wildcard. A finding's line is where its match starts, so a match that runs
+  over several lines is covered whole by a pragma above its first line.
 - **It reaches API misuse only**, the `misuse/*` rules. Weak algorithms,
   secrets and private keys are not waivable this way. Use `skipDirs` in
   `.cryptoserve.json` for a directory of fixtures, `--allow-secrets` for

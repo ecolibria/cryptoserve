@@ -37,7 +37,10 @@ import { parseWaiverPragmas, findWaiver, waiverWarnings, stripTerminalUnsafe, pr
 // prose and may be reworded; the id may not.
 // ---------------------------------------------------------------------------
 
-const MISUSE_PATTERNS = [
+// Exported so a test can hold every `id` to being unique. Two patterns sharing
+// one collapse into a single waiver namespace in `MISUSE_RULE_IDS`, and a
+// pragma written for either silently covers both.
+export const MISUSE_PATTERNS = [
   {
     id: 'misuse/create-cipher',
     languages: ['javascript'],

@@ -57,6 +57,14 @@ A waiver is a security control's off switch, so it is deliberately narrow:
   embeds one deliberately.
 - **It waives one rule on one line**, its own or the one below. There is no
   wildcard, and a rule id that no rule uses is reported rather than ignored.
+  A finding's line is where its match starts, so a match that runs over
+  several lines, such as a `checkServerIdentity` override with a long
+  parameter list, is covered whole by a pragma above its first line
+  ([#74](https://github.com/ecolibria/cryptoserve/issues/74)).
+- **The rule id and reason it reports are capped**, at 80 and 200 characters,
+  as every other field built from file content is. Both reach the terminal,
+  `--format json` and SARIF, and one pragma could otherwise put 200,000
+  characters in each ([#74](https://github.com/ecolibria/cryptoserve/issues/74)).
 - **Nothing is silently dropped.** Waived findings are listed by `scan` and by
   `gate` with the reason given, counted in `gate --format json` as
   `summary.waived`, and emitted in SARIF as suppressed results, which code
