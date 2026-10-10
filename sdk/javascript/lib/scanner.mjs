@@ -22,7 +22,7 @@ import { lookupAlgorithm } from './algorithm-db.mjs';
 import { lookupNpmPackage } from './crypto-registry.mjs';
 import { walkProject } from './walker.mjs';
 import { loadScannerConfig } from './config.mjs';
-import { parseWaiverPragmas, findWaiver, waiverWarnings, stripTerminalUnsafe } from './waivers.mjs';
+import { parseWaiverPragmas, findWaiver, waiverWarnings, stripTerminalUnsafe, printablePath } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // API misuse patterns
@@ -445,13 +445,17 @@ export function scanProject(projectDir, options = {}) {
         const info = lookupNpmPackage(name);
         if (info && !seenPkgs.has(name)) {
           seenPkgs.add(name);
+          // `name` needs no cleaning: it matched a registry key exactly. The
+          // version and the manifest's path are the tree's own text, and reach
+          // `scan`, `gate` and `cbom` (inside the purl too), so both are made
+          // printable here rather than at each of those.
           results.libraries.push({
             name,
-            version: version.replace(/^[\^~]/, ''),
+            version: stripTerminalUnsafe(version).replace(/^[\^~]/, ''),
             algorithms: info.algorithms,
             quantumRisk: info.quantumRisk,
             category: info.category,
-            source: pkgPath.replace(projectDir + '/', ''),
+            source: printablePath(pkgPath.replace(projectDir + '/', '')),
             ecosystem: 'npm',
           });
         }
@@ -495,7 +499,7 @@ export function scanProject(projectDir, options = {}) {
   // `server.key` looked exactly like a published `server.crt`. Publishing a
   // certificate is routine; publishing its key is the incident.
   for (const certPath of walked.certFiles) {
-    const rel = relative(projectDir, certPath);
+    const rel = printablePath(relative(projectDir, certPath));
     results.certFiles.push(rel);
     let head = '';
     try { head = readFileSync(certPath, 'utf-8').slice(0, 4096); }
@@ -506,7 +510,11 @@ export function scanProject(projectDir, options = {}) {
   }
 
   for (const filePath of walked.sourceFiles) {
-    const relPath = relative(projectDir, filePath);
+    // A file name is attacker-controlled on macOS and Linux alike, and this one
+    // value is the `file` of every finding below. Made printable once, here,
+    // so terminal, JSON, SARIF and the gate all print the same path. Files are
+    // still READ through `filePath`, never through this.
+    const relPath = printablePath(relative(projectDir, filePath));
 
     // Every supported language, JS/TS included, goes through one detection
     // path. Keeping JS on a separate path is what previously let 3DES and
@@ -716,7 +724,7 @@ export function scanProject(projectDir, options = {}) {
     try { content = readFileSync(filePath, 'utf-8'); }
     catch { continue; }
     results.configFilesScanned++;
-    collectSecrets(content, relative(projectDir, filePath), results);
+    collectSecrets(content, printablePath(relative(projectDir, filePath)), results);
   }
 
   // Source-detected libraries (node:crypto, hashlib, openssl, ...) become

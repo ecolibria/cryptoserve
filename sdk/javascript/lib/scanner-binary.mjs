@@ -10,6 +10,7 @@
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
 import { walkProject } from './walker.mjs';
+import { printablePath } from './waivers.mjs';
 
 // ---------------------------------------------------------------------------
 // Binary signatures — byte patterns for compiled crypto
@@ -142,7 +143,8 @@ export function scanBinaries(projectDir, preFilteredFiles) {
     for (const match of matches) {
       results.push({
         ...match,
-        file: filePath.replace(projectDir + '/', ''),
+        // A file name is the tree's own text: printable where it is built.
+        file: printablePath(filePath.replace(projectDir + '/', '')),
       });
     }
   }

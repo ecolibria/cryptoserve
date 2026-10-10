@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { CRYPTO_PACKAGES, lookupPackage } from './crypto-registry.mjs';
+import { stripTerminalUnsafe } from './waivers.mjs';
 
 // Re-export for backward compatibility
 export { CRYPTO_PACKAGES };
@@ -184,7 +185,10 @@ export function scanManifests(projectDir) {
         seen.add(`${ecosystem}:${pkg.name}`);
         results.push({
           name: pkg.name,
-          version: dep.version || 'unknown',
+          // The parsers above capture a version as `.*` or `[^"]+`, so it is the
+          // manifest's own text. Cleaned once here for every ecosystem, so
+          // `scan`, `gate` and the CBOM purl all carry the same value.
+          version: stripTerminalUnsafe(dep.version || '') || 'unknown',
           algorithms: pkg.algorithms,
           quantumRisk: pkg.quantumRisk,
           category: pkg.category,

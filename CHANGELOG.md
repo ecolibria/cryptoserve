@@ -148,6 +148,27 @@ it was meant to fix.
 
 ### Fixed
 
+A report no longer carries characters from the scanned tree that steer a
+terminal ([#75](https://github.com/ecolibria/cryptoserve/issues/75)).
+
+A dependency version and a file name are the scanned tree's own text. DEL, the
+C1 block (U+009B is a one-byte CSI) and the bidi overrides and isolates in either
+reached `scan`, `gate` and `cbom` raw, in the terminal and in every saved
+document: `JSON.stringify` escapes none of them. A hostile file in a tree
+somebody scans was enough; no hostile dependency was needed. Each field is now
+cleaned once, where it is built, so every output carries the same value:
+
+- Dependency versions from every manifest, and the CBOM's git branch, remote and
+  project name, have those characters removed.
+- Paths have each one percent-encoded instead (`a%E2%80%AEb.js`), because a
+  path with a character removed names a file that does not exist. The encoded
+  path decodes to the real file, and it is the form SARIF's `uri` expects.
+
+A path without any of these characters prints exactly as before. A new test
+walks every string in every document each command emits over a tree built to
+reach every input the scanner reads, so a field added later is covered without
+being listed.
+
 `gate` now fails a tree that disables TLS certificate verification
 ([#66](https://github.com/ecolibria/cryptoserve/issues/66)).
 
