@@ -290,10 +290,11 @@ v* tag pushed
 
 ### Security Measures
 
-- **PyPI API token**: Publishes to PyPI using a token stored in repository secrets (`PYPI_API_TOKEN`), scoped to the CryptoServe packages
+- **PyPI Trusted Publishing**: Each publish job exchanges a GitHub OIDC token with PyPI in the `pypi` environment. No PyPI API token is stored in repository secrets or passed to the publish action
+- **Tag check**: Refuses to publish when the tag does not match the version in `sdk/python/pyproject.toml`
 - **twine check**: Validates package metadata and structure before upload
-- **SHA-256 checksums**: A `SHA256SUMS.txt` file is generated for all wheel and source distribution artifacts
-- **GitHub Release**: Created automatically with generated release notes, checksums, and all `.whl` files attached
+- **SHA-256 checksums**: A `SHA256SUMS.txt` file with bare filenames covers the wheels and sdists attached to the release, and the workflow runs `sha256sum -c` on it before creating the release
+- **GitHub Release**: Created with release notes that give the verification commands, and attaches the wheels, the sdists and `SHA256SUMS.txt`. No Python release published so far verifies this way; see [Verifying releases](../../README.md#verifying-releases)
 
 ## 5. Branch Protection
 

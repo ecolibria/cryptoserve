@@ -134,7 +134,11 @@ JSON.parse(require("fs").readFileSync(0, "utf8")).attestations
 signature chain over that attestation.
 
 CLI versions before `0.4.0` were published under the previous token-based
-workflow. None has a GitHub Release with checksums, and only `0.2.1` carries an
+workflow, and no checksum file covers them. No `js-v` tag before `js-v0.4.0`
+has a GitHub Release. CLI `0.2.0` and `0.3.4` were tagged `v0.2.0` and
+`v0.3.4`, and the GitHub Releases on those tags, titled "CryptoServe SDK
+v0.2.0" and "CryptoServe SDK v0.3.4", hold Python wheels and a
+`SHA256SUMS.txt` that does not cover the CLI tarball. Only `0.2.1` carries an
 attestation.
 
 PyPI versions at or before `1.4.3` carry no attestations, and neither does any
