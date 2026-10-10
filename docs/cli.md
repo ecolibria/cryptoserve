@@ -216,6 +216,15 @@ on the finding's line or the line directly above it:
 const agent = new https.Agent({ rejectUnauthorized: false });
 ```
 
+A finding's line is the line its match starts on, and that is the line the
+reach is measured from. A match that runs over several lines is covered whole by
+a pragma above its first line, however far down the part that disables the
+check sits. `misuse/js-check-server-identity` is the rule this matters for: it
+matches a parameter list of any length, so a pragma above
+`checkServerIdentity: (` covers a no-op body hundreds of lines below it, and a
+pragma above that body covers nothing and is reported as `unused`. Read the
+whole match before approving such a waiver.
+
 `scan` and `gate` both print the exact pragma to write, rule id included, beside
 the finding, so the id never has to be looked up. Whatever comment syntax the
 file's language uses works: `#` in Python, `//` in the C family.

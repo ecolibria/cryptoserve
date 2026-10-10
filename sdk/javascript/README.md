@@ -184,7 +184,9 @@ Put the pragma on its own line above the finding and the question does not
 arise. It is the spelling that always works, and it is what the scanner prints
 next to a finding you might want to waive.
 
-Each pragma waives one rule on one line, its own or the one below. To exclude a
+Each pragma waives one rule on one line, its own or the one below. A finding's
+line is where its match starts, so a match that runs over several lines is
+covered whole by a pragma above its first line. To exclude a
 directory of test fixtures rather than individual lines, use `skipDirs` in
 `.cryptoserve.json`:
 

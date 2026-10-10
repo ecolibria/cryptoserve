@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseWaiverPragmas, findWaiver, waiverWarnings } from '../lib/waivers.mjs';
+import { parseWaiverPragmas, findWaiver, waiverWarnings, OPENERS_BY_LANGUAGE } from '../lib/waivers.mjs';
+import { MISUSE_PATTERNS, MISUSE_RULE_IDS } from '../lib/scanner.mjs';
+import { LANGUAGE_PATTERNS } from '../lib/scanner-languages.mjs';
 
 /**
  * A waiver is a security control's off switch, so these test what it refuses to
@@ -606,5 +608,75 @@ describe('waiverWarnings', () => {
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0].kind, 'malformed');
     assert.equal(warnings[0].file, 'app.js');
+  });
+});
+
+/**
+ * `rule` and `reason` are file content printed by `scan` and `gate`, written
+ * into `--format json`, and carried into SARIF as a `justification`. Every
+ * other field built from file content is capped; these two were not, and one
+ * pragma put 200,000 characters in each.
+ */
+describe('waiver field caps', () => {
+  const huge = 200000;
+
+  it('caps the reason at 200 characters', () => {
+    const { waivers, malformed } = parse(`// ${IGNORE} misuse/create-cipher -- ${'y'.repeat(huge)}\ncode;\n`);
+    assert.deepEqual(malformed, []);
+    assert.equal(waivers.length, 1);
+    assert.equal(waivers[0].reason, 'y'.repeat(200));
+  });
+
+  it('leaves a reason of ordinary length whole', () => {
+    const reason = 'r'.repeat(200);
+    const { waivers } = parse(`// ${IGNORE} misuse/create-cipher -- ${reason}\n`);
+    assert.equal(waivers[0].reason, reason);
+  });
+
+  it('caps the rule at 80 characters, and the warning that quotes it', () => {
+    const { waivers } = parse(`// ${IGNORE} misuse/${'r'.repeat(huge)} -- why\n`);
+    assert.equal(waivers.length, 1);
+    assert.equal(waivers[0].rule.length, 80);
+    const warnings = waiverWarnings(waivers, [], MISUSE_RULE_IDS, 'app.js');
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].kind, 'unknown-rule');
+    assert.equal(warnings[0].rule.length, 80);
+    assert.ok(warnings[0].detail.length < 120, warnings[0].detail.slice(0, 120));
+  });
+
+  it('cannot truncate an over-long rule into a real one', () => {
+    // The cap is safe only while every real id is shorter than it. A pragma
+    // naming a real id with junk appended must stay unknown and waive nothing.
+    for (const id of MISUSE_RULE_IDS) assert.ok(id.length < 80, id);
+    const { waivers } = parse(`// ${IGNORE} misuse/create-cipher${'x'.repeat(huge)} -- why\ncode;\n`);
+    assert.equal(findWaiver(waivers, 'misuse/create-cipher', 2), null);
+    assert.equal(waiverWarnings(waivers, [], MISUSE_RULE_IDS, 'app.js')[0].kind, 'unknown-rule');
+  });
+});
+
+/**
+ * The tables a waiver depends on, held to each other so that adding to one
+ * without the other fails here rather than shipping silence.
+ */
+describe('waiver tables', () => {
+  it('has comment openers for exactly the languages the scanner reads', () => {
+    // A language with no opener set has every pragma in it ignored without a
+    // word: `parseWaiverPragmas` has no way to tell one from prose.
+    assert.deepEqual(
+      Object.keys(OPENERS_BY_LANGUAGE).sort(),
+      Object.keys(LANGUAGE_PATTERNS).sort(),
+    );
+  });
+
+  it('has comment openers for every language a misuse rule applies to', () => {
+    for (const p of MISUSE_PATTERNS) {
+      for (const lang of p.languages) assert.ok(OPENERS_BY_LANGUAGE[lang], `${p.id}: ${lang}`);
+    }
+  });
+
+  it('gives every misuse pattern its own rule id', () => {
+    // A Set collapses duplicates, so two patterns sharing an id would share a
+    // waiver namespace and a pragma for one would silently cover the other.
+    assert.equal(MISUSE_RULE_IDS.size, MISUSE_PATTERNS.length);
   });
 });

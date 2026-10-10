@@ -679,6 +679,45 @@ describe('cryptoserve-ignore pragmas', () => {
     assert.deepEqual(r.waiverWarnings, [], JSON.stringify(r.waiverWarnings));
   });
 
+  describe('a match that spans lines', () => {
+    // The documented reach: a finding's line is where its match STARTS, so a
+    // pragma above that line covers the whole match, however far down the
+    // part that disables the check sits. These pin it, so narrowing or
+    // widening the reach has to change the docs that state it.
+    const SERVER_IDENTITY = 'misuse/js-check-server-identity';
+    const params = Array.from({ length: 400 }, (_, i) => `    a${i},\n`).join('');
+    const spanning = (pragmaAbove, pragmaAtBody) =>
+      'const opts = {\n'
+      + (pragmaAbove ? `  // ${IGNORE} ${SERVER_IDENTITY} -- reviewed with its whole parameter list\n` : '')
+      + '  checkServerIdentity: (\n'
+      + params
+      + (pragmaAtBody ? `  // ${IGNORE} ${SERVER_IDENTITY} -- placed above the no-op body\n` : '')
+      + '  ) => undefined,\n'
+      + '};\n';
+    const identity = (r) => r.weakPatterns.filter(p => p.rule === SERVER_IDENTITY);
+
+    it('reports the finding on the line the match starts on', () => {
+      const r = scanWith('app.js', spanning(false, false));
+      assert.equal(identity(r).length, 1, JSON.stringify(r.weakPatterns));
+      assert.equal(identity(r)[0].line, 2);
+    });
+
+    it('is covered whole by a pragma above that line', () => {
+      const r = scanWith('app.js', spanning(true, false));
+      assert.equal(identity(r).length, 0, JSON.stringify(r.weakPatterns));
+      assert.equal(r.waivedFindings.length, 1, JSON.stringify(r.waivedFindings));
+      assert.equal(r.waivedFindings[0].line, 3);
+      assert.deepEqual(r.waiverWarnings, [], JSON.stringify(r.waiverWarnings));
+    });
+
+    it('is not covered by a pragma above the line that disables the check', () => {
+      const r = scanWith('app.js', spanning(false, true));
+      assert.equal(identity(r).length, 1, JSON.stringify(r.weakPatterns));
+      assert.equal(r.waivedFindings.length, 0, JSON.stringify(r.waivedFindings));
+      assert.deepEqual(r.waiverWarnings.map(w => w.kind), ['unused']);
+    });
+  });
+
   it('quotes the evidence as it was written', () => {
     const r = scanWith('app.js', "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n");
     assert.equal(tls(r).length, 1, JSON.stringify(r.weakPatterns));
