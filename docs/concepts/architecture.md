@@ -277,7 +277,7 @@ CryptoServe supports multi-tenant deployments:
 | Database | PostgreSQL / SQLite |
 | Crypto | cryptography (OpenSSL), liboqs |
 | Auth | PyJWT, Ed25519 |
-| Frontend | Next.js 14, shadcn/ui |
+| Frontend | Next.js 16, shadcn/ui |
 | SDK | Python 3.11+, TypeScript |
 | Container | Docker, Docker Compose |
 | Orchestration | Kubernetes (optional) |
