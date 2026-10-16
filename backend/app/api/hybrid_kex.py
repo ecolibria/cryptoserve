@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Identity
 from app.core.identity_manager import identity_manager
-from app.core.hybrid_crypto import is_pqc_available, PQCError
+from app.core.hybrid_crypto import is_pqc_available, PQCError, PQCInputError
 from app.core.hybrid_kex import (
     HybridKeyExchange,
     HybridKEXMode,
@@ -365,6 +365,11 @@ async def encapsulate(
             mode=mode.value,
         )
 
+    except PQCInputError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid public key: {str(e)}",
+        )
     except PQCError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -440,6 +445,11 @@ async def decapsulate(
             mode=mode.value,
         )
 
+    except PQCInputError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid encapsulation: {str(e)}",
+        )
     except PQCError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

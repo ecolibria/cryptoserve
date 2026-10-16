@@ -301,6 +301,12 @@ or each of something, however it is worded or wrapped, unless it is limited to
 the CLI releases from `js-v0.4.0`. It accepts a download command only for a tag
 on a list of releases checked to verify, so a mistyped tag fails.
 
+The server's ML-KEM encapsulation and decapsulation refuse keys and ciphertexts
+of the wrong length before calling liboqs, as FIPS 203 §7.2 and §7.3 require
+([#82](https://github.com/ecolibria/cryptoserve/issues/82)). The key exchange
+routes answer such an input with 400, and an encapsulation or hybrid ciphertext
+shorter than the lengths its header declares is refused instead of read short.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a

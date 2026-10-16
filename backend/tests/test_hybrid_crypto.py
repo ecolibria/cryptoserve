@@ -63,6 +63,59 @@ class TestMLKEM:
         assert shared_secret_enc == shared_secret_dec
         assert len(shared_secret_enc) == 32  # 256-bit shared secret
 
+    @pytest.mark.parametrize("algorithm", ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"])
+    @pytest.mark.parametrize(
+        "malform",
+        [lambda ct: ct[:-1], lambda ct: ct + b"\x00", lambda ct: b""],
+        ids=["one-byte-short", "one-byte-long", "empty"],
+    )
+    def test_mlkem_decap_rejects_wrong_length_ciphertext(self, algorithm, malform):
+        """FIPS 203 7.3: a ciphertext of the wrong length is refused before decapsulation."""
+        kem = get_mlkem(algorithm)
+        ciphertext, _ = kem.encap_secret(kem.generate_keypair())
+        malformed = malform(ciphertext)
+        refusal = rf"{algorithm} ciphertext must be {len(ciphertext)} bytes, got {len(malformed)}"
+
+        with pytest.raises(PQCError, match=refusal):
+            kem.decap_secret(malformed)
+
+    @pytest.mark.parametrize("algorithm", ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"])
+    @pytest.mark.parametrize(
+        "malform",
+        [lambda pk: pk[:-1], lambda pk: pk + b"\x00"],
+        ids=["one-byte-short", "one-byte-long"],
+    )
+    def test_mlkem_encap_rejects_wrong_length_public_key(self, algorithm, malform):
+        """FIPS 203 7.2: an encapsulation key of the wrong length is refused before encapsulation."""
+        kem = get_mlkem(algorithm)
+        public_key = kem.generate_keypair()
+        malformed = malform(public_key)
+        refusal = rf"{algorithm} public key must be {len(public_key)} bytes, got {len(malformed)}"
+
+        with pytest.raises(PQCError, match=refusal):
+            kem.encap_secret(malformed)
+
+    def test_mlkem_set_keypair_rejects_wrong_length_private_key(self):
+        """A decapsulation key of the wrong length is refused when it is set."""
+        kem = get_mlkem("ML-KEM-768")
+        kem.generate_keypair()
+        private_key = kem.private_key
+
+        with pytest.raises(PQCError, match="ML-KEM-768 private key must be 2400 bytes, got 2399"):
+            get_mlkem("ML-KEM-768").set_keypair(b"", private_key[:-1])
+
+    def test_mlkem_wrong_length_input_is_a_value_error(self):
+        """The refusal is also a ValueError, so callers that map bad input to ValueError keep working."""
+        from app.core.hybrid_crypto import PQCInputError
+
+        kem = get_mlkem("ML-KEM-768")
+        ciphertext, _ = kem.encap_secret(kem.generate_keypair())
+
+        with pytest.raises(PQCInputError) as refused:
+            kem.decap_secret(ciphertext[:-1])
+        assert isinstance(refused.value, ValueError)
+        assert isinstance(refused.value, PQCError)
+
     def test_mlkem_ciphertext_size(self):
         """Test ML-KEM ciphertext sizes match FIPS 203."""
         for algo, expected_ct_len in [
@@ -358,6 +411,18 @@ class TestHybridCryptoEngine:
         # Decrypt with deserialized ciphertext
         decrypted = engine.decrypt(deserialized, keypair.private_key)
         assert decrypted == plaintext
+
+    def test_hybrid_ciphertext_deserialize_rejects_truncated_kem_ciphertext(self):
+        """A blob shorter than its header's kem_ct_len is refused, not sliced short."""
+        engine = HybridCryptoEngine(HybridMode.AES_MLKEM_768)
+        keypair = engine.generate_keypair()
+        serialized = engine.encrypt(b"Test data", keypair.public_key, keypair.key_id).serialize()
+
+        header_len = int.from_bytes(serialized[:2], "big")
+        truncated = serialized[: 2 + header_len + 1087]
+
+        with pytest.raises(ValueError, match="KEM ciphertext truncated"):
+            HybridCiphertext.deserialize(truncated)
 
     def test_hybrid_keypair_uniqueness(self):
         """Test that each keypair is unique."""

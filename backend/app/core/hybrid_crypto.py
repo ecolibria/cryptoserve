@@ -58,6 +58,12 @@ class PQCError(Exception):
     pass
 
 
+class PQCInputError(PQCError, ValueError):
+    """A PQC input was refused before use, such as a key or ciphertext of the wrong length."""
+
+    pass
+
+
 class HybridMode(str, Enum):
     """Supported hybrid encryption modes."""
 
@@ -162,8 +168,12 @@ class HybridCiphertext:
             raise ValueError(f"Unsupported version: {header.get('v')}")
 
         kem_ct_len = header["kem_ct_len"]
+        if not isinstance(kem_ct_len, int) or kem_ct_len < 0:
+            raise ValueError("Invalid ciphertext: bad kem_ct_len")
         kem_start = 2 + header_len
         kem_end = kem_start + kem_ct_len
+        if len(data) < kem_end:
+            raise ValueError("Invalid ciphertext: KEM ciphertext truncated")
 
         return cls(
             mode=HybridMode(header["mode"]),
@@ -231,8 +241,23 @@ class MLKEM:
         """Get the private key (after generate_keypair)."""
         return self._private_key
 
+    def _check_length(self, name: str, value: bytes, param: str) -> None:
+        """Refuse an input whose length is not the one FIPS 203 fixes for this parameter set.
+
+        liboqs copies the input into a buffer of the expected size, which pads a short
+        input with zeros, so the check must happen here, before the call.
+        """
+        expected = self.params[param]
+        if len(value) != expected:
+            raise PQCInputError(f"{self.algorithm} {name} must be {expected} bytes, got {len(value)}")
+
     def set_keypair(self, public_key: bytes, private_key: bytes) -> None:
-        """Set an existing key pair for decapsulation."""
+        """Set an existing key pair for decapsulation.
+
+        The public key is not checked: decapsulation needs only the private key,
+        and callers that hold no public key pass b"".
+        """
+        self._check_length("private key", private_key, "sk_len")
         self._public_key = public_key
         self._private_key = private_key
         # Create new KEM instance with the secret key
@@ -248,7 +273,11 @@ class MLKEM:
             Tuple of (ciphertext, shared_secret)
             - ciphertext: Send to recipient for decapsulation
             - shared_secret: 32-byte key for symmetric encryption
+
+        Raises:
+            PQCInputError: If the public key is not the encapsulation key length (FIPS 203 7.2)
         """
+        self._check_length("public key", public_key, "pk_len")
         ciphertext, shared_secret = self._kem.encap_secret(public_key)
         return ciphertext, shared_secret
 
@@ -260,9 +289,13 @@ class MLKEM:
 
         Returns:
             32-byte shared secret (same as encapsulation produced)
+
+        Raises:
+            PQCInputError: If the ciphertext is not the ciphertext length (FIPS 203 7.3)
         """
         if self._private_key is None:
             raise PQCError("No private key set. Call set_keypair() first.")
+        self._check_length("ciphertext", ciphertext, "ct_len")
 
         shared_secret = self._kem.decap_secret(ciphertext)
         return shared_secret
