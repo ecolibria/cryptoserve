@@ -284,10 +284,19 @@ class HybridKeyExchange:
 
         header = json.loads(data[2 : 2 + header_len].decode())
 
+        x25519_len = header["x25519_len"]
+        mlkem_len = header["mlkem_len"]
+        for length in (x25519_len, mlkem_len):
+            if not isinstance(length, int) or length < 0:
+                raise ValueError("Invalid encapsulation data: bad length in header")
+
         offset = 2 + header_len
-        x25519_public = data[offset : offset + header["x25519_len"]]
-        offset += header["x25519_len"]
-        mlkem_ciphertext = data[offset : offset + header["mlkem_len"]]
+        if len(data) < offset + x25519_len + mlkem_len:
+            raise ValueError("Invalid encapsulation data: truncated")
+
+        x25519_public = data[offset : offset + x25519_len]
+        offset += x25519_len
+        mlkem_ciphertext = data[offset : offset + mlkem_len]
 
         return HybridKEXEncapsulation(
             x25519_public=x25519_public,

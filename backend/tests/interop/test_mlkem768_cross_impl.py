@@ -116,6 +116,20 @@ class TestCrossImplementation:
         assert len(recovered) == SHARED_SECRET_BYTES
         assert recovered != oqs_secret
 
+    def test_both_implementations_reject_a_1087_byte_ciphertext(self, go_mlkem, liboqs_mlkem):
+        from app.core.hybrid_crypto import PQCError
+
+        receiver = liboqs_mlkem("ML-KEM-768")
+        ciphertext, _ = go_mlkem.encaps(receiver.generate_keypair())
+        assert len(ciphertext[:-1]) == CIPHERTEXT_BYTES - 1
+        with pytest.raises(PQCError, match="ciphertext"):
+            receiver.decap_secret(ciphertext[:-1])
+
+        encapsulation_key, seed = go_mlkem.keygen()
+        ciphertext, _ = liboqs_mlkem("ML-KEM-768").encap_secret(encapsulation_key)
+        with pytest.raises(RuntimeError, match="ciphertext length"):
+            go_mlkem.decaps(seed, ciphertext[:-1])
+
 
 class TestAbsencePath:
     """Absence of an implementation is reported as a skip or a failure, never a pass."""
@@ -171,7 +185,7 @@ class TestAbsencePath:
         result = self._run_cross_tests_without_helper(tmp_path, required=False)
         summary = result.stdout.strip().splitlines()[-1]
         assert result.returncode == 0, result.stdout
-        assert "4 skipped" in summary, result.stdout
+        assert "5 skipped" in summary, result.stdout
         assert "passed" not in summary, result.stdout
         assert HELPER_ENV in result.stdout
 

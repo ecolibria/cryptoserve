@@ -7,6 +7,7 @@ Tests for:
 """
 
 import pytest
+import base64
 import os
 
 from app.core.crypto_engine import CipherFactory, CryptoError, DecryptionError
@@ -256,6 +257,18 @@ class TestHybridKeyExchange:
         with pytest.raises(PQCError, match="Mode mismatch"):
             kex768.decapsulate(wrong_mode_encap, keypair768)
 
+    def test_deserialize_rejects_truncated_mlkem_ciphertext(self):
+        """A blob shorter than its header's declared lengths is refused, not sliced short."""
+        from app.core.hybrid_kex import HybridKeyExchange, HybridKEXMode
+
+        kex = HybridKeyExchange(HybridKEXMode.X25519_MLKEM_768)
+        keypair = kex.generate_keypair()
+        encap, _ = kex.encapsulate(keypair.x25519_public, keypair.mlkem_public)
+        serialized = kex.serialize_encapsulation(encap)
+
+        with pytest.raises(ValueError, match="truncated"):
+            HybridKeyExchange.deserialize_encapsulation(serialized[:-1])
+
     def test_kex_info(self):
         """Test hybrid KEX mode information."""
         from app.core.hybrid_kex import HybridKEXMode, get_hybrid_kex_info
@@ -268,6 +281,89 @@ class TestHybridKeyExchange:
         info1024 = get_hybrid_kex_info(HybridKEXMode.X25519_MLKEM_1024)
         assert info1024["nist_pqc_level"] == 5
         assert info1024["quantum_security_bits"] == 256
+
+
+@pytest.fixture
+def kex_client():
+    """The key exchange routes, with the SDK identity check stubbed."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api import hybrid_kex as kex_api
+
+    app = FastAPI()
+    app.include_router(kex_api.router)
+    app.dependency_overrides[kex_api.get_sdk_identity] = lambda: object()
+    stored_before = set(kex_api._kex_key_store)
+    with TestClient(app) as client:
+        yield client
+    for key_id in set(kex_api._kex_key_store) - stored_before:
+        del kex_api._kex_key_store[key_id]
+
+
+@pqc_skip
+class TestHybridKEXRoutes:
+    """The key exchange routes refuse a wrong-length ML-KEM input as a client error."""
+
+    def test_decapsulate_refuses_a_one_byte_short_mlkem_ciphertext(self, kex_client):
+        from app.core.hybrid_kex import HybridKeyExchange, HybridKEXEncapsulation, HybridKEXMode
+
+        key = kex_client.post("/api/v1/kex/keys/generate", json={"mode": "X25519+ML-KEM-768"})
+        assert key.status_code == 200, key.text
+        key = key.json()
+        sent = kex_client.post(
+            "/api/v1/kex/encapsulate",
+            json={
+                "x25519PublicKey": key["x25519PublicKey"],
+                "mlkemPublicKey": key["mlkemPublicKey"],
+                "mode": key["mode"],
+            },
+        )
+        assert sent.status_code == 200, sent.text
+
+        # The well-formed blob decapsulates, so the refusal below is the length check.
+        received = kex_client.post(
+            "/api/v1/kex/decapsulate",
+            json={"encapsulation": sent.json()["encapsulation"], "keyId": key["keyId"]},
+        )
+        assert received.status_code == 200, received.text
+        assert received.json()["sharedSecret"] == sent.json()["sharedSecret"]
+
+        encap = HybridKeyExchange.deserialize_encapsulation(base64.b64decode(sent.json()["encapsulation"]))
+        short = HybridKEXEncapsulation(
+            x25519_public=encap.x25519_public,
+            mlkem_ciphertext=encap.mlkem_ciphertext[:-1],
+            mode=encap.mode,
+        )
+        blob = HybridKeyExchange(HybridKEXMode.X25519_MLKEM_768).serialize_encapsulation(short)
+
+        response = kex_client.post(
+            "/api/v1/kex/decapsulate",
+            json={"encapsulation": base64.b64encode(blob).decode("ascii"), "keyId": key["keyId"]},
+        )
+
+        assert response.status_code == 400, response.text
+        assert "sharedSecret" not in response.json()
+        assert "must be 1088 bytes, got 1087" in response.json()["detail"]
+
+    def test_encapsulate_refuses_a_one_byte_short_mlkem_public_key(self, kex_client):
+        key = kex_client.post("/api/v1/kex/keys/generate", json={"mode": "X25519+ML-KEM-768"})
+        assert key.status_code == 200, key.text
+        key = key.json()
+        short_public_key = base64.b64decode(key["mlkemPublicKey"])[:-1]
+
+        response = kex_client.post(
+            "/api/v1/kex/encapsulate",
+            json={
+                "x25519PublicKey": key["x25519PublicKey"],
+                "mlkemPublicKey": base64.b64encode(short_public_key).decode("ascii"),
+                "mode": key["mode"],
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert "sharedSecret" not in response.json()
+        assert "must be 1184 bytes, got 1183" in response.json()["detail"]
 
 
 @pqc_skip
