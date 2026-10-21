@@ -234,18 +234,54 @@ async function requireDirectory(pathArg) {
 }
 
 /**
- * Write a file the user named, or stop with exit 2 when its directory is not
+ * The file an option names: null when the option is absent, a stop when it is
+ * present with no value.
+ *
+ * `getOption` returns its default for a bare `--output` and '' for
+ * `--output ''`, both falsy, so both read as "not given": `scan` printed the
+ * report to stdout, wrote no file and exited 0, and a CI step whose path
+ * variable resolved empty saw a clean exit and no artifact.
+ */
+function fileOption(args, name, { onError = usageError } = {}) {
+  const raw = optionValue(args, name);
+  if (raw === undefined) return null;
+  if (raw === null || raw === '') {
+    return onError(`${name} was given no value.`, `${name} <file>`);
+  }
+  return raw;
+}
+
+/**
+ * Why a file cannot be written where it was named: the system's own
+ * description of each error code, the text strerror() returns for it.
+ */
+const UNWRITABLE = {
+  EISDIR: 'Is a directory',
+  EACCES: 'Permission denied',
+  EPERM: 'Operation not permitted',
+  EROFS: 'Read-only file system',
+};
+
+/**
+ * Write a file the user named, or stop with exit 2 when it cannot be written
  * there. Left to the top-level handler, `--output nodir/report.txt` printed
  * Node's raw `ENOENT: ... open 'nodir/report.txt'` and exited 1, the code for a
- * command that ran and reported a failure.
+ * command that ran and reported a failure, and so did `--output somedir`
+ * (EISDIR) and a path in a directory without write permission (EACCES).
+ *
+ * `mode` is passed to writeFileSync. `onError` reports the stop, so that `gate`
+ * can make it in the format the caller asked for.
  */
-async function writeNamedFile(pathArg, content) {
+async function writeNamedFile(pathArg, content, { mode, onError = usageError } = {}) {
   try {
-    writeFileSync(pathArg, content);
+    writeFileSync(pathArg, content, mode === undefined ? undefined : { mode });
   } catch (e) {
-    if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e;
     const { existsSync, statSync } = await import('node:fs');
     const { printablePath } = await import('../lib/waivers.mjs');
+    if (UNWRITABLE[e?.code]) {
+      onError(`${UNWRITABLE[e.code]}: ${printablePath(resolve(pathArg))}`);
+    }
+    if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e;
     // Climb to the highest missing directory, so `a/b/out.txt` with neither
     // present names `a`. A file standing where a directory should be is what
     // ENOTDIR means, and it is named as not a directory.
@@ -254,13 +290,13 @@ async function writeNamedFile(pathArg, content) {
       missing = dirname(missing);
     }
     if (existsSync(missing) && !statSync(missing).isDirectory()) {
-      usageError(`Not a directory: ${printablePath(missing)}`);
+      onError(`Not a directory: ${printablePath(missing)}`);
     }
     if (existsSync(dirname(missing)) && !statSync(dirname(missing)).isDirectory()) {
-      usageError(`Not a directory: ${printablePath(dirname(missing))}`);
+      onError(`Not a directory: ${printablePath(dirname(missing))}`);
     }
     if (!existsSync(missing)) {
-      usageError(`Path does not exist: ${printablePath(missing)}`);
+      onError(`Path does not exist: ${printablePath(missing)}`);
     }
     throw e;
   }
@@ -581,6 +617,8 @@ async function cmdScan(args) {
   const positional = getPositional(args);
   const format = choiceOption(args, '--format', 'text', ['text', 'json', 'sarif']);
   const binaryFlag = getFlag(args, '--binary');
+  const emitFindings = fileOption(args, '--emit-findings');
+  const outputPath = fileOption(args, '--output');
 
   // requireDirectory, not existsSync: a path that EXISTS but is a file walks to
   // zero source files and reports a clean tree, so `scan ./package.json` looked
@@ -597,7 +635,6 @@ async function cmdScan(args) {
   }
 
   // Corpus contribution. Explicit path, local write, no network path.
-  const emitFindings = getOption(args, '--emit-findings');
   if (emitFindings) {
     const { buildFindingRecords, toJsonl } = await import('../lib/finding-records.mjs');
     const records = buildFindingRecords(results, scanDir);
@@ -605,8 +642,6 @@ async function cmdScan(args) {
     console.error(`Wrote ${records.length} finding record(s) to ${emitFindings}`);
     console.error('Records contain source context from this tree and are unlabeled. Review before sharing.');
   }
-
-  const outputPath = getOption(args, '--output');
 
   async function emit(document) {
     if (outputPath) {
@@ -793,10 +828,10 @@ async function cmdScan(args) {
 
 async function cmdEncrypt(args) {
   const { promptPassword } = await import('../lib/keychain.mjs');
-  const { encryptString, encryptFile, ALGORITHMS } = await import('../lib/local-crypto.mjs');
+  const { encryptString, encryptFileToBuffer, ALGORITHMS } = await import('../lib/local-crypto.mjs');
 
   const file = getOption(args, '--file');
-  const output = getOption(args, '--output');
+  const output = fileOption(args, '--output');
   let password = await passwordOption(args);
   const contextName = getOption(args, '--context');
   const verbose = getFlag(args, '--verbose');
@@ -828,7 +863,8 @@ async function cmdEncrypt(args) {
 
   if (file) {
     const outPath = output || file + '.enc';
-    encryptFile(file, outPath, password, algorithm, contextName || 'file');
+    const encrypted = encryptFileToBuffer(file, password, algorithm, contextName || 'file');
+    await writeNamedFile(outPath, encrypted, { mode: 0o600 });
     console.log(`Encrypted: ${outPath}`);
   } else {
     const positional = getPositional(args);
@@ -840,10 +876,10 @@ async function cmdEncrypt(args) {
 
 async function cmdDecrypt(args) {
   const { promptPassword } = await import('../lib/keychain.mjs');
-  const { decryptString, decryptFile } = await import('../lib/local-crypto.mjs');
+  const { decryptString, decryptFileToBuffer } = await import('../lib/local-crypto.mjs');
 
   const file = getOption(args, '--file');
-  const output = getOption(args, '--output');
+  const output = fileOption(args, '--output');
   let password = await passwordOption(args);
 
   if (!password) {
@@ -851,17 +887,28 @@ async function cmdDecrypt(args) {
     if (!password) { console.error('Password required.'); process.exit(1); }
   }
 
-  try {
-    if (file) {
-      const outPath = output || file.replace(/\.enc$/, '.dec');
-      decryptFile(file, outPath, password);
-      console.log(`Decrypted: ${outPath}`);
-    } else {
-      const positional = getPositional(args);
-      const blob = positional[0];
-      if (!blob) { usageError('Provide encrypted text, or use --file.', 'decrypt "blob" | decrypt --file F --output O'); }
-      console.log(decryptString(blob, password));
+  if (file) {
+    const outPath = output || file.replace(/\.enc$/, '.dec');
+    let plaintext;
+    try {
+      plaintext = decryptFileToBuffer(file, password);
+    } catch (e) {
+      console.error(`Decryption failed: ${e.message}`);
+      process.exit(1);
     }
+    // Written outside the try, because a failed write is not a failed
+    // decryption: `--output nodir/app.js` printed "Decryption failed: ENOENT"
+    // and exited 1 after the decryption had succeeded.
+    await writeNamedFile(outPath, plaintext);
+    console.log(`Decrypted: ${outPath}`);
+    return;
+  }
+
+  const positional = getPositional(args);
+  const blob = positional[0];
+  if (!blob) { usageError('Provide encrypted text, or use --file.', 'decrypt "blob" | decrypt --file F --output O'); }
+  try {
+    console.log(decryptString(blob, password));
   } catch (e) {
     console.error(`Decryption failed: ${e.message}`);
     process.exit(1);
@@ -1168,7 +1215,7 @@ async function cmdCbom(args) {
 
   const positional = getPositional(args);
   const format = choiceOption(args, '--format', 'json', ['json', 'cyclonedx', 'spdx']);
-  const output = getOption(args, '--output');
+  const output = fileOption(args, '--output');
 
   // `scan` and `gate` already refuse a path that does not exist; `cbom` did
   // not, and answered a typo with a valid CBOM asserting quantumReadiness 100
@@ -1191,7 +1238,7 @@ async function cmdCbom(args) {
   }
 
   if (output) {
-    writeFileSync(output, formatted + '\n');
+    await writeNamedFile(output, formatted + '\n');
     console.log(success(`CBOM written to ${output}`));
     console.log(labelValue('Format', format));
     console.log(labelValue('Directory', printablePath(scanDir)));
@@ -1286,6 +1333,11 @@ async function cmdGate(args) {
       maxSeverity = rawMaxSeverity;
     }
   }
+
+  // Validated before the scan with the thresholds, and in every format: only
+  // the sarif and json branches used to read it, so the default text report
+  // went to stdout and no file was written.
+  const outputPath = fileOption(args, '--output', { onError: refuse });
 
   // A missing path is an error class (exit 2), not a clean pass. Without this
   // a typo in CI (`cryptoserve gate ./srcc`) silently scores 100 and lets the
@@ -1678,8 +1730,6 @@ async function cmdGate(args) {
       waiverProblems: scanResults.waiverWarnings?.length ?? 0,
     };
 
-    const outputPath = getOption(args, '--output');
-
     if (format === 'sarif') {
       const { toSarif, violationsToFindings, waivedToFindings } = await import('../lib/sarif.mjs');
       // Built from the decision, not from a second reading of the tree. This
@@ -1731,8 +1781,7 @@ async function cmdGate(args) {
       }
       const document = JSON.stringify(toSarif(findings), null, 2);
       if (outputPath) {
-        const { writeFileSync } = await import('node:fs');
-        writeFileSync(outputPath, document + '\n');
+        await writeNamedFile(outputPath, document + '\n', { onError: refuse });
         console.error(`SARIF written to ${outputPath}`);
       } else {
         console.log(document);
@@ -1763,24 +1812,28 @@ async function cmdGate(args) {
         summary,
       }, null, 2);
       if (outputPath) {
-        const { writeFileSync } = await import('node:fs');
-        writeFileSync(outputPath, document + '\n');
+        await writeNamedFile(outputPath, document + '\n', { onError: refuse });
         console.error(`JSON written to ${outputPath}`);
       } else {
         console.log(document);
       }
     } else {
-      const { compactHeader, success, error, warning, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
-      console.log(compactHeader('gate'));
-      console.log(labelValue('Status', pass ? success('PASS') : error('FAIL')));
-      console.log(labelValue('Directory', printablePath(scanDir)));
-      console.log(labelValue('Files scanned', scannedSummary(scanResults)));
-      console.log(labelValue('Score', `${score}/100 (min: ${minScore})`));
-      console.log(labelValue('Max quantum risk', maxRisk));
-      console.log(labelValue('Max severity', maxSeverity));
+      const { compactHeader, success, error, warning, dim, bold, labelValue, unstyled } = await import('../lib/cli-style.mjs');
+      // Built as lines rather than printed as it goes, so that --output writes
+      // the text report to the file the way it writes the other two formats.
+      const lines = [];
+      const print = (line = '') => { lines.push(line); };
+
+      print(compactHeader('gate'));
+      print(labelValue('Status', pass ? success('PASS') : error('FAIL')));
+      print(labelValue('Directory', printablePath(scanDir)));
+      print(labelValue('Files scanned', scannedSummary(scanResults)));
+      print(labelValue('Score', `${score}/100 (min: ${minScore})`));
+      print(labelValue('Max quantum risk', maxRisk));
+      print(labelValue('Max severity', maxSeverity));
 
       if (violations.length > 0) {
-        console.log(`\n  ${bold('Violations:')}`);
+        print(`\n  ${bold('Violations:')}`);
         for (const v of violations) {
           // One ordinal vocabulary for the whole list, with the category kept
           // as a suffix. A bare `[LOW]` next to a bare `[CRITICAL]` used to
@@ -1802,17 +1855,17 @@ async function cmdGate(args) {
           // reaches algorithms merely named in a manifest.
           const label = (!v.severity && v.weak ? warning : error)(`${tag} ${v.algorithm}`);
           const where = v.file ? ` ${dim(location(v))}` : ` ${dim(v.source)}`;
-          console.log(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
+          print(`  ${label}${where}${v.reason ? ` ${dim(`(${v.reason})`)}` : ''}`);
           // A finding a user believes is wrong needs a next step, and for a
           // misuse that step is the pragma. Printing the rule id is what makes
           // it reachable without reading the source of the scanner.
-          if (v.rule) console.log(`      ${dim(`waive with: cryptoserve-ignore ${v.rule} -- <why> on its own line above`)}`);
+          if (v.rule) print(`      ${dim(`waive with: cryptoserve-ignore ${v.rule} -- <why> on its own line above`)}`);
         }
       }
 
       if (allowSecrets && (secretFindings.length > 0 || privateKeys.length > 0)) {
         const waived = secretFindings.length + privateKeys.length;
-        console.log(`\n  ${warning(`${waived} credential finding${waived === 1 ? '' : 's'} waived by --allow-secrets`)}`);
+        print(`\n  ${warning(`${waived} credential finding${waived === 1 ? '' : 's'} waived by --allow-secrets`)}`);
       }
 
       // Named individually, not just counted. A PASS with waivers behind it is
@@ -1821,9 +1874,9 @@ async function cmdGate(args) {
       // find out what this verdict actually covers.
       const pragmaWaived = scanResults.waivedFindings || [];
       if (pragmaWaived.length > 0) {
-        console.log(`\n  ${warning(`${pragmaWaived.length} finding${pragmaWaived.length === 1 ? '' : 's'} waived by a cryptoserve-ignore pragma:`)}`);
+        print(`\n  ${warning(`${pragmaWaived.length} finding${pragmaWaived.length === 1 ? '' : 's'} waived by a cryptoserve-ignore pragma:`)}`);
         for (const w of pragmaWaived) {
-          console.log(`    ${dim(`${location(w)} ${w.rule} (${w.reason})`)}`);
+          print(`    ${dim(`${location(w)} ${w.rule} (${w.reason})`)}`);
         }
       }
 
@@ -1832,29 +1885,38 @@ async function cmdGate(args) {
       // Surfaced on the gate as well as on `scan`, because CI is where somebody
       // notices.
       for (const w of scanResults.waiverWarnings || []) {
-        console.log(`  ${warning(`[waiver ${w.kind}]`)} ${dim(`${w.file}:${w.line}`)} ${w.detail}`);
+        print(`  ${warning(`[waiver ${w.kind}]`)} ${dim(`${w.file}:${w.line}`)} ${w.detail}`);
       }
 
       if (scoreFail) {
-        console.log(`\n  ${error(`Score ${score} is below minimum ${minScore}`)}`);
+        print(`\n  ${error(`Score ${score} is below minimum ${minScore}`)}`);
         // The score measures post-quantum readiness, so the action is a library
         // to migrate rather than a line to fix. Capped, because a large tree
         // can list dozens; the JSON carries every one.
         const SHOWN = 5;
         if (contributors.length > 0) {
-          console.log(`    ${dim('Post-quantum readiness is held down by:')}`);
+          print(`    ${dim('Post-quantum readiness is held down by:')}`);
           for (const c of contributors.slice(0, SHOWN)) {
             const d = describeContributor(c);
-            console.log(`      ${bold(c.library)}${d.where ? ` ${dim(d.where)}` : ''} ${dim(`(${d.what})`)} ${d.gain}`);
+            print(`      ${bold(c.library)}${d.where ? ` ${dim(d.where)}` : ''} ${dim(`(${d.what})`)} ${d.gain}`);
           }
           if (contributors.length > SHOWN) {
-            console.log(`      ${dim(`and ${contributors.length - SHOWN} more, listed under scoreContributors in --format json`)}`);
+            print(`      ${dim(`and ${contributors.length - SHOWN} more, listed under scoreContributors in --format json`)}`);
           }
         }
-        console.log(`    ${dim('Run `cryptoserve pqc` for the migration plan behind this score.')}`);
+        print(`    ${dim('Run `cryptoserve pqc` for the migration plan behind this score.')}`);
       }
 
-      console.log();
+      print();
+
+      // The colour codes are for the terminal stdout may be, not for a file.
+      const report = lines.join('\n');
+      if (outputPath) {
+        await writeNamedFile(outputPath, unstyled(report) + '\n', { onError: refuse });
+        console.error(`Report written to ${outputPath}`);
+      } else {
+        console.log(report);
+      }
     }
 
     // Not process.exit(), for the reason given under the SARIF branch.
@@ -2060,7 +2122,7 @@ const COMMAND_HELP = {
   'hash-password': 'cryptoserve hash-password [--password P] [--algorithm scrypt|pbkdf2]\n\n  Hash a password using scrypt or pbkdf2.\n  Use --password for non-interactive/CI usage.',
   context: 'cryptoserve context list [--format json]\ncryptoserve context show NAME [--verbose] [--format json]\n\n  List or inspect encryption contexts.',
   cbom: 'cryptoserve cbom [path] [--format cyclonedx|spdx|json] [--output file]\n\n  Generate a Crypto Bill of Materials. Reports how many files it read, and\n  refuses a path that does not exist rather than certifying an empty tree.',
-  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--max-severity none|low|medium] [--min-score 0-100]\n        [--fail-on-weak] [--allow-secrets] [--format text|json|sarif]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.\n\n  Fails on hardcoded secrets, committed private keys, weak algorithms,\n  deprecated TLS protocol versions, and critical API misuse such as a\n  disabled TLS certificate check.\n\n  Two independent thresholds, because a finding has two independent\n  properties. Every finding reports both, and neither changes with the\n  flags you passed.\n\n  --max-risk bounds QUANTUM risk (default high): how far a\n  cryptographically relevant quantum computer would weaken the algorithm.\n  SHA-256 is quantum `low` and perfectly good practice today, so\n  --max-risk none fails a correct modern project on purpose.\n\n  --max-severity bounds SECURITY severity as `scan` reports it\n  (default medium: high and critical fail). Lower it to reach medium\n  findings such as unauthenticated CBC or a static IV. It takes only\n  none, low or medium: high and critical always fail the gate, so a\n  higher value could only loosen it, and this flag does not loosen.\n\n  --fail-on-weak additionally fails any algorithm the database marks\n  weak, including ones seen only in a dependency manifest.\n  --allow-secrets waives credential findings only (secrets and private\n  keys). It does not reach weak algorithms or misuse findings.\n\n  --format sarif reports the violations that decided THIS run, so the\n  document changes when a threshold changes and a passing gate uploads\n  no alerts. Use `cryptoserve scan --format sarif` for every finding in\n  the tree regardless of any threshold.',
+  gate: 'cryptoserve gate [path] [--max-risk none|low|medium|high|critical]\n        [--max-severity none|low|medium] [--min-score 0-100]\n        [--fail-on-weak] [--allow-secrets] [--format text|json|sarif]\n        [--output file]\n\n  CI/CD gate: exit 0 on pass, 1 on fail, 2 when it could not run — an\n  unreadable path or an option value it cannot enforce.\n\n  Fails on hardcoded secrets, committed private keys, weak algorithms,\n  deprecated TLS protocol versions, and critical API misuse such as a\n  disabled TLS certificate check.\n\n  Two independent thresholds, because a finding has two independent\n  properties. Every finding reports both, and neither changes with the\n  flags you passed.\n\n  --max-risk bounds QUANTUM risk (default high): how far a\n  cryptographically relevant quantum computer would weaken the algorithm.\n  SHA-256 is quantum `low` and perfectly good practice today, so\n  --max-risk none fails a correct modern project on purpose.\n\n  --max-severity bounds SECURITY severity as `scan` reports it\n  (default medium: high and critical fail). Lower it to reach medium\n  findings such as unauthenticated CBC or a static IV. It takes only\n  none, low or medium: high and critical always fail the gate, so a\n  higher value could only loosen it, and this flag does not loosen.\n\n  --fail-on-weak additionally fails any algorithm the database marks\n  weak, including ones seen only in a dependency manifest.\n  --allow-secrets waives credential findings only (secrets and private\n  keys). It does not reach weak algorithms or misuse findings.\n\n  --format sarif reports the violations that decided THIS run, so the\n  document changes when a threshold changes and a passing gate uploads\n  no alerts. Use `cryptoserve scan --format sarif` for every finding in\n  the tree regardless of any threshold.\n\n  --output writes the report to a file instead of stdout, in any of the\n  three formats. The text report is written without colour codes.',
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',

@@ -159,7 +159,12 @@ export function decryptString(base64Text, password) {
   return decrypt(blob, key).toString('utf-8');
 }
 
-export function encryptFile(inPath, outPath, password, algorithm = 'AES-256-GCM', context = 'file') {
+/**
+ * The bytes `encryptFile` writes, without writing them. Kept apart so a caller
+ * can tell a file that could not be written from one that could not be
+ * encrypted.
+ */
+export function encryptFileToBuffer(inPath, password, algorithm = 'AES-256-GCM', context = 'file') {
   const plaintext = readFileSync(inPath);
   const salt = randomBytes(SALT_SIZE);
   const spec = ALGORITHMS[algorithm];
@@ -168,10 +173,19 @@ export function encryptFile(inPath, outPath, password, algorithm = 'AES-256-GCM'
   const key = deriveKeyFromPassword(password, salt, spec.keySize);
   const blob = encrypt(plaintext, key, 'password-derived', context, algorithm);
 
-  writeFileSync(outPath, Buffer.concat([salt, blob]), { mode: 0o600 });
+  return Buffer.concat([salt, blob]);
 }
 
-export function decryptFile(inPath, outPath, password) {
+export function encryptFile(inPath, outPath, password, algorithm = 'AES-256-GCM', context = 'file') {
+  writeFileSync(outPath, encryptFileToBuffer(inPath, password, algorithm, context), { mode: 0o600 });
+}
+
+/**
+ * The plaintext `decryptFile` writes, without writing it, for the same reason
+ * as `encryptFileToBuffer`: a decryption that succeeded is not reported as
+ * failed because the place it was to be written does not exist.
+ */
+export function decryptFileToBuffer(inPath, password) {
   const packed = readFileSync(inPath);
   if (packed.length < SALT_SIZE + 3) throw new Error('Invalid encrypted file');
 
@@ -184,9 +198,11 @@ export function decryptFile(inPath, outPath, password) {
   if (!spec) throw new Error(`Unsupported algorithm: ${algorithm}`);
 
   const key = deriveKeyFromPassword(password, salt, spec.keySize);
-  const plaintext = decrypt(blob, key);
+  return decrypt(blob, key);
+}
 
-  writeFileSync(outPath, plaintext);
+export function decryptFile(inPath, outPath, password) {
+  writeFileSync(outPath, decryptFileToBuffer(inPath, password));
 }
 
 // ---------------------------------------------------------------------------
