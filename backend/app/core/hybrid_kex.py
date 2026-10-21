@@ -40,7 +40,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
-from app.core.hybrid_crypto import is_pqc_available, get_mlkem, PQCError
+from app.core.hybrid_crypto import is_pqc_available, get_mlkem, PQCError, PQCInputError
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class HybridKeyExchange:
             Shared secret (32 bytes)
         """
         if encapsulation.mode != keypair.mode:
-            raise PQCError(f"Mode mismatch: {encapsulation.mode} vs {keypair.mode}")
+            raise PQCInputError(f"Mode mismatch: {encapsulation.mode.value} vs {keypair.mode.value}")
 
         # X25519 key exchange
         x25519_private = X25519PrivateKey.from_private_bytes(keypair.x25519_private)
@@ -283,11 +283,16 @@ class HybridKeyExchange:
             raise ValueError("Invalid encapsulation data: header truncated")
 
         header = json.loads(data[2 : 2 + header_len].decode())
+        if not isinstance(header, dict):
+            raise ValueError("Invalid encapsulation data: header must be a JSON object")
+        for field in ("mode", "x25519_len", "mlkem_len"):
+            if field not in header:
+                raise ValueError(f"Invalid encapsulation data: header missing {field}")
 
         x25519_len = header["x25519_len"]
         mlkem_len = header["mlkem_len"]
         for length in (x25519_len, mlkem_len):
-            if not isinstance(length, int) or length < 0:
+            if isinstance(length, bool) or not isinstance(length, int) or length < 0:
                 raise ValueError("Invalid encapsulation data: bad length in header")
 
         offset = 2 + header_len

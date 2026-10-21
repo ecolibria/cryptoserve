@@ -366,6 +366,82 @@ class TestHybridKEXRoutes:
         assert "must be 1184 bytes, got 1183" in response.json()["detail"]
 
 
+def _encapsulation_blob(header, body=b"\x00" * (32 + 1088)) -> str:
+    """Build a decapsulate blob: 2-byte header length, JSON header, body."""
+    import json
+
+    header_json = json.dumps(header).encode()
+    return base64.b64encode(len(header_json).to_bytes(2, "big") + header_json + body).decode("ascii")
+
+
+class TestHybridKEXDecapsulateHeaderErrors:
+    """A malformed encapsulation header or a mode mismatch is a client error (400).
+
+    Each refusal happens before any ML-KEM call, so these run without liboqs:
+    the availability check is stubbed and the stored key is placeholder bytes.
+    """
+
+    KEY_ID = "kex-header-test-key"
+    GOOD_HEADER = {"mode": "X25519+ML-KEM-768", "x25519_len": 32, "mlkem_len": 1088}
+
+    @pytest.fixture
+    def client(self, kex_client, monkeypatch):
+        from app.api import hybrid_kex as kex_api
+        from app.core import hybrid_kex as kex_core
+
+        monkeypatch.setattr(kex_api, "is_pqc_available", lambda: True)
+        monkeypatch.setattr(kex_core, "is_pqc_available", lambda: True)
+        monkeypatch.setitem(
+            kex_api._kex_key_store,
+            self.KEY_ID,
+            {
+                "mode": "X25519+ML-KEM-768",
+                "x25519_private": b"\x01" * 32,
+                "x25519_public": b"\x02" * 32,
+                "mlkem_private": b"\x03" * 2400,
+                "mlkem_public": b"\x04" * 1184,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+        return kex_client
+
+    def _decapsulate(self, client, header):
+        return client.post(
+            "/api/v1/kex/decapsulate",
+            json={"encapsulation": _encapsulation_blob(header), "keyId": self.KEY_ID},
+        )
+
+    @pytest.mark.parametrize("header", [[1, 2, 3], "a string", 7, None])
+    def test_header_that_is_not_an_object_is_refused(self, client, header):
+        response = self._decapsulate(client, header)
+
+        assert response.status_code == 400, response.text
+        assert "header must be a JSON object" in response.json()["detail"]
+
+    @pytest.mark.parametrize("field", ["x25519_len", "mlkem_len", "mode"])
+    def test_header_missing_a_field_is_refused(self, client, field):
+        header = {k: v for k, v in self.GOOD_HEADER.items() if k != field}
+
+        response = self._decapsulate(client, header)
+
+        assert response.status_code == 400, response.text
+        assert f"header missing {field}" in response.json()["detail"]
+
+    def test_header_with_a_boolean_length_is_refused(self, client):
+        response = self._decapsulate(client, {**self.GOOD_HEADER, "x25519_len": True})
+
+        assert response.status_code == 400, response.text
+        assert "bad length in header" in response.json()["detail"]
+
+    def test_header_mode_that_differs_from_the_key_mode_is_refused(self, client):
+        header = {"mode": "X25519+ML-KEM-1024", "x25519_len": 32, "mlkem_len": 1088}
+
+        response = self._decapsulate(client, header)
+
+        assert response.status_code == 400, response.text
+        assert "Mode mismatch" in response.json()["detail"]
+
+
 @pqc_skip
 class TestMLDSAAllSizes:
     """Tests for all ML-DSA sizes (44/65/87)."""
