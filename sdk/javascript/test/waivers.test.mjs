@@ -613,9 +613,9 @@ describe('waiverWarnings', () => {
 
 /**
  * `rule` and `reason` are file content printed by `scan` and `gate`, written
- * into `--format json`, and carried into SARIF as a `justification`. Every
- * other field built from file content is capped; these two were not, and one
- * pragma put 200,000 characters in each.
+ * into `--format json`, and carried into SARIF as a `justification`. A
+ * finding's `evidence` and a malformed pragma's quoted text are capped; these
+ * two were not, and one pragma put 200,000 characters in each.
  */
 describe('waiver field caps', () => {
   const huge = 200000;
