@@ -275,8 +275,7 @@ dependency that declares the algorithm. The gate now lists the libraries that
 lower the score, the quantum-vulnerable algorithms each uses, and the points
 the score would recover without them
 (`jose (RS256, ES256, EdDSA) +75 recoverable`). The points are measured by
-scoring the same inventory again without that library's contribution. A
-library derived from a call site is shown with its file and line.
+scoring the same inventory again without that library's contribution.
 `gate --format json` carries the full list as `scoreContributors`, and the
 SARIF result for a score failure names the first three.
 

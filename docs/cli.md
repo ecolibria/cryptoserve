@@ -158,8 +158,7 @@ The recoverable points are measured, not estimated: the same inventory is scored
 again without that library's contribution. A deprecated library, or one that
 uses a weak algorithm, is listed as `deprecated or weak`. Two libraries that
 both use RSA each show `no change on its own`, because the score moves only
-when both do. A library the scanner derived from a call site is shown with the
-file and line it was read from.
+when both do.
 
 The text output shows the first five. `--format json` lists every one under
 `scoreContributors`, on a pass as well as a fail, and the SARIF result for a
