@@ -429,6 +429,12 @@ tested with a ciphertext cut short inside its ML-KEM ciphertext. The engine is
 also tested with a header that has no `mode`, names an unknown mode, carries a
 non-string `nonce` or is not a JSON object.
 
+`POST /api/v1/kex/decapsulate` answers 400 instead of 500 when the encapsulation
+header is not a JSON object, lacks `mode`, `x25519_len` or `mlkem_len`, or names
+a mode other than the key's
+([#92](https://github.com/ecolibria/cryptoserve/issues/92)). A `true` or `false`
+length in the header is refused as a bad length instead of read as 1 or 0.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
