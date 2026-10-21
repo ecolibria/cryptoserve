@@ -181,9 +181,14 @@ A path without any of these characters prints exactly as before. The path of
 the scanned directory itself is not cleaned, and is printed as it is where a
 command names it, such as the `Directory` line of the text reports, the summary
 `cbom` writes to stderr and `scannedPath` in `pqc --format json`. A new test
-walks every string in every document each command emits over a tree built to
-reach every input the scanner reads, so a field added later is covered without
-being listed.
+walks every string in the JSON, SARIF and CBOM documents of `scan`, `gate`,
+`cbom` and `pqc`, and every line of the `scan`, `gate` and `pqc` text reports,
+over a tree built to reach every finding category the scanner reports, so a
+field added to one of those later is covered without being listed. It does not
+read the records `scan --emit-findings` writes, which keep these characters in
+the source lines they quote and in the project name and version they record.
+Those are read from `package.json`, and the name falls back to the scanned
+directory's own name.
 
 `gate` now fails a tree that disables TLS certificate verification
 ([#66](https://github.com/ecolibria/cryptoserve/issues/66)).

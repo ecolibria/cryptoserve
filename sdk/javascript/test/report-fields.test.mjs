@@ -1,15 +1,22 @@
 /**
  * No report field built from the scanned tree carries a terminal-steering
- * character, in any document any command emits.
+ * character, in the JSON, SARIF and CBOM documents of `scan`, `gate`, `cbom`
+ * and `pqc` or in the `scan`, `gate` and `pqc` text reports.
  *
  * This class was fixed one field at a time twice, and each time the review
  * that followed found a field the fix had missed. So this test does not list
- * fields. It builds one tree that reaches every input the scanner reads -- file
- * and directory NAMES, every manifest ecosystem, source, config, certificate,
- * binary, waiver pragmas, git metadata -- runs every report over it, and walks
- * every string in every document. A field added later is covered the moment it
- * exists; a finding category added later fails the coverage check below until
- * this tree is taught to reach it.
+ * fields. It builds one tree, from file and directory NAMES, manifests in four
+ * ecosystems (npm, PyPI, Cargo, Maven), source, config, certificate, binary,
+ * waiver pragmas and git metadata, that reaches every finding category the
+ * scanner reports, runs those reports over it, and walks every string in each.
+ * A field added to one of them later is covered the moment it exists; a
+ * finding category added later fails the coverage check below until this tree
+ * is taught to reach it.
+ *
+ * Nothing else is walked: not stderr, not the summary `cbom --output` prints,
+ * and not the records `scan --emit-findings` writes, which keep these
+ * characters in the source lines they quote and in the project name and
+ * version they record.
  */
 
 import { describe, it, before, after } from 'node:test';
