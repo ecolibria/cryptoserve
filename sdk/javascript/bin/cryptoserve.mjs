@@ -1260,10 +1260,12 @@ async function cmdGate(args) {
     const pqcResult = analyzeOffline(libraries);
     const score = pqcResult.quantumReadinessScore;
     // What the score is lower because of, by library, from the same inventory
-    // that produced it. Every violation names a file and a line; a gate failed
-    // on the score alone named only a number, and the number measures
-    // post-quantum readiness, which no single line of code fixes. Naming the
-    // libraries and the points each would recover is the next step it lacked.
+    // that produced it. Every violation names what to change: a file and a
+    // line, a committed key file, or the dependency that declares the
+    // algorithm. A gate failed on the score alone named only a number, and the
+    // number measures post-quantum readiness, which no single line of code
+    // fixes. Naming the libraries and the points each would recover is the
+    // next step it lacked.
     const contributors = scoreContributors(libraries);
 
     // EVERY place each algorithm was seen, so a violation points at code rather
