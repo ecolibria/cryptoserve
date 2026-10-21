@@ -34,7 +34,7 @@ const CLI = join(__dirname, '..', 'bin', 'cryptoserve.mjs');
 // own definition cannot narrow what this test demands: every control character
 // except tab, DEL, the C1 block (U+009B is a one-byte CSI), and the bidi
 // overrides and isolates.
-const STEERING = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f‪-‮⁦-⁩]/;
+const STEERING = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 
 // Built from code points, never written as literals: an override is invisible
 // in a diff. ESC, DEL, CSI, RLO and RLI, plus a newline for names, where it
