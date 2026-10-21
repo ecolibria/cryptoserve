@@ -356,6 +356,21 @@ property every JavaScript object has is no longer a cryptographic library
   directories with a space. Run from a copy of `sdk/javascript` whose path
   holds one, 60 of the file's 63 tests failed; all 65 now pass there.
 
+SARIF `artifactLocation.uri` is now percent-encoded
+([#85](https://github.com/ecolibria/cryptoserve/issues/85)).
+
+The uri was the path with backslashes turned into slashes and nothing else, so
+a finding in `a#b.js` was written as `a#b.js`, which a URI reader takes as the
+file `a` with the fragment `b.js`; `a?b.js` read as `a` with a query, and a
+space is not legal in a URI. `scan --format sarif` over files named `a#b.js`,
+`c?d.js` and `e f.js` now writes `a%23b.js`, `c%3Fd.js` and `e%20f.js`, and each
+resolves against the scanned directory to the file the finding is in. A colon,
+a non-ASCII character and a `%` that does not start a `%XX` triplet are encoded
+too (`a%3Ab.js`, `caf%C3%A9.js`, `100%25.js`). A `%XX` triplet already in the
+path is kept as it is, so the encoded form of a terminal-unsafe character
+(`a%E2%80%AEb.js`) is not encoded a second time. The JSON and text reports
+print the path as before.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a

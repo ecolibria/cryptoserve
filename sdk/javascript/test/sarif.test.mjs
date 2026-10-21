@@ -1,8 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join, sep } from 'node:path';
 import { collectFindings, toSarif } from '../lib/sarif.mjs';
 import { VERSION } from '../lib/version.mjs';
 
@@ -233,5 +235,47 @@ describe('toSarif', () => {
       }
       assert.deepEqual(offenders, [], `push(...arr) throws past the argument limit:\n${offenders.join('\n')}`);
     });
+  });
+});
+
+describe('artifactLocation.uri', () => {
+  const uriOf = (file) => toSarif([{ kind: 'secret', type: 'aws', message: 'm', severity: 'critical', file, line: 1 }])
+    .runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri;
+
+  it('percent-encodes characters a URI reader would take as a fragment, a query or not a path', () => {
+    assert.equal(uriOf('a#b.js'), 'a%23b.js');
+    assert.equal(uriOf('a?b.js'), 'a%3Fb.js');
+    assert.equal(uriOf('a b.js'), 'a%20b.js');
+    assert.equal(uriOf('src\\x y\\a#b.js'), 'src/x%20y/a%23b.js');
+    // A colon in the first segment would read as a URI scheme.
+    assert.equal(uriOf('a:b.js'), 'a%3Ab.js');
+    assert.equal(uriOf('café.js'), 'caf%C3%A9.js');
+  });
+
+  it('encodes a lone % but keeps the %XX triplets printablePath wrote', () => {
+    assert.equal(uriOf('100%.js'), '100%25.js');
+    assert.equal(uriOf('a%E2%80%AEb.js'), 'a%E2%80%AEb.js');
+  });
+
+  it('leaves an ordinary path unchanged', () => {
+    assert.equal(uriOf('src/lib-1/a_b.test.js'), 'src/lib-1/a_b.test.js');
+  });
+
+  it('resolves against the scanned directory to the file the finding is in', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cryptoserve-sarif-uri-'));
+    try {
+      const names = ['a#b.js', 'c?d.js', 'e f.js'];
+      for (const name of names) writeFileSync(join(dir, name), "require('crypto').createHash('md5');\n");
+      const out = execFileSync(process.execPath, [join(HERE, '..', 'bin', 'cryptoserve.mjs'), 'scan', dir, '--format', 'sarif'],
+        { encoding: 'utf8' });
+      const doc = JSON.parse(out.slice(out.indexOf('{')));
+      const base = pathToFileURL(dir + sep);
+      const resolved = doc.runs[0].results
+        .map(r => fileURLToPath(new URL(r.locations[0].physicalLocation.artifactLocation.uri, base)))
+        .sort();
+      assert.deepEqual(resolved, names.map(n => join(dir, n)).sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
