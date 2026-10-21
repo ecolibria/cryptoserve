@@ -57,9 +57,13 @@ function linesMatching(text, pattern) {
 }
 
 /**
- * The sentences of a markdown document, with wrapped lines joined back together
- * so a claim cannot pass by spanning a line break. Table rows, headings and
- * lines of code are units of their own, and a list item starts a new one.
+ * The sentences of a markdown document, with the wrapped lines of a paragraph
+ * joined back together. A line that starts with `|` or `#` is a unit of its own,
+ * read as a table row or a heading, and so is each line of code; a line that
+ * starts with a list marker starts a new unit. Each unit is then split after a
+ * `.`, `!` or `?` followed by a space and a capital letter, a backtick, a double
+ * quote or an opening parenthesis. So a sentence wrapped onto a line that starts
+ * with `|`, `#` or a list marker, or holding such a stop, is checked in parts.
  */
 function sentences(text) {
   const units = [];
@@ -87,8 +91,12 @@ function sentences(text) {
 }
 
 /**
- * Sentences that say checksums cover all, every or each of something without
- * limiting that to the CLI releases from js-v0.4.0, the only ones that verify.
+ * Sentences that contain `checksum`, `SHA256SUMS`, `SHA-256 digest` or
+ * `SHA-256 hash`, in any letter case, and the word all, every or each, unless
+ * they also contain from `js-v0.4.0` or `js-v0.4.0` onward: the CLI releases
+ * from js-v0.4.0 are the only ones that verify. It matches words, not meaning,
+ * so a blanket claim worded without these terms, or beside the exempting
+ * words, is not found.
  */
 function blanketChecksumClaims(text) {
   return sentences(text).filter(
@@ -205,7 +213,7 @@ describe('release checksum claims in the trust documents', () => {
     });
   }
 
-  it('catches a blanket claim however it is worded or wrapped', () => {
+  it('catches these blanket claims, including a table row and one wrapped across two lines', () => {
     for (const claim of [
       '| Release artifacts | SHA-256 checksums cover every published package |',
       'SHA-256 checksums cover\nevery published package.',
