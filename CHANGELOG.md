@@ -505,6 +505,31 @@ names can be stored, listed, read, deleted, exported with `vault export` and
 imported back with `importVaultBundle` as an ordinary name. `vault run` passes
 a secret named `__proto__` to the command as an environment variable.
 
+`importVaultBundle` refuses a bundle holding an entry that is not a string or an
+object with a string `value`, names up to five such entries, and stores nothing
+from the bundle
+([#101](https://github.com/ecolibria/cryptoserve/issues/101)).
+
+The import stored every entry whose `typeof` was `'object'` as it was. After it
+imported the bundle `{"A":null}`, `vault list` printed `Cannot read properties
+of null (reading 'updatedAt')` and exited 1, and `vault run` printed `Cannot
+read properties of null (reading 'value')` and exited 1, until `vault delete A`
+removed the entry. An entry that was an array, or an object without a `value`,
+was stored as well and read back from `getSecret` as `undefined`, and the
+entries `42` and `{"value":7}` were stored as numbers. Each of these now throws
+an error naming the entry and what it is, for example `Bundle not imported: "A"
+is null. Each entry must be a string or an object with a string "value". The
+vault was not changed.`, before the vault is read. A bundle holding a string,
+an array or `null` in place of a table of secrets is refused with `Bundle not
+imported: it holds a string, not a table of secrets.` and the like; the string
+`"str"` was imported as the secrets `0`, `1` and `2`.
+
+An accepted entry is stored as its `value` and an `updatedAt`. The bundle's
+`updatedAt` is kept when it is a string `Date.parse` reads and replaced by the
+time of the import otherwise, so `vault list` shows an age counted from the
+import for an entry whose `updatedAt` was missing or not a date, where it showed
+`NaNd ago`.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a

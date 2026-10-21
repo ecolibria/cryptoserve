@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -167,6 +167,117 @@ describe('vault export/import bundle', () => {
     assert.equal(count, 2);
     assert.equal(getSecret(PW, 'A', newVaultPath), '1');
     assert.equal(getSecret(PW, 'B', newVaultPath), '2');
+  });
+});
+
+describe('vault import of a bundle entry that is not a secret', () => {
+  // importVaultBundle stored every entry whose typeof was 'object' as it was.
+  // After a null entry, listSecrets and vaultRun threw "Cannot read properties
+  // of null" for the whole vault, and an array or an object without a `value`
+  // read back from getSecret as undefined.
+  const bundleOf = json => _encryptData(json, PW).toString('base64');
+  const names = () => listSecrets(PW, VAULT_PATH).map(s => s.key).sort();
+
+  beforeEach(() => {
+    setup();
+    initVault(PW, VAULT_PATH);
+    setSecret(PW, 'KEPT', 'k', VAULT_PATH);
+  });
+  afterEach(cleanup);
+
+  it('refuses a null entry, and list, get and run keep working', async () => {
+    const before = readFileSync(VAULT_PATH);
+    assert.throws(() => importVaultBundle(PW, bundleOf('{"NEW":"n","A":null}'), null, VAULT_PATH),
+      /^Error: Bundle not imported: "A" is null\. .*The vault was not changed\.$/);
+    assert.deepEqual(readFileSync(VAULT_PATH), before, 'the vault file was rewritten');
+    assert.deepEqual(names(), ['KEPT']);
+    assert.equal(getSecret(PW, 'NEW', VAULT_PATH), null);
+    assert.equal(getSecret(PW, 'A', VAULT_PATH), null);
+    const check = 'process.exit(process.env.KEPT === "k" ? 0 : 3)';
+    assert.equal(await vaultRun(PW, process.execPath, ['-e', check], VAULT_PATH), 0);
+  });
+
+  it('refuses an array, a number, a boolean and an object without a string value', () => {
+    const cases = [
+      ['["x"]', /"BAD" is an array/],
+      ['{}', /"BAD" has no string "value"/],
+      ['{"value":7}', /"BAD" has no string "value"/],
+      ['{"value":null}', /"BAD" has no string "value"/],
+      ['{"value":["x"]}', /"BAD" has no string "value"/],
+      ['42', /"BAD" is a number/],
+      ['true', /"BAD" is a boolean/],
+    ];
+    const before = readFileSync(VAULT_PATH);
+    for (const [entry, reason] of cases) {
+      assert.throws(() => importVaultBundle(PW, bundleOf(`{"NEW":"n","BAD":${entry}}`), null, VAULT_PATH),
+        reason, entry);
+      assert.deepEqual(readFileSync(VAULT_PATH), before, entry);
+    }
+    assert.deepEqual(names(), ['KEPT']);
+  });
+
+  it('names the first five refused entries and counts the rest', () => {
+    const json = '{"B1":null,"OK":"v","B2":[],"B3":{},"B4":1,"B5":false,"B6":null,"B7":null}';
+    assert.throws(() => importVaultBundle(PW, bundleOf(json), null, VAULT_PATH), {
+      message: 'Bundle not imported: "B1" is null, "B2" is an array, "B3" has no string "value", '
+        + '"B4" is a number, "B5" is a boolean, and 2 more. Each entry must be a string or an '
+        + 'object with a string "value". The vault was not changed.',
+    });
+    assert.deepEqual(names(), ['KEPT']);
+  });
+
+  it('refuses a bundle that is not a table of secrets', () => {
+    // A bundle holding the string "str" was imported as the secrets 0, 1 and 2.
+    const cases = [['"str"', 'a string'], ['["x"]', 'an array'], ['null', 'null'], ['42', 'a number']];
+    const before = readFileSync(VAULT_PATH);
+    for (const [json, kind] of cases) {
+      assert.throws(() => importVaultBundle(PW, bundleOf(json), null, VAULT_PATH), {
+        message: `Bundle not imported: it holds ${kind}, not a table of secrets. `
+          + 'The vault was not changed.',
+      }, json);
+      assert.deepEqual(readFileSync(VAULT_PATH), before, json);
+    }
+    assert.deepEqual(names(), ['KEPT']);
+  });
+
+  it('creates no vault when it refuses a bundle', () => {
+    const newVaultPath = join(TEST_DIR, 'vault2.enc');
+    for (const json of ['{"A":null}', '"str"']) {
+      assert.throws(() => importVaultBundle(PW, bundleOf(json), null, newVaultPath),
+        /^Error: Bundle not imported/, json);
+      assert.ok(!existsSync(newVaultPath), `the refused bundle ${json} created a vault`);
+    }
+  });
+
+  it('stores each accepted entry as a string value and an update time', () => {
+    const kept = '2026-01-02T03:04:05.000Z';
+    const json = JSON.stringify({
+      S: 'plain',
+      O: { value: 'v', updatedAt: kept, note: 'x' },
+      M: { value: 'm' },
+      T: { value: 't', updatedAt: 'not a date' },
+      N: { value: 'n', updatedAt: 0 },
+      E: { value: '' },
+    });
+    const start = Date.now();
+    assert.equal(importVaultBundle(PW, bundleOf(json), null, VAULT_PATH), 6);
+    const end = Date.now();
+    assert.deepEqual(names(), ['E', 'KEPT', 'M', 'N', 'O', 'S', 'T']);
+    const values = { S: 'plain', O: 'v', M: 'm', T: 't', N: 'n', E: '' };
+    for (const [name, value] of Object.entries(values)) {
+      assert.equal(getSecret(PW, name, VAULT_PATH), value, name);
+    }
+    // `vault list` printed "NaNd ago" for M and T, whose update time was missing
+    // or not a date. They now carry the time of the import, as does N, whose
+    // update time is not a string.
+    const updated = Object.fromEntries(listSecrets(PW, VAULT_PATH).map(s => [s.key, s.updatedAt]));
+    assert.equal(updated.O, kept);
+    for (const name of ['S', 'M', 'T', 'N', 'E']) {
+      const at = Date.parse(updated[name]);
+      assert.ok(at >= start && at <= end, `${name} was not dated at the import: ${updated[name]}`);
+    }
+    const exported = JSON.parse(_decryptData(Buffer.from(exportVault(PW, null, VAULT_PATH), 'base64'), PW));
+    assert.deepEqual(exported.O, { value: 'v', updatedAt: kept });
   });
 });
 
