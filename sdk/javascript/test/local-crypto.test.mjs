@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
+import {
+  writeFileSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync, readdirSync, statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,6 +11,7 @@ import {
   getKeyIdFromCiphertext, getContextFromCiphertext,
   encryptString, decryptString,
   encryptFile, decryptFile,
+  encryptFileToBuffer, decryptFileToBuffer,
   hashPassword,
 } from '../lib/local-crypto.mjs';
 
@@ -147,6 +150,36 @@ describe('encryptFile/decryptFile', () => {
     // Cleanup
     for (const f of [inFile, encFile, outFile]) {
       if (existsSync(f)) unlinkSync(f);
+    }
+  });
+});
+
+describe('encryptFileToBuffer/decryptFileToBuffer', () => {
+  it('return the bytes encryptFile and decryptFile write, and write no file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cryptoserve-to-buffer-'));
+    try {
+      const inFile = join(dir, 'in.bin');
+      const plaintext = randomBytes(1024);
+      writeFileSync(inFile, plaintext);
+
+      const packed = encryptFileToBuffer(inFile, 'filepassword');
+      assert.deepEqual(readdirSync(dir), ['in.bin']);
+      // What encryptFileToBuffer returns is what decryptFile reads...
+      writeFileSync(join(dir, 'a.enc'), packed);
+      decryptFile(join(dir, 'a.enc'), join(dir, 'a.out'), 'filepassword');
+      assert.deepEqual(readFileSync(join(dir, 'a.out')), plaintext);
+
+      // ...and what encryptFile writes is what decryptFileToBuffer reads.
+      encryptFile(inFile, join(dir, 'b.enc'), 'filepassword');
+      if (process.platform !== 'win32') {
+        assert.equal(statSync(join(dir, 'b.enc')).mode & 0o777, 0o600);
+      }
+      assert.deepEqual(decryptFileToBuffer(join(dir, 'b.enc'), 'filepassword'), plaintext);
+      assert.deepEqual(readdirSync(dir).sort(), ['a.enc', 'a.out', 'b.enc', 'in.bin']);
+
+      assert.throws(() => decryptFileToBuffer(join(dir, 'b.enc'), 'wrongpassword'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

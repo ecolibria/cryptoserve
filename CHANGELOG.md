@@ -157,6 +157,38 @@ it was meant to fix.
 
 ### Fixed
 
+`cbom --output`, `gate --output`, `encrypt --file --output` and
+`decrypt --file --output` given a file in a directory that does not exist now
+print `Error: Path does not exist: <directory>` and exit `2`, as `scan` does
+since #95 ([#99](https://github.com/ecolibria/cryptoserve/issues/99)). `cbom`
+and `encrypt` printed Node's raw `ENOENT` text and exited `1`; `decrypt`
+printed `Decryption failed: ENOENT ...` and exited `1`, although the decryption
+had succeeded and only the write had failed; `gate` printed the raw text with
+exit `2`. `gate --format json` carries the new message in the `error` field of
+its JSON document on stdout, where the raw text used to be. On these commands
+and on `scan`, an output path that is an existing directory, or one the system
+refuses to write, is now named with the reason and exit `2`:
+`Error: Is a directory: <path>`, `Error: Permission denied: <path>`,
+`Error: Operation not permitted: <path>` or
+`Error: Read-only file system: <path>`. `scan --output somedir` printed
+`Error: EISDIR: illegal operation on a directory, open 'somedir'` and exited
+`1`.
+
+`scan --output` and `scan --emit-findings` with an empty value, or with nothing
+after them, now print `Error: --output was given no value.` (or
+`--emit-findings`) and exit `2`. They printed the report to stdout, wrote no
+file and exited `0`, so a CI step that expected the file saw a clean exit and
+no artifact. `cbom`, `gate`, `encrypt` and `decrypt` stop the same way on an
+empty or missing `--output` value: `cbom --output ''` printed the CBOM to
+stdout and `encrypt --file app.js --output ''` wrote `app.js.enc`, both with
+exit `0`. `scan` given `--output` or `--emit-findings` twice now exits `2`
+instead of writing to the first path.
+
+`gate --output` writes the text report, the default format, to the file as
+`scan --output` does, without colour codes. Only `--format sarif` and
+`--format json` wrote the file: the text report went to stdout and no file was
+written. `gate --help` lists `--output`.
+
 `scan --output` and `scan --emit-findings` given a file in a directory that does
 not exist now print `Error: Path does not exist: <directory>` and exit `2`
 ([#95](https://github.com/ecolibria/cryptoserve/issues/95)). They printed Node's

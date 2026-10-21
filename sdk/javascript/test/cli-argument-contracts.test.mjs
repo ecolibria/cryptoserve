@@ -18,7 +18,10 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, realpathSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync, writeFileSync, readFileSync, rmSync, realpathSync, existsSync,
+  mkdirSync, chmodSync, statSync,
+} from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -771,6 +774,184 @@ describe('scan writing to a directory that is not there', () => {
     const { code, stderr } = run(['scan', '.', '--output', 'app.js/report.txt'], { cwd: dir });
     assert.equal(code, 2, stderr);
     assert.equal(stderr.trim(), `Error: Not a directory: ${join(dir, 'app.js')}`);
+  });
+});
+
+/** A directory holding app.js with a createHash('md5') call. */
+function md5Tree(prefix) {
+  const dir = tempDir(prefix);
+  writeFileSync(join(dir, 'app.js'), 'const c = require("crypto");\nconst h = c.createHash("md5");\n');
+  return dir;
+}
+
+const FILE_PASSWORD = ['--password', 'not-a-real-password'];
+
+describe('--output into a directory that is not there, on cbom, gate, encrypt and decrypt', () => {
+  // Only `scan` named the missing directory (#95). The others handed the write
+  // to the top-level handler, which printed Node's raw ENOENT text and exited
+  // 1, and decrypt said "Decryption failed" when only the write had.
+  const cases = [
+    ['cbom', ['cbom', '.', '--output', 'nodir/c.json']],
+    ['encrypt --file', ['encrypt', '--file', 'app.js', '--output', 'nodir/x.enc', ...FILE_PASSWORD]],
+    ['gate, text', ['gate', '.', '--output', 'nodir/g.txt']],
+    ['gate, sarif', ['gate', '.', '--format', 'sarif', '--output', 'nodir/g.sarif']],
+  ];
+  for (const [label, args] of cases) {
+    it(`names the missing directory and exits 2 (${label})`, () => {
+      const dir = md5Tree('output-nodir');
+      const { code, stderr } = run(args, { cwd: dir });
+      assert.equal(code, 2, stderr);
+      assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'nodir')}`);
+      assert.equal(existsSync(join(dir, 'nodir')), false);
+    });
+  }
+
+  it('names the missing directory and exits 2 (decrypt --file), not "Decryption failed"', () => {
+    const dir = md5Tree('output-nodir');
+    assert.equal(run(['encrypt', '--file', 'app.js', '--output', 'app.enc', ...FILE_PASSWORD], { cwd: dir }).code, 0);
+    const { code, stderr } = run(['decrypt', '--file', 'app.enc', '--output', 'nodir/app.js', ...FILE_PASSWORD], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'nodir')}`);
+    // The same file and password decrypt to a directory that exists, so the
+    // stop above is about where the plaintext was to go.
+    assert.equal(run(['decrypt', '--file', 'app.enc', '--output', 'out.js', ...FILE_PASSWORD], { cwd: dir }).code, 0);
+    assert.equal(readFileSync(join(dir, 'out.js'), 'utf-8'), readFileSync(join(dir, 'app.js'), 'utf-8'));
+  });
+
+  it('says so in a JSON document on stdout for gate --format json', () => {
+    const dir = md5Tree('output-nodir');
+    const { code, stdout } = run(['gate', '.', '--format', 'json', '--output', 'nodir/g.json'], { cwd: dir });
+    assert.equal(code, 2);
+    assert.deepEqual(JSON.parse(stdout), {
+      status: 'error', error: `Path does not exist: ${join(dir, 'nodir')}`,
+    });
+  });
+
+  it('still writes the encrypted file readable by its owner only',
+    { skip: process.platform === 'win32' ? 'POSIX modes only' : false }, () => {
+      const dir = md5Tree('output-mode');
+      assert.equal(run(['encrypt', '--file', 'app.js', '--output', 'app.enc', ...FILE_PASSWORD], { cwd: dir }).code, 0);
+      assert.equal(statSync(join(dir, 'app.enc')).mode & 0o777, 0o600);
+    });
+});
+
+describe('an --output or --emit-findings given no value', () => {
+  // getOption returned its default for a bare `--output` and '' for
+  // `--output ''`. Both are falsy, so both read as absent: scan printed the
+  // report to stdout, wrote no file and exited 0.
+  const cases = [
+    ["scan --output ''", '--output', ['--output', '']],
+    ['scan with a bare --output', '--output', ['--output']],
+    ["scan --emit-findings ''", '--emit-findings', ['--emit-findings', '']],
+    ['scan with a bare --emit-findings', '--emit-findings', ['--emit-findings']],
+  ];
+  for (const [label, name, flags] of cases) {
+    it(`${label} stops with exit 2`, () => {
+      const { code, stdout, stderr } = run(['scan', '.', ...flags], { cwd: md5Tree('output-empty') });
+      assert.equal(code, 2, stderr);
+      assert.equal(stderr.split('\n')[0], `Error: ${name} was given no value.`);
+      assert.equal(stdout, '');
+    });
+  }
+
+  it('cbom, gate, encrypt and decrypt stop on an empty --output as well', () => {
+    const dir = md5Tree('output-empty');
+    for (const args of [
+      ['cbom', '.', '--output', ''],
+      ['gate', '.', '--output', ''],
+      ['encrypt', '--file', 'app.js', '--output', '', ...FILE_PASSWORD],
+      ['decrypt', '--file', 'app.js.enc', ...FILE_PASSWORD, '--output'],
+    ]) {
+      const { code, stdout, stderr } = run(args, { cwd: dir });
+      assert.equal(code, 2, `${args.join(' ')}: ${stderr}`);
+      assert.equal(stderr.split('\n')[0], 'Error: --output was given no value.', args.join(' '));
+      assert.equal(stdout, '', args.join(' '));
+    }
+    // encrypt used to fall back to app.js.enc without a word.
+    assert.equal(existsSync(join(dir, 'app.js.enc')), false);
+  });
+
+  it('says so in a JSON document on stdout for gate --format json', () => {
+    const { code, stdout } = run(['gate', '.', '--format', 'json', '--output', ''], { cwd: md5Tree('output-empty') });
+    assert.equal(code, 2);
+    assert.deepEqual(JSON.parse(stdout), { status: 'error', error: '--output was given no value.' });
+  });
+
+  it('scan stops on --output given twice rather than writing one of them', () => {
+    const dir = md5Tree('output-twice');
+    const { code, stderr } = run(['scan', '.', '--output', 'a.txt', '--output', 'b.txt'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.split('\n')[0], 'Error: --output was given more than once.');
+    assert.equal(existsSync(join(dir, 'a.txt')), false);
+    assert.equal(existsSync(join(dir, 'b.txt')), false);
+  });
+});
+
+describe('gate --output with the text format', () => {
+  // Only the sarif and json branches read --output, so `gate . --output
+  // report.txt` printed the default text report to stdout and wrote no file,
+  // and `gate --help` did not list the option.
+  it('writes the report to the file instead of ignoring the flag', () => {
+    const dir = md5Tree('gate-output');
+    const printed = run(['gate', '.'], { cwd: dir });
+    const { code, stdout, stderr } = run(['gate', '.', '--output', 'report.txt'], { cwd: dir });
+    // MD5 fails the gate. The exit code is the verdict with --output as without.
+    assert.equal(printed.code, 1, printed.stderr);
+    assert.match(printed.stdout, /FAIL/);
+    assert.equal(code, 1, stderr);
+    assert.equal(readFileSync(join(dir, 'report.txt'), 'utf-8'), printed.stdout);
+    assert.equal(stdout, '');
+    assert.equal(stderr.trim(), 'Report written to report.txt');
+  });
+
+  it('leaves out of the file the colour codes chosen for a terminal', () => {
+    const dir = md5Tree('gate-output');
+    const colour = { NO_COLOR: '', FORCE_COLOR: '1' };
+    // Holds the premise: without it the comparison below proves nothing.
+    assert.match(run(['gate', '.'], { cwd: dir, env: colour }).stdout, /\x1b\[/);
+    const plain = run(['gate', '.'], { cwd: dir }).stdout;
+    assert.equal(run(['gate', '.', '--output', 'report.txt'], { cwd: dir, env: colour }).code, 1);
+    assert.equal(readFileSync(join(dir, 'report.txt'), 'utf-8'), plain);
+  });
+
+  it('is listed in gate --help', () => {
+    assert.match(run(['gate', '--help']).stdout, /\[--output file\]/);
+  });
+});
+
+describe('--output naming a directory, or a path that cannot be written', () => {
+  // writeNamedFile explained ENOENT and ENOTDIR and rethrew every other code,
+  // so these reached the top-level handler as Node's raw EISDIR and EACCES
+  // text with exit 1, the code for a command that ran and reported a failure.
+  it('names the directory and exits 2', () => {
+    const dir = md5Tree('output-isdir');
+    mkdirSync(join(dir, 'somedir'));
+    const { code, stderr } = run(['scan', '.', '--output', 'somedir'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Is a directory: ${join(dir, 'somedir')}`);
+  });
+
+  it('names a file in a directory without write permission and exits 2',
+    { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'permissions are not enforced here' : false }, () => {
+      const dir = md5Tree('output-eacces');
+      const ro = join(dir, 'ro');
+      mkdirSync(ro);
+      chmodSync(ro, 0o555);
+      try {
+        const { code, stderr } = run(['scan', '.', '--output', 'ro/x.txt'], { cwd: dir });
+        assert.equal(code, 2, stderr);
+        assert.equal(stderr.trim(), `Error: Permission denied: ${join(ro, 'x.txt')}`);
+      } finally {
+        chmodSync(ro, 0o755);
+      }
+    });
+
+  it('says so in a JSON document on stdout for gate --format json', () => {
+    const dir = md5Tree('output-isdir');
+    mkdirSync(join(dir, 'somedir'));
+    const { code, stdout } = run(['gate', '.', '--format', 'json', '--output', 'somedir'], { cwd: dir });
+    assert.equal(code, 2);
+    assert.deepEqual(JSON.parse(stdout), { status: 'error', error: `Is a directory: ${join(dir, 'somedir')}` });
   });
 });
 

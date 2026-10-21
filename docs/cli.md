@@ -115,6 +115,7 @@ cryptoserve gate . --format sarif           # SARIF output
 | `--fail-on-weak` | Fail on weak algorithms (MD5, DES, RC4, ECB), including ones seen only in a manifest |
 | `--allow-secrets` | Do not fail on hardcoded secrets or committed private keys (both still reported) |
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
+| `--output <file>` | Write the report to a file instead of stdout, in any of the three formats. The text report is written without colour codes |
 | `--verbose` | Show detailed violations |
 
 #### The two thresholds are different questions
@@ -532,11 +533,15 @@ to do, so a result is never reported for something that was not measured:
 
 - a path that does not exist, or exists but is not a directory
   (`scan`, `pqc`, `cbom`, `gate`)
-- a `scan --output` or `scan --emit-findings` file whose directory does not
-  exist, or has a file in its place
+- an `--output` file (`scan`, `cbom`, `gate`, `encrypt --file`,
+  `decrypt --file`) or a `scan --emit-findings` file that cannot be written
+  where it was named: its directory does not exist or has a file in its place,
+  the path is a directory, or the system refuses the write (permission denied,
+  operation not permitted, read-only file system)
 - an option value the command cannot act on: `--min-score abc`, `--min-score 500`,
   `--max-risk bogus`, `--profile helthcare`, `--algorithm BOGUS`, an unknown
-  `--format`, an empty `--password`
+  `--format`, an empty `--password`, an empty or missing `--output` value
+  (`scan`, `cbom`, `gate`, `encrypt`, `decrypt`) or `--emit-findings` value
 - the same option given twice
 - a required argument that is missing: `encrypt` with no text, `vault set` with
   no value, `context show` with no name
