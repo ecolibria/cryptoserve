@@ -405,6 +405,21 @@ path is kept as it is, so the encoded form of a terminal-unsafe character
 (`a%E2%80%AEb.js`) is not encoded a second time. The JSON and text reports
 print the path as before.
 
+`createHash('constructor')` in a scanned file no longer stops `scan`, `cbom`
+and `gate` ([#89](https://github.com/ecolibria/cryptoserve/issues/89)).
+
+The algorithm tables are plain objects and were read with `in`, which is also
+true for a name inherited from `Object.prototype`. On a tree whose one file
+holds `require('crypto').createHash('constructor')`, the digest name resolved
+to the Object function: `scan --format json` and `cbom` exited 1 with nothing
+on stdout, and `gate` exited 2, each printing `Error: a.startsWith is not a
+function`. `createHash('con-structor')` loses its hyphen on the way to the
+database, and was reported as an algorithm called `constructor` with a
+`weakPatterns` entry that named no issue and no severity. Only a table's own
+keys match now, so both names are unknown algorithms. On each of those trees,
+`scan --format json` and `cbom` exit 0 with their document, `gate` exits 0,
+and the scan reports no algorithm for the call.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a

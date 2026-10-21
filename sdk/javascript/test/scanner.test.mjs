@@ -150,6 +150,29 @@ describe('scanProject', () => {
     // What the inventory feeds read `algorithms` of each entry, and these had none.
     assert.doesNotThrow(() => toLibraryInventory(results));
   });
+
+  it('completes on an algorithm token inherited from Object.prototype', () => {
+    // The token canonicalized to the Object function, and the scan threw
+    // "a.startsWith is not a function", so `scan` and `cbom` printed no
+    // document and `gate` exited 2.
+    writeFileSync(join(TEST_DIR, 'index.js'), "require('crypto').createHash('constructor');\n");
+    const results = scanProject(TEST_DIR);
+    assert.deepEqual(results.sourceAlgorithms, []);
+    assert.deepEqual(results.libraries.map(l => [l.name, l.algorithms]), [['node:crypto', []]]);
+    assert.doesNotThrow(() => toLibraryInventory(results));
+  });
+
+  it('reports no algorithm for a token that normalizes to an inherited name', () => {
+    // `con-structor` loses its hyphen on the way to the database and became an
+    // algorithm called "constructor", with a `weakPatterns` entry that named
+    // no issue and no severity.
+    writeFileSync(join(TEST_DIR, 'index.js'), "require('crypto').createHash('con-structor');\n");
+    const results = scanProject(TEST_DIR);
+    assert.deepEqual(results.sourceAlgorithms, []);
+    assert.deepEqual(results.algorithmSites, []);
+    assert.deepEqual(results.weakPatterns, []);
+    assert.deepEqual(results.libraries.map(l => [l.name, l.algorithms]), [['node:crypto', []]]);
+  });
 });
 
 describe('toLibraryInventory', () => {

@@ -235,16 +235,22 @@ const ALIASES = {
 /**
  * Normalize an algorithm name: trim, lowercase, strip spaces, try aliases.
  * Returns the canonical key in ALGORITHM_DB or null if not found.
+ *
+ * Every lookup asks whether the table OWNS the key. The name can be the
+ * scanned tree's own text and each table is a plain object, so `key in
+ * ALGORITHM_DB` was also true for a name inherited from Object.prototype:
+ * `lookupAlgorithm('constructor')` and `lookupAlgorithm('__proto__')` returned
+ * an entry with no category, risk or weakness instead of null.
  */
 function normalize(name) {
   if (!name || typeof name !== 'string') return null;
   let key = name.trim().toLowerCase().replace(/\s+/g, '-');
-  if (key in ALGORITHM_DB) return key;
-  if (key in ALIASES) return ALIASES[key];
+  if (Object.hasOwn(ALGORITHM_DB, key)) return key;
+  if (Object.hasOwn(ALIASES, key)) return ALIASES[key];
   // Try without hyphens
   const nohyphen = key.replace(/-/g, '');
-  if (nohyphen in ALGORITHM_DB) return nohyphen;
-  if (nohyphen in ALIASES) return ALIASES[nohyphen];
+  if (Object.hasOwn(ALGORITHM_DB, nohyphen)) return nohyphen;
+  if (Object.hasOwn(ALIASES, nohyphen)) return ALIASES[nohyphen];
   return null;
 }
 
@@ -321,7 +327,11 @@ export function canonicalizeAlgorithmToken(token) {
   const t = token.trim().toLowerCase().replace(/[_\s]+/g, '-');
   if (!t) return null;
 
-  if (t in DIGEST_TOKENS) return DIGEST_TOKENS[t];
+  // An own key only, as in `normalize`. `t in DIGEST_TOKENS` was true for
+  // "constructor" and returned the Object function as the algorithm, so
+  // `createHash('constructor')` made `scan` and `cbom` exit 1 with no
+  // document and `gate` exit 2.
+  if (Object.hasOwn(DIGEST_TOKENS, t)) return DIGEST_TOKENS[t];
 
   // AES: preserve the mode, drop the key length (ECB weakness is mode-borne).
   const aes = t.match(/^aes-?(?:128|192|256)?-?([a-z]+)?(?:-\d+)?$/);
@@ -339,7 +349,7 @@ export function canonicalizeAlgorithmToken(token) {
 
   for (const [prefix, canonical] of CIPHER_FAMILY_PREFIXES) {
     if (t === prefix || t.startsWith(prefix + '-')) {
-      return canonical in ALGORITHM_DB ? canonical : null;
+      return Object.hasOwn(ALGORITHM_DB, canonical) ? canonical : null;
     }
   }
 
