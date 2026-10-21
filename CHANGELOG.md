@@ -156,8 +156,9 @@ it was meant to fix.
 
 ### Fixed
 
-A report no longer carries characters from the scanned tree that steer a
-terminal ([#75](https://github.com/ecolibria/cryptoserve/issues/75)).
+A dependency version, a file path and the CBOM's git branch, remote and
+project name no longer carry characters that steer a terminal
+([#75](https://github.com/ecolibria/cryptoserve/issues/75)).
 
 A dependency version and a file name are the scanned tree's own text. DEL, the
 C1 block (U+009B is a one-byte CSI) and the bidi overrides and isolates in either
@@ -170,9 +171,15 @@ cleaned once, where it is built, so every output carries the same value:
   project name, have those characters removed.
 - Paths have each one percent-encoded instead (`a%E2%80%AEb.js`), because a
   path with a character removed names a file that does not exist. The encoded
-  path decodes to the real file, and it is the form SARIF's `uri` expects.
+  path decodes to the real file when the name holds no `%` of its own, and it
+  is the form SARIF's `uri` expects. A literal `%` is not encoded, so a name
+  that holds one as well as one of these characters does not decode back to
+  itself.
 
-A path without any of these characters prints exactly as before. A new test
+A path without any of these characters prints exactly as before. The path of
+the scanned directory itself is not cleaned, and is printed as it is where a
+command names it, such as the `Directory` line of the text reports, the summary
+`cbom` writes to stderr and `scannedPath` in `pqc --format json`. A new test
 walks every string in every document each command emits over a tree built to
 reach every input the scanner reads, so a field added later is covered without
 being listed.
