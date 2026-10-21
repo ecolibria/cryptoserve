@@ -171,23 +171,36 @@ cleaned once, where it is built, so every output carries the same value:
 - Dependency versions from every manifest, and the CBOM's git branch, remote and
   project name, have those characters removed.
 - Paths have each one percent-encoded instead (`a%E2%80%AEb.js`), because a
-  path with a character removed names a file that does not exist. The encoded
-  path decodes to the real file when the name holds no `%` of its own, and it
-  is the form SARIF's `uri` expects. A literal `%` is not encoded, so a name
-  that holds one as well as one of these characters does not decode back to
-  itself.
+  path with a character removed names a file that does not exist. A literal
+  `%` is encoded as well, as `%25`, so that decoding the path gives back the
+  file's name, and percent-encoding is the form SARIF's `uri` expects.
 
-A path without any of these characters prints exactly as before. The path of
-the scanned directory itself is not cleaned, and is printed as it is where a
-command names it, such as the `Directory` line of the text reports, the summary
-`cbom` writes to stderr and `scannedPath` in `pqc --format json`. A new test
-walks every string in the JSON, SARIF and CBOM documents of `scan`, `gate`,
-`cbom` and `pqc`, and every line of the `scan`, `gate` and `pqc` text reports,
-over a tree built to reach every finding category the scanner reports. It does
-not read the records `scan --emit-findings` writes, which keep these characters
-in the source lines they quote and in the project name and version they record.
-Those are read from `package.json`, and the name falls back to the scanned
-directory's own name.
+A path holding neither `%` nor any of these characters prints exactly as
+before. The path of the scanned directory itself is not cleaned, and is printed
+as it is where a command names it, such as the `Directory` line of the text
+reports, the summary `cbom` writes to stderr and `scannedPath` in
+`pqc --format json`. A new test walks every string in the JSON, SARIF and CBOM
+documents of `scan`, `gate`, `cbom` and `pqc`, and every line of the `scan`,
+`gate` and `pqc` text reports, over a tree built to reach every finding category
+the scanner reports. It does not read the records `scan --emit-findings` writes,
+which keep these characters in the source lines they quote and in the project
+name and version they record. Those are read from `package.json`, and the name
+falls back to the scanned directory's own name.
+
+A file path from the scanned tree that holds a literal `%` now prints it as
+`%25` ([#86](https://github.com/ecolibria/cryptoserve/issues/86)).
+
+The encoding above first left a literal `%` as it was, so a file named
+`a%E2%80%AEb.js` printed exactly like a file named `a`, U+202E, `b.js`. With an
+MD5 call on line 2 of each, `scan --format json` reported both findings under
+one path, the two SARIF results carried one `uri`, which decoded to the second
+file, and `gate` reported one violation for the two files. The first file now
+prints as `a%25E2%2580%25AEb.js`: the two findings carry two paths, each SARIF
+`uri` decodes to the file it names, and `gate` reports two violations. A path
+such as `src/100% done.js` now prints as `src/100%25 done.js`.
+`scan --emit-findings` opens the file a finding names by its decoded path
+alone, because the printed path can name another file in the same tree:
+`x%.js` prints as `x%25.js`.
 
 `gate` now fails a tree that disables TLS certificate verification
 ([#66](https://github.com/ecolibria/cryptoserve/issues/66)).
