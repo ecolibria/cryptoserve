@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ALGORITHM_DB, lookupAlgorithm, classifyFromDb } from '../lib/algorithm-db.mjs';
+import { ALGORITHM_DB, lookupAlgorithm, classifyFromDb, canonicalizeAlgorithmToken } from '../lib/algorithm-db.mjs';
 
 describe('ALGORITHM_DB', () => {
   it('contains at least 80 entries', () => {
@@ -131,5 +131,43 @@ describe('classifyFromDb', () => {
 
   it('returns null for unknown algorithms', () => {
     assert.equal(classifyFromDb('nonexistent'), null);
+  });
+});
+
+/**
+ * An algorithm name can be the scanned tree's own text, and each table is a
+ * plain object. `in` was true for a name inherited from Object.prototype, so
+ * the token `constructor` canonicalized to the Object function and
+ * `con-structor` to the string "constructor", and `lookupAlgorithm` returned
+ * an entry for `constructor` and `__proto__` instead of null.
+ */
+describe('a name inherited from Object.prototype', () => {
+  // Each name Object.prototype holds, and spellings that
+  // canonicalizeAlgorithmToken or lookupAlgorithm reduce to one of them.
+  const INHERITED = [
+    ...Object.getOwnPropertyNames(Object.prototype),
+    'CONSTRUCTOR', ' constructor ', 'con-structor', 'con_structor', '__PROTO__',
+  ];
+
+  it('is not an algorithm token', () => {
+    for (const name of INHERITED) {
+      assert.equal(canonicalizeAlgorithmToken(name), null, JSON.stringify(name));
+    }
+  });
+
+  it('is not an algorithm', () => {
+    for (const name of INHERITED) {
+      assert.equal(lookupAlgorithm(name), null, JSON.stringify(name));
+      assert.equal(classifyFromDb(name), null, JSON.stringify(name));
+    }
+  });
+
+  it('leaves the names each table owns resolving', () => {
+    assert.equal(canonicalizeAlgorithmToken('SHA-1'), 'sha1');                // digest table
+    assert.equal(canonicalizeAlgorithmToken('des-ede3-cbc'), '3des');         // cipher family
+    assert.equal(canonicalizeAlgorithmToken('rsa-2048'), 'rsa-2048');         // database key
+    assert.equal(canonicalizeAlgorithmToken('triple-des'), '3des');           // alias
+    assert.equal(canonicalizeAlgorithmToken('chacha-20'), 'chacha20');        // database key, hyphens dropped
+    assert.equal(canonicalizeAlgorithmToken('x25519-kyber768'), 'kyber-768'); // alias, hyphens dropped
   });
 });
