@@ -240,11 +240,61 @@ export function exportVault(password, exportPassword = null, path = defaultVault
   return encryptData(json, pw).toString('base64');
 }
 
+/** What a parsed JSON value is, as an error message names it. */
+function jsonKind(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
+/**
+ * The [name, entry] pairs a bundle holds, each entry in the shape setSecret
+ * writes, { value, updatedAt }. A bundle entry is a string, or an object with a
+ * string `value` as exportVault writes it, whose `updatedAt` is kept when it is
+ * a string Date.parse reads. Any other entry refuses the whole bundle before
+ * the vault is read, so nothing from it is stored.
+ *
+ * Every entry whose typeof was 'object' used to be stored as it was. After a
+ * null one, listSecrets and vaultRun threw for the whole vault until that name
+ * was deleted, and an array or an object without a `value` read back from
+ * getSecret as undefined.
+ */
+function bundleEntries(secrets) {
+  const kind = jsonKind(secrets);
+  if (kind !== 'an object') {
+    throw new Error(`Bundle not imported: it holds ${kind}, not a table of secrets. `
+      + 'The vault was not changed.');
+  }
+  const now = new Date().toISOString();
+  const entries = [];
+  const refused = [];
+  for (const [key, entry] of Object.entries(secrets)) {
+    const name = JSON.stringify(key);
+    if (typeof entry === 'string') {
+      entries.push([key, { value: entry, updatedAt: now }]);
+    } else if (jsonKind(entry) !== 'an object') {
+      refused.push(`${name} is ${jsonKind(entry)}`);
+    } else if (typeof entry.value !== 'string') {
+      refused.push(`${name} has no string "value"`);
+    } else {
+      const { updatedAt } = entry;
+      const dated = typeof updatedAt === 'string' && !Number.isNaN(Date.parse(updatedAt));
+      entries.push([key, { value: entry.value, updatedAt: dated ? updatedAt : now }]);
+    }
+  }
+  if (refused.length > 0) {
+    const more = refused.length > 5 ? `, and ${refused.length - 5} more` : '';
+    throw new Error(`Bundle not imported: ${refused.slice(0, 5).join(', ')}${more}. Each entry `
+      + 'must be a string or an object with a string "value". The vault was not changed.');
+  }
+  return entries;
+}
+
 export function importVaultBundle(password, bundle, importPassword = null, path = defaultVaultPath()) {
   const packed = Buffer.from(bundle, 'base64');
   const pw = importPassword || password;
   const json = decryptData(packed, pw);
-  const secrets = JSON.parse(json);
+  const entries = bundleEntries(JSON.parse(json));
 
   const data = loadVault(password, path) || {
     version: 1,
@@ -252,15 +302,12 @@ export function importVaultBundle(password, bundle, importPassword = null, path 
     secrets: secretTable(),
   };
 
-  for (const [key, entry] of Object.entries(secrets)) {
-    data.secrets[key] = typeof entry === 'object' ? entry : {
-      value: entry,
-      updatedAt: new Date().toISOString(),
-    };
+  for (const [key, entry] of entries) {
+    data.secrets[key] = entry;
   }
 
   saveVault(data, password, path);
-  return Object.keys(secrets).length;
+  return entries.length;
 }
 
 // Re-export for testing
