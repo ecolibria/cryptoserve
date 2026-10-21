@@ -1132,29 +1132,44 @@ describe('misuse scanning cost', () => {
     // Doubling the file doubles the matches too, so the quadratic shape shows
     // up as 4x and the fixed shape as 2x. The bound is loose enough to absorb a
     // noisy machine and still fail a reintroduction, which would be ~4x.
+    //
+    // One file of 2,000 blocks scans in about 5 ms, and a sample that short is
+    // mostly scheduler noise on a loaded machine: one run measured 6.2 ms ->
+    // 74.3 ms, 12x, for the linear code. So each sample scans 20 such files,
+    // about 100 ms of work, counts CPU time rather than wall-clock time so time
+    // spent waiting for a core does not count, and each size keeps the fastest
+    // of three runs, taken alternately, because load only ever adds time.
+    const FILES = 20;
     const build = (blocks) => {
       const unit = `// cryptoserve-ignore misuse/create-cipher -- waived\n`
         + `const c${'x'} = crypto.createCipher('aes-256-cbc', key);\n`;
-      writeFileSync(join(TEST_DIR, 'big.js'), unit.repeat(blocks), 'utf-8');
+      for (let f = 0; f < FILES; f++) {
+        writeFileSync(join(TEST_DIR, `big${f}.js`), unit.repeat(blocks), 'utf-8');
+      }
     };
 
     const time = (blocks) => {
       build(blocks);
-      const t = process.hrtime.bigint();
+      const before = process.cpuUsage();
       const results = scanProject(TEST_DIR);
-      const ms = Number(process.hrtime.bigint() - t) / 1e6;
+      const { user, system } = process.cpuUsage(before);
       // The fixture has to REACH the waived path, or this measures an empty
       // loop and passes for the wrong reason.
-      assert.equal(results.waivedFindings.length, blocks,
-        `expected ${blocks} waived findings, got ${results.waivedFindings.length}`);
+      assert.equal(results.waivedFindings.length, blocks * FILES,
+        `expected ${blocks * FILES} waived findings, got ${results.waivedFindings.length}`);
       assert.deepEqual(results.weakPatterns.filter(w => w.rule === 'misuse/create-cipher'), []);
-      return ms;
+      return (user + system) / 1000;
     };
 
     time(2000);                        // warm up, so JIT does not skew the ratio
-    const small = Math.max(time(2000), 1);
-    const large = time(4000);
+    let small = Infinity;
+    let large = Infinity;
+    for (let run = 0; run < 3; run++) {
+      small = Math.min(small, time(2000));
+      large = Math.min(large, time(4000));
+    }
+    small = Math.max(small, 1);
     assert.ok(large < small * 3,
-      `2x the file took ${(large / small).toFixed(1)}x the time (${small.toFixed(1)}ms -> ${large.toFixed(1)}ms)`);
+      `2x the file took ${(large / small).toFixed(1)}x the CPU time (${small.toFixed(1)}ms -> ${large.toFixed(1)}ms)`);
   });
 });
