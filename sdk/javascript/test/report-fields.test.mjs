@@ -1,7 +1,8 @@
 /**
- * No report field built from the scanned tree carries a terminal-steering
- * character, in the JSON, SARIF and CBOM documents of `scan`, `gate`, `cbom`
- * and `pqc` or in the `scan`, `gate` and `pqc` text reports.
+ * No report field built from the scanned tree, other than the scanned
+ * directory's own path, carries a terminal-steering character, in the JSON,
+ * SARIF and CBOM documents of `scan`, `gate`, `cbom` and `pqc` or in the
+ * `scan`, `gate` and `pqc` text reports.
  *
  * This class was fixed one field at a time twice, and each time the review
  * that followed found a field the fix had missed. So this test does not list
@@ -9,9 +10,8 @@
  * ecosystems (npm, PyPI, Cargo, Maven), source, config, certificate, binary,
  * waiver pragmas and git metadata, that reaches every finding category the
  * scanner reports, runs those reports over it, and walks every string in each.
- * A field added to one of them later is covered the moment it exists; a
- * finding category added later fails the coverage check below until this tree
- * is taught to reach it.
+ * A finding category added later fails the coverage check below until this
+ * tree is taught to reach it.
  *
  * Nothing else is walked: not stderr, not the summary `cbom --output` prints,
  * and not the records `scan --emit-findings` writes, which keep these
