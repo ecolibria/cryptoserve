@@ -157,6 +157,15 @@ it was meant to fix.
 
 ### Fixed
 
+`scan --output` and `scan --emit-findings` given a file in a directory that does
+not exist now print `Error: Path does not exist: <directory>` and exit `2`
+([#95](https://github.com/ecolibria/cryptoserve/issues/95)). They printed Node's
+raw `ENOENT: no such file or directory, open 'nodir/report.txt'` and exited `1`,
+the code for a command that ran and reported a failure. Where the directory is
+missing more than one level deep, the highest missing one is named; where a file
+stands in the directory's place, `Error: Not a directory: <file>` is printed,
+also with exit `2`.
+
 A dependency version, a file path and the CBOM's git branch, remote and
 project name no longer carry characters that steer a terminal
 ([#75](https://github.com/ecolibria/cryptoserve/issues/75)).

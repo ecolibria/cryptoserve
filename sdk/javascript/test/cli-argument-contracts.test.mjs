@@ -705,6 +705,48 @@ describe('scan --output with the text format', () => {
   });
 });
 
+describe('scan writing to a directory that is not there', () => {
+  // The write was left to the top-level handler, which printed Node's
+  // "ENOENT: no such file or directory, open 'nodir/report.txt'" and exited 1,
+  // the code for a command that ran and reported a failure.
+  function tree() {
+    const dir = tempDir('scan-nodir');
+    writeFileSync(join(dir, 'app.js'), 'const c = require("crypto");\nconst h = c.createHash("md5");\n');
+    return dir;
+  }
+
+  const cases = [
+    ['--output, text', ['--output', 'nodir/report.txt']],
+    ['--output, json', ['--format', 'json', '--output', 'nodir/report.json']],
+    ['--output, sarif', ['--format', 'sarif', '--output', 'nodir/report.sarif']],
+    ['--emit-findings', ['--emit-findings', 'nodir/records.jsonl']],
+  ];
+  for (const [label, flags] of cases) {
+    it(`names the missing directory and exits 2 (${label})`, () => {
+      const dir = tree();
+      const { code, stderr } = run(['scan', '.', ...flags], { cwd: dir });
+      assert.equal(code, 2, stderr);
+      assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'nodir')}`);
+      assert.doesNotMatch(stderr, /ENOENT/);
+      assert.equal(existsSync(join(dir, 'nodir')), false);
+    });
+  }
+
+  it('names the highest directory that is missing', () => {
+    const dir = tree();
+    const { code, stderr } = run(['scan', '.', '--output', 'a/b/report.txt'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'a')}`);
+  });
+
+  it('names a file standing where the directory should be', () => {
+    const dir = tree();
+    const { code, stderr } = run(['scan', '.', '--output', 'app.js/report.txt'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Not a directory: ${join(dir, 'app.js')}`);
+  });
+});
+
 describe('secret detection coverage', () => {
   function scanOf(files) {
     const dir = tempDir('coverage');
