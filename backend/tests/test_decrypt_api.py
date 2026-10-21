@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from app.api import crypto as crypto_api
 from app.core.crypto_engine import crypto_engine, DecryptionError
 from app.core.hybrid_crypto import HybridCiphertext, HybridMode
+from app.core.rate_limiter import InMemoryBackend, RateLimiter, set_rate_limiter
 from app.database import get_db
 from app.models import Identity, IdentityType, IdentityStatus
 
@@ -86,7 +87,7 @@ async def identity(db_session, test_user, test_context, test_tenant):
 
 @pytest.fixture
 async def crypto_client(db_session, identity):
-    """The crypto routes, with the SDK identity check and the database stubbed."""
+    """The crypto routes, with the SDK identity check, the database and the rate limiter stubbed."""
     app = FastAPI()
     app.include_router(crypto_api.router)
 
@@ -95,10 +96,17 @@ async def crypto_client(db_session, identity):
 
     app.dependency_overrides[crypto_api.get_sdk_identity] = lambda: identity
     app.dependency_overrides[get_db] = _db
-    # An unhandled exception is answered 500 instead of being raised into the test.
-    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+    # The routes consult the global rate limiter before decrypting. With REDIS_URL set
+    # in the environment that limiter is the Redis one, so pin the in-memory backend:
+    # these tests are about the decrypt routes, not about reaching a Redis server.
+    set_rate_limiter(RateLimiter(backend=InMemoryBackend()))
+    try:
+        # An unhandled exception is answered 500 instead of being raised into the test.
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+    finally:
+        set_rate_limiter(None)
 
 
 class TestMalformedHybridCiphertext:
