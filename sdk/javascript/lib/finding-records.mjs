@@ -184,9 +184,10 @@ export function buildFindingRecords(scanResults, projectDir) {
     if (fileCache.has(relPath)) return fileCache.get(relPath);
     let lines = [];
     // A finding's path is printable, so a name carrying a terminal-steering
-    // character arrives percent-encoded; decoding it names the real file.
-    // Tried only when the path as given does not open, so an ordinary name
-    // with a literal `%` in it is still read as written.
+    // character arrives percent-encoded; decoding it names the real file when
+    // the name holds no `%` of its own. Tried only when the path as given does
+    // not open, so an ordinary name with a literal `%` in it is still read as
+    // written.
     for (const candidate of [() => relPath, () => decodeURIComponent(relPath)]) {
       try {
         lines = readFileSync(join(projectDir, candidate()), 'utf-8').split('\n');

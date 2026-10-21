@@ -225,23 +225,30 @@ const TERMINAL_UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u202a-\u202e\u
  *
  * Exported because `evidence` is the other half of a finding built from file
  * content and printed, and it reaches a report through a pattern that matches
- * these bytes rather than through a pragma. Every other report field built from
- * the scanned tree goes through this or `printablePath` where it is built; the
- * report-fields test walks every emitted document to hold that.
+ * these bytes rather than through a pragma. Dependency versions, paths in the
+ * tree, and the CBOM's git branch, remote and project name go through this or
+ * `printablePath` where they are built, and the report-fields test walks every
+ * emitted document to hold that. The path of the scanned directory itself is
+ * not cleaned.
  */
 export const stripTerminalUnsafe = (s) => s.replace(new RegExp(TERMINAL_UNSAFE.source, 'g'), '');
 
 /**
- * A path from the scanned tree, in a form that can be printed and still opened.
+ * A path from the scanned tree, in a form that can be printed and, when the name
+ * holds no `%` of its own, still opened.
  *
  * Stripping is wrong for a path: `a<RLO>b.js` stripped is `ab.js`, which names
  * a file that does not exist, so the finding would point nowhere. Each
  * character of the class is percent-encoded instead (U+202E becomes
- * `%E2%80%AE`), which keeps the path naming exactly one file and leaves only
- * printable ASCII where the character was. Percent-encoding rather than a
- * backslash escape because SARIF turns every backslash in a path into a
- * separator, and because SARIF's `uri` is a URI, where this is the encoding a
- * consumer decodes back to the real file.
+ * `%E2%80%AE`), which leaves only printable ASCII where the character was.
+ * Percent-encoding rather than a backslash escape because SARIF turns every
+ * backslash in a path into a separator, and because SARIF's `uri` is a URI,
+ * where this is the encoding a consumer decodes.
+ *
+ * Decoding gives back the real file only when the name holds no `%` of its
+ * own. A literal `%` is not encoded, so a file named `a%E2%80%AEb.js` prints
+ * the same as `a<RLO>b.js`, and `100%<RLO>.js` prints a form that does not
+ * decode at all.
  *
  * A path that carries none of the class is returned unchanged, so ordinary
  * paths, including ones that contain a literal `%`, read exactly as before.
