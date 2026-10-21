@@ -142,6 +142,9 @@ class TestAbsencePath:
 
     def _run_cross_tests_without_helper(self, tmp_path, required: bool) -> subprocess.CompletedProcess:
         env = {key: value for key, value in os.environ.items() if key != REQUIRED_ENV}
+        # The tests read this run's output, so PYTEST_ADDOPTS is not inherited and the traceback style is
+        # set here: an outer --tb=no would drop the ERRORS section, where a required run names the absent helper.
+        env.pop("PYTEST_ADDOPTS", None)
         env[HELPER_ENV] = str(tmp_path / "no-such-helper")
         if required:
             env[REQUIRED_ENV] = "1"
@@ -153,6 +156,7 @@ class TestAbsencePath:
                 f"{Path(__file__).resolve()}::TestCrossImplementation",
                 "-q",
                 "-rs",
+                "--tb=short",
                 "-p",
                 "no:cacheprovider",
             ],
@@ -172,6 +176,15 @@ class TestAbsencePath:
         assert HELPER_ENV in result.stdout
 
     def test_cross_tests_fail_when_helper_is_absent_and_required(self, tmp_path):
+        result = self._run_cross_tests_without_helper(tmp_path, required=True)
+        summary = result.stdout.strip().splitlines()[-1]
+        assert result.returncode == 1, result.stdout
+        assert "passed" not in summary, result.stdout
+        assert "skipped" not in summary, result.stdout
+        assert HELPER_ENV in result.stdout
+
+    def test_cross_tests_ignore_pytest_addopts_from_the_outer_run(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYTEST_ADDOPTS", "--tb=no")
         result = self._run_cross_tests_without_helper(tmp_path, required=True)
         summary = result.stdout.strip().splitlines()[-1]
         assert result.returncode == 1, result.stdout
