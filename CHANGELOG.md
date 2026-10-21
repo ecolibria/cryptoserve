@@ -270,13 +270,15 @@ A gate that fails on the score alone now names what holds the score down
 ([#60](https://github.com/ecolibria/cryptoserve/issues/60)).
 
 A project whose only dependency is `jose` failed at default thresholds with
-`Score 25 is below minimum 50` and nothing else, while every other failure path
-names a file and a line. The gate now lists the libraries that lower the score,
-the quantum-vulnerable algorithms each uses, and the points the score would
-recover without them (`jose (RS256, ES256, EdDSA) +75 recoverable`). The points
-are measured by scoring the same inventory again without that library's
-contribution. A library derived from a call site is shown with its file and
-line. `gate --format json` carries the full list as `scoreContributors`, and the
+`Score 25 is below minimum 50` and nothing else, while every other failure
+names what to change: a file and a line, a committed key file, or the
+dependency that declares the algorithm. The gate now lists the libraries that
+lower the score, the quantum-vulnerable algorithms each uses, and the points
+the score would recover without them
+(`jose (RS256, ES256, EdDSA) +75 recoverable`). The points are measured by
+scoring the same inventory again without that library's contribution. A
+library derived from a call site is shown with its file and line.
+`gate --format json` carries the full list as `scoreContributors`, and the
 SARIF result for a score failure names the first three.
 
 **No verdict changes.** The score, the default `--min-score 50` and the exit

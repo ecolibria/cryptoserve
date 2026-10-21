@@ -1167,8 +1167,9 @@ describe('a live misuse finding names the rule you would waive', () => {
 describe('a gate failed on the score alone names what holds the score down', () => {
   // The reported shape: a project whose only dependency is `jose`, the modern
   // JOSE library, failed at default thresholds with `Score 25 is below minimum
-  // 50` and nothing else. Every other failure path names a file and a line;
-  // this one named a number.
+  // 50` and nothing else. Every other failure names what to change: a file and
+  // a line, a committed key file, or the dependency that declares the
+  // algorithm. This one named a number.
   let DIR;
   beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-score-')); });
   afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
