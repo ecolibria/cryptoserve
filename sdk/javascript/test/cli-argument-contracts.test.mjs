@@ -18,7 +18,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, realpathSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -669,6 +669,39 @@ describe('an unknown flag', () => {
     assert.match(stderr, /--min-scoree/);
     // A known flag must still be accepted.
     assert.equal(run(['gate', dir, '--min-score', '10', '--format', 'json']).code, 0);
+  });
+});
+
+describe('scan --output with the text format', () => {
+  // `scan --help` lists --output beside --format text|json|sarif, and only json
+  // and sarif honoured it: the default text report went to stdout, no file was
+  // written, and the command exited 0 without a word.
+  function tree() {
+    const dir = tempDir('scan-output');
+    writeFileSync(join(dir, 'app.js'), 'const c = require("crypto");\nconst h = c.createHash("md5");\n');
+    return dir;
+  }
+
+  it('writes the report to the file instead of ignoring the flag', () => {
+    const dir = tree();
+    const printed = run(['scan', '.'], { cwd: dir });
+    const { code, stdout, stderr } = run(['scan', '.', '--output', 'report.txt'], { cwd: dir });
+    assert.equal(code, 0, stderr);
+    assert.ok(existsSync(join(dir, 'report.txt')), `no report.txt; stdout was:\n${stdout}`);
+    assert.equal(readFileSync(join(dir, 'report.txt'), 'utf-8'), printed.stdout);
+    assert.match(printed.stdout, /md5/i);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Written to report\.txt/);
+  });
+
+  it('leaves out of the file the colour codes chosen for a terminal', () => {
+    const dir = tree();
+    const colour = { NO_COLOR: '', FORCE_COLOR: '1' };
+    // Holds the premise: without it the comparison below proves nothing.
+    assert.match(run(['scan', '.'], { cwd: dir, env: colour }).stdout, /\x1b\[/);
+    const plain = run(['scan', '.'], { cwd: dir }).stdout;
+    assert.equal(run(['scan', '.', '--output', 'report.txt'], { cwd: dir, env: colour }).code, 0);
+    assert.equal(readFileSync(join(dir, 'report.txt'), 'utf-8'), plain);
   });
 });
 

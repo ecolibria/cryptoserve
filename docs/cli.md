@@ -30,6 +30,7 @@ cryptoserve scan . --verbose                # Detailed output
 | Flag | Description |
 |------|-------------|
 | `--format <fmt>` | Output format: `text` (default), `json`, `sarif` |
+| `--output <file>` | Write the report to a file instead of stdout, in any of the three formats. The text report is written without colour codes |
 | `--binary` | Include binary file scanning (ELF, PE, Mach-O, .class, .NET) |
 | `--verbose` | Show detailed progress and findings |
 

@@ -152,6 +152,17 @@ export function bold(text) {
   return `${Colors.BOLD}${text}${Style.RESET}`;
 }
 
+/**
+ * `text` without the colour and style codes this module adds. Each of them is
+ * an `ESC [ <digits> m` sequence (see `Colors`), so what is removed is that
+ * shape, with semicolons allowed among the digits. For a report written to a
+ * file: whether to colour is decided once, for stdout, and the file is not the
+ * terminal stdout may be.
+ */
+export function unstyled(text) {
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 export function labelValue(label, value, labelWidth = 20) {
   return `  ${Style.LABEL}${label.padEnd(labelWidth)}${Style.RESET} ${Style.VALUE}${value}${Style.RESET}`;
 }

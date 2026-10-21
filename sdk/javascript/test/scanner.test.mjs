@@ -121,6 +121,35 @@ describe('scanProject', () => {
     // Should not crash, file should be skipped
     assert.ok(results.filesScanned === 0 || results.filesScanned >= 0);
   });
+
+  it('caps a dependency version at 256 characters', () => {
+    // The version reaches `scan`, `gate` and the CBOM purl. A finding's
+    // evidence and a waiver's rule and reason were capped; this was not, and
+    // a 5,000-character version was carried whole into each.
+    writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({
+      dependencies: { jose: `1.0.0-${'a'.repeat(5000)}` },
+    }));
+    const jose = scanProject(TEST_DIR).libraries.find(l => l.name === 'jose');
+    assert.equal(jose.version, `1.0.0-${'a'.repeat(250)}`);
+  });
+
+  it('leaves a version of 256 characters whole', () => {
+    const version = `1.0.0-${'a'.repeat(250)}`;
+    writeFileSync(join(TEST_DIR, 'package.json'), JSON.stringify({ dependencies: { jose: version } }));
+    assert.equal(scanProject(TEST_DIR).libraries.find(l => l.name === 'jose').version, version);
+  });
+
+  it('inventories only names the package table holds, not ones every object inherits', () => {
+    // Written as text: `__proto__` in an object literal sets the prototype
+    // rather than adding a key, and JSON.parse makes it an ordinary key.
+    writeFileSync(join(TEST_DIR, 'package.json'), '{"dependencies": {"crypto-js": "3.1.9", '
+      + '"constructor": "1.0.0", "toString": "2.0.0", "hasOwnProperty": "3.0.0", "__proto__": "4.0.0"}}');
+    writeFileSync(join(TEST_DIR, 'requirements.txt'), '__proto__==2.0\nconstructor==1.0\n');
+    const results = scanProject(TEST_DIR);
+    assert.deepEqual(results.libraries.map(l => `${l.name}@${l.version}`), ['crypto-js@3.1.9']);
+    // What the inventory feeds read `algorithms` of each entry, and these had none.
+    assert.doesNotThrow(() => toLibraryInventory(results));
+  });
 });
 
 describe('toLibraryInventory', () => {

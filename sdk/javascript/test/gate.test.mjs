@@ -3,23 +3,37 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cryptoserve.mjs');
-const TEST_DIR = join(tmpdir(), 'cryptoserve-gate-test-' + Date.now());
+
+/**
+ * Run the CLI with no shell between it and its arguments.
+ *
+ * Every call in this file used to be one template string handed to execSync,
+ * so the shell split the path of the checkout and of each fixture directory at
+ * every space, and the suite failed from a checkout or TMPDIR whose path holds
+ * one. The fixture directories below are named with a space, so a call that
+ * hands one of them back to a shell fails here, from any checkout. `flags` is
+ * split on whitespace, so it must not carry a path: pass one in `argv`.
+ */
+function cli(argv, flags = '', options = {}) {
+  return execFileSync(process.execPath, [CLI, ...argv, ...flags.split(/\s+/).filter(Boolean)], {
+    encoding: 'utf-8', timeout: 30000, ...options,
+  });
+}
+
+const TEST_DIR = join(tmpdir(), 'cryptoserve gate-test-' + Date.now());
 
 function setup() { mkdirSync(TEST_DIR, { recursive: true }); }
 function cleanup() { if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true }); }
 
 function runGate(args = '') {
   try {
-    const output = execSync(`${process.execPath} ${CLI} gate ${TEST_DIR} ${args}`, {
-      encoding: 'utf-8',
-      timeout: 30000,
-    });
+    const output = cli(['gate', TEST_DIR], args);
     return { exitCode: 0, output };
   } catch (e) {
     return { exitCode: e.status, output: e.stdout || '' };
@@ -82,14 +96,11 @@ describe('gate command', () => {
 
   it('exits 2 with status=error when path does not exist', () => {
     // A typo in CI (`cryptoserve gate ./srcc`) must not silently pass.
-    const missing = join(tmpdir(), 'cryptoserve-gate-missing-' + Date.now());
+    const missing = join(tmpdir(), 'cryptoserve gate-missing-' + Date.now());
     let exitCode = 0;
     let output = '';
     try {
-      output = execSync(
-        `${process.execPath} ${CLI} gate ${missing} --format json`,
-        { encoding: 'utf-8', timeout: 10000 },
-      );
+      output = cli(['gate', missing], '--format json', { timeout: 10000 });
     } catch (e) {
       exitCode = e.status;
       output = e.stdout || '';
@@ -114,7 +125,7 @@ describe('gate command', () => {
  * flag whose name sounds strictest.
  */
 describe('gate severity axis', () => {
-  const DIR = join(tmpdir(), 'cryptoserve-gate-severity-' + Date.now());
+  const DIR = join(tmpdir(), 'cryptoserve gate-severity-' + Date.now());
 
   beforeEach(() => { mkdirSync(DIR, { recursive: true }); });
   afterEach(() => { if (existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
@@ -126,8 +137,7 @@ describe('gate severity axis', () => {
 
   function gate(args = '') {
     try {
-      const output = execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+      const output = cli(['gate', DIR], args, { stdio: ['pipe', 'pipe', 'pipe'] });
       return { exitCode: 0, output };
     } catch (e) {
       return { exitCode: e.status, output: e.stdout || '' };
@@ -338,7 +348,7 @@ describe('gate severity axis', () => {
   });
 
   it('says in --help that --max-risk is about quantum risk', () => {
-    const help = execSync(`${process.execPath} ${CLI} help gate`, { encoding: 'utf-8' });
+    const help = cli(['help', 'gate']);
     assert.match(help, /--max-risk/);
     assert.match(help, /quantum/i);
     assert.match(help, /--max-severity/);
@@ -348,7 +358,7 @@ describe('gate severity axis', () => {
     // `gate --format sarif` and `scan --format sarif` used to be the same
     // document. They are now different answers to different questions, and a
     // CI author choosing between them has to be told which is which.
-    const help = execSync(`${process.execPath} ${CLI} help gate`, { encoding: 'utf-8' });
+    const help = cli(['help', 'gate']);
     assert.match(help, /--format sarif/);
     assert.match(help, /scan --format sarif/);
   });
@@ -372,7 +382,7 @@ describe('gate renders one decision in every format', () => {
   // A fresh directory per test, from mkdtemp rather than a shared name: these
   // trees are what the assertions measure, and a sibling test writing into the
   // same path under a parallel runner would rewrite the measurement.
-  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-format-')); });
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve gate-format-')); });
   afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
 
   const MD5 = 'const c = require("crypto");\nconst h = c.createHash("md5");\n';
@@ -386,8 +396,7 @@ describe('gate renders one decision in every format', () => {
 
   function run(args) {
     try {
-      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+      return { exitCode: 0, output: cli(['gate', DIR], args, { stdio: ['pipe', 'pipe', 'pipe'] }) };
     } catch (e) {
       return { exitCode: e.status, output: e.stdout || '' };
     }
@@ -535,10 +544,7 @@ describe('gate renders one decision in every format', () => {
     write('app.js', MD5);
     write('nginx.conf', 'server {\n  ssl_protocols SSLv3;\n}\n');
 
-    const scanned = JSON.parse(execSync(
-      `${process.execPath} ${CLI} scan ${DIR} --format sarif`,
-      { encoding: 'utf-8', timeout: 30000 },
-    )).runs[0].results.map(r => r.ruleId);
+    const scanned = JSON.parse(cli(['scan', DIR], '--format sarif')).runs[0].results.map(r => r.ruleId);
 
     const mine = asSarif('--min-score 0').results.map(r => r.ruleId);
 
@@ -627,7 +633,7 @@ describe('gate renders one decision in every format', () => {
  */
 describe('gate reports every place an algorithm is used', () => {
   let DIR;
-  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-sites-')); });
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve gate-sites-')); });
   afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
 
   const MD5 = 'const c = require("crypto");\nconst h = c.createHash("md5");\n';
@@ -642,8 +648,7 @@ describe('gate reports every place an algorithm is used', () => {
 
   function run(args) {
     try {
-      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+      return { exitCode: 0, output: cli(['gate', DIR], args, { stdio: ['pipe', 'pipe', 'pipe'] }) };
     } catch (e) {
       return { exitCode: e.status, output: e.stdout || '' };
     }
@@ -714,13 +719,12 @@ describe('gate reports every place an algorithm is used', () => {
  */
 describe('gate fails a tree with TLS verification disabled', () => {
   let DIR;
-  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-tls-')); });
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve gate-tls-')); });
   afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
 
   function run(args = '') {
     try {
-      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+      return { exitCode: 0, output: cli(['gate', DIR], args, { stdio: ['pipe', 'pipe', 'pipe'] }) };
     } catch (e) {
       return { exitCode: e.status, output: e.stdout || '' };
     }
@@ -810,15 +814,14 @@ describe('gate fails a tree with TLS verification disabled', () => {
  */
 describe('gate attributes a site to a library of that language', () => {
   let DIR;
-  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-attr-')); });
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve gate-attr-')); });
   afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
 
   const CRYPTO_JS = JSON.stringify({ name: 'attr', dependencies: { 'crypto-js': '^3.1.9' } });
 
   function run(args) {
     try {
-      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+      return { exitCode: 0, output: cli(['gate', DIR], args, { stdio: ['pipe', 'pipe', 'pipe'] }) };
     } catch (e) {
       return { exitCode: e.status, output: e.stdout || '' };
     }
@@ -1050,12 +1053,9 @@ describe('waivers are visible in the text output', () => {
   const IGNORE = 'cryptoserve' + '-ignore';
   const RULE = 'misuse/node-tls-reject-unauthorized';
   const DEFECT = "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n";
-  const CLI_DIR = join(__dirname, '..');
-
   const runScan = (args = '') => {
     try {
-      return execSync(`${process.execPath} ${join(CLI_DIR, 'bin', 'cryptoserve.mjs')} scan ${TEST_DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000 });
+      return cli(['scan', TEST_DIR], args);
     } catch (e) { return e.stdout || ''; }
   };
 
@@ -1171,13 +1171,12 @@ describe('a gate failed on the score alone names what holds the score down', () 
   // a line, a committed key file, or the dependency that declares the
   // algorithm. This one named a number.
   let DIR;
-  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve-gate-score-')); });
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve gate-score-')); });
   afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
 
   function run(args = '') {
     try {
-      return { exitCode: 0, output: execSync(`${process.execPath} ${CLI} gate ${DIR} ${args}`,
-        { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }) };
+      return { exitCode: 0, output: cli(['gate', DIR], args, { stdio: ['pipe', 'pipe', 'pipe'] }) };
     } catch (e) {
       return { exitCode: e.status, output: e.stdout || '' };
     }
@@ -1235,4 +1234,48 @@ describe('a gate failed on the score alone names what holds the score down', () 
     assert.equal(exitCode, 0, output);
     assert.doesNotMatch(output, /held down by/);
   });
+});
+
+/**
+ * `gate` printed its JSON or SARIF document and called process.exit() at
+ * once. Exit does not wait for stdout to drain, so with stdout a pipe the
+ * document was cut where the pipe's buffer ended, and what was read from the
+ * pipe was not valid JSON. execFileSync reads the CLI's stdout through a pipe.
+ */
+describe('gate writes its whole document to a pipe', () => {
+  let DIR;
+  beforeEach(() => { DIR = mkdtempSync(join(tmpdir(), 'cryptoserve gate-pipe-')); });
+  afterEach(() => { if (DIR && existsSync(DIR)) rmSync(DIR, { recursive: true, force: true }); });
+
+  const FILES = 300;
+  const WEAK = 'const c = require("crypto");\nconst h = c.createHash("md5");\n'
+    + 'const s = c.createHash("sha1");\nconst e = c.createCipheriv("aes-256-ecb", k, iv);\n';
+
+  function run(format) {
+    try {
+      return { exitCode: 0, output: cli(['gate', DIR], `--format ${format} --max-risk none`,
+        { stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }) };
+    } catch (e) {
+      return { exitCode: e.status, output: e.stdout || '' };
+    }
+  }
+
+  for (const format of ['json', 'sarif']) {
+    it(`--format ${format}`, () => {
+      writeFileSync(join(DIR, 'package.json'), JSON.stringify({ name: 'pipe' }));
+      for (let i = 0; i < FILES; i++) writeFileSync(join(DIR, `f${i}.js`), WEAK);
+      const { exitCode, output } = run(format);
+      let doc;
+      assert.doesNotThrow(() => { doc = JSON.parse(output); },
+        `${output.length} bytes reached the pipe, and they do not parse`);
+      // The premise: more than 131,072 bytes, the most of a cut document that
+      // was measured to arrive. A smaller one could pass with the defect.
+      assert.ok(output.length > 131072, `only ${output.length} bytes, too few to test a pipe`);
+      const files = format === 'json'
+        ? doc.violations.map(v => v.file)
+        : doc.runs[0].results.map(r => r.locations?.[0]?.physicalLocation.artifactLocation.uri);
+      assert.equal(new Set(files.filter(f => /^f\d+\.js$/.test(f))).size, FILES);
+      assert.equal(exitCode, 1);
+    });
+  }
 });

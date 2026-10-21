@@ -533,7 +533,7 @@ async function cmdPqc(args) {
 }
 
 async function cmdScan(args) {
-  const { compactHeader, section, tableHeader, tableRow, success, warning, error, info, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
+  const { compactHeader, section, tableHeader, tableRow, success, warning, error, info, dim, bold, labelValue, unstyled } = await import('../lib/cli-style.mjs');
   const { scanProject } = await import('../lib/scanner.mjs');
   const { existsSync } = await import('node:fs');
 
@@ -592,54 +592,60 @@ async function cmdScan(args) {
     process.exit(1);
   }
 
-  console.log(compactHeader('scan'));
-  console.log(labelValue('Directory', scanDir));
-  console.log(labelValue('Source files', String(results.filesScanned)));
+  // Built as lines rather than printed as it goes, so that --output writes the
+  // text report to the file the way it writes the other two formats. It used
+  // to be printed whatever --output said, and no file was written.
+  const lines = [];
+  const print = (line = '') => { lines.push(line); };
+
+  print(compactHeader('scan'));
+  print(labelValue('Directory', scanDir));
+  print(labelValue('Source files', String(results.filesScanned)));
   // Named separately from source files: "Secrets found: 0" means something
   // different when no .env was read than when one was read and was clean.
-  console.log(labelValue('Config files', String(results.configFilesScanned ?? 0)));
+  print(labelValue('Config files', String(results.configFilesScanned ?? 0)));
   if (results.filesWalked > results.filesScanned) {
-    console.log(labelValue('Files examined', String(results.filesWalked)));
+    print(labelValue('Files examined', String(results.filesWalked)));
   }
 
   // Crypto libraries. A source-detected library with no attributable algorithm
   // list is shown as such rather than with a blank column.
   if (results.libraries.length > 0) {
-    console.log(section('Crypto Libraries'));
-    console.log(tableHeader(['Library', 'Version', 'Risk', 'Algorithms'], [22, 10, 10, 30]));
+    print(section('Crypto Libraries'));
+    print(tableHeader(['Library', 'Version', 'Risk', 'Algorithms'], [22, 10, 10, 30]));
     for (const lib of results.libraries) {
       const algos = lib.algorithms.length > 0
         ? lib.algorithms.join(', ')
         : 'see source algorithms';
-      console.log(tableRow([lib.name, lib.version, lib.quantumRisk, algos], [22, 10, 10, 30]));
+      print(tableRow([lib.name, lib.version, lib.quantumRisk, algos], [22, 10, 10, 30]));
     }
   } else {
-    console.log(`\n  ${dim('No crypto libraries detected')}`);
+    print(`\n  ${dim('No crypto libraries detected')}`);
   }
 
   // Hardcoded secrets
   if (results.secrets.length > 0) {
-    console.log(section('Hardcoded Secrets'));
+    print(section('Hardcoded Secrets'));
     for (const s of results.secrets) {
-      console.log(`  ${error(`[CRIT] ${s.name}`)}`);
-      console.log(`         ${dim(location(s))}`);
-      if (s.envVar) console.log(`         ${info(`Fix: read from $${s.envVar}`)}`);
+      print(`  ${error(`[CRIT] ${s.name}`)}`);
+      print(`         ${dim(location(s))}`);
+      if (s.envVar) print(`         ${info(`Fix: read from $${s.envVar}`)}`);
     }
   }
 
   // Weak patterns
   if (results.weakPatterns.length > 0) {
-    console.log(section('Weak Crypto Patterns'));
+    print(section('Weak Crypto Patterns'));
     for (const w of results.weakPatterns) {
       const headline = w.cwe ? `${w.issue} (${w.cwe})` : w.issue;
-      console.log(`  ${w.severity === 'critical' ? error(headline) : warning(headline)}`);
-      console.log(`    ${dim(location(w))}`);
-      if (w.fix) console.log(`    ${info(`Fix: ${w.fix}`)}`);
+      print(`  ${w.severity === 'critical' ? error(headline) : warning(headline)}`);
+      print(`    ${dim(location(w))}`);
+      if (w.fix) print(`    ${info(`Fix: ${w.fix}`)}`);
       // The placement is part of the instruction. A pragma that is not the
       // FIRST thing in its comment is ignored in silence, so a user who appends
       // one to a line that already carries a `//` gets no waiver and no word
       // about it. Its own line above the finding always works.
-      if (w.rule) console.log(`    ${dim(`Waive: put cryptoserve-ignore ${w.rule} -- <why> on its own line above`)}`);
+      if (w.rule) print(`    ${dim(`Waive: put cryptoserve-ignore ${w.rule} -- <why> on its own line above`)}`);
     }
   }
 
@@ -650,29 +656,29 @@ async function cmdScan(args) {
   // ran: a reader has to be able to audit what was turned off and why without
   // reading the source tree for pragmas.
   if (results.waivedFindings?.length > 0) {
-    console.log(section('Waived Findings'));
+    print(section('Waived Findings'));
     for (const w of results.waivedFindings) {
-      console.log(`  ${dim(`[WAIVED] ${w.issue}`)}`);
-      console.log(`    ${dim(location(w))}  ${dim(w.rule)}`);
-      console.log(`    ${dim(`Reason: ${w.reason}`)}`);
+      print(`  ${dim(`[WAIVED] ${w.issue}`)}`);
+      print(`    ${dim(location(w))}  ${dim(w.rule)}`);
+      print(`    ${dim(`Reason: ${w.reason}`)}`);
     }
   }
 
   // Pragmas that are not doing what their author believes they are doing.
   if (results.waiverWarnings?.length > 0) {
-    console.log(section('Waiver Problems'));
+    print(section('Waiver Problems'));
     for (const w of results.waiverWarnings) {
-      console.log(`  ${warning(`[${w.kind}]`)} ${w.detail}`);
-      console.log(`    ${dim(`${w.file}:${w.line}`)}`);
+      print(`  ${warning(`[${w.kind}]`)} ${w.detail}`);
+      print(`    ${dim(`${w.file}:${w.line}`)}`);
     }
   }
 
   // Source algorithms, with the location that produced each one
   if (results.sourceAlgorithms && results.sourceAlgorithms.length > 0) {
-    console.log(section('Source Code Crypto'));
-    console.log(tableHeader(['Algorithm', 'Category', 'Language', 'Risk', 'Location'], [18, 13, 11, 9, 30]));
+    print(section('Source Code Crypto'));
+    print(tableHeader(['Algorithm', 'Category', 'Language', 'Risk', 'Location'], [18, 13, 11, 9, 30]));
     for (const algo of results.sourceAlgorithms) {
-      console.log(tableRow(
+      print(tableRow(
         [algo.algorithm, algo.category, algo.language, algo.quantumRisk, location(algo)],
         [18, 13, 11, 9, 30]
       ));
@@ -681,20 +687,20 @@ async function cmdScan(args) {
 
   // TLS findings
   if (results.tlsFindings && results.tlsFindings.length > 0) {
-    console.log(section('TLS/SSL Issues'));
+    print(section('TLS/SSL Issues'));
     for (const tls of results.tlsFindings) {
       const icon = tls.risk === 'critical' ? error(`[CRIT] ${tls.protocol}`) : warning(`[${tls.risk.toUpperCase()}] ${tls.protocol}`);
-      console.log(`  ${icon} ${dim(tls.file + ':' + tls.line)}`);
-      console.log(`    ${dim(tls.recommendation)}`);
+      print(`  ${icon} ${dim(tls.file + ':' + tls.line)}`);
+      print(`    ${dim(tls.recommendation)}`);
     }
   }
 
   // Binary findings
   if (results.binaryFindings && results.binaryFindings.length > 0) {
-    console.log(section('Binary Crypto Signatures'));
-    console.log(tableHeader(['Signature', 'Algorithm', 'Severity', 'File'], [24, 12, 10, 30]));
+    print(section('Binary Crypto Signatures'));
+    print(tableHeader(['Signature', 'Algorithm', 'Severity', 'File'], [24, 12, 10, 30]));
     for (const bf of results.binaryFindings) {
-      console.log(tableRow(
+      print(tableRow(
         [bf.name, bf.algorithm, bf.severity, bf.file],
         [24, 12, 10, 30]
       ));
@@ -703,41 +709,45 @@ async function cmdScan(args) {
 
   // Cert files
   if (results.certFiles.length > 0) {
-    console.log(section('Certificate/Key Files'));
+    print(section('Certificate/Key Files'));
     for (const f of results.certFiles) {
-      console.log(`  ${info(f)}`);
+      print(`  ${info(f)}`);
     }
   }
 
   // Summary
-  console.log(section('Summary'));
-  console.log(labelValue('Libraries', String(results.libraries.length)));
+  print(section('Summary'));
+  print(labelValue('Libraries', String(results.libraries.length)));
   if (results.sourceAlgorithms?.length > 0) {
-    console.log(labelValue('Source algorithms', String(results.sourceAlgorithms.length)));
+    print(labelValue('Source algorithms', String(results.sourceAlgorithms.length)));
   }
   if (results.languagesDetected?.length > 0) {
-    console.log(labelValue('Languages', results.languagesDetected.join(', ')));
+    print(labelValue('Languages', results.languagesDetected.join(', ')));
   }
   if (results.manifestsFound?.length > 0) {
-    console.log(labelValue('Manifests', results.manifestsFound.join(', ')));
+    print(labelValue('Manifests', results.manifestsFound.join(', ')));
   }
-  console.log(labelValue('Secrets found', results.secrets.length > 0 ? error(String(results.secrets.length)) : success('0')));
-  console.log(labelValue('Weak patterns', results.weakPatterns.length > 0 ? warning(String(results.weakPatterns.length)) : success('0')));
+  print(labelValue('Secrets found', results.secrets.length > 0 ? error(String(results.secrets.length)) : success('0')));
+  print(labelValue('Weak patterns', results.weakPatterns.length > 0 ? warning(String(results.weakPatterns.length)) : success('0')));
   // A zero here is not printed, so a clean tree does not grow a line telling
   // the reader that nothing was suppressed. A non-zero one always is: the
   // summary must not report "Weak patterns 0" while findings sit behind a
   // pragma one section above.
   if (results.waivedFindings?.length > 0) {
-    console.log(labelValue('Waived', warning(String(results.waivedFindings.length))));
+    print(labelValue('Waived', warning(String(results.waivedFindings.length))));
   }
   if (results.waiverWarnings?.length > 0) {
-    console.log(labelValue('Waiver problems', warning(String(results.waiverWarnings.length))));
+    print(labelValue('Waiver problems', warning(String(results.waiverWarnings.length))));
   }
   if (results.tlsFindings?.length > 0) {
-    console.log(labelValue('TLS issues', warning(String(results.tlsFindings.length))));
+    print(labelValue('TLS issues', warning(String(results.tlsFindings.length))));
   }
-  console.log(labelValue('Cert/key files', String(results.certFiles.length)));
-  console.log();
+  print(labelValue('Cert/key files', String(results.certFiles.length)));
+  print();
+
+  // The colour codes are for the terminal stdout may be, not for a file.
+  const report = lines.join('\n');
+  emit(outputPath ? unstyled(report) : report);
 }
 
 async function cmdEncrypt(args) {
@@ -1683,7 +1693,12 @@ async function cmdGate(args) {
       } else {
         console.log(document);
       }
-      process.exit(pass ? 0 : 1);
+      // An exit code and a return, not process.exit(). Exit does not wait for
+      // stdout to drain, so with stdout a pipe a document larger than the
+      // pipe's buffer was cut where the buffer ended (65,536 or 131,072 bytes
+      // on macOS), and what reached the reader was not valid JSON.
+      process.exitCode = pass ? 0 : 1;
+      return;
     }
 
     if (format === 'json') {
@@ -1798,7 +1813,8 @@ async function cmdGate(args) {
       console.log();
     }
 
-    process.exit(pass ? 0 : 1);
+    // Not process.exit(), for the reason given under the SARIF branch.
+    process.exitCode = pass ? 0 : 1;
   } catch (e) {
     if (format === 'json') {
       console.log(JSON.stringify({ status: 'error', error: e.message }, null, 2));

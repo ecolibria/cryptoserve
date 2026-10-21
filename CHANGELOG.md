@@ -316,6 +316,46 @@ of the wrong length before calling liboqs, as FIPS 203 §7.2 and §7.3 require
 routes answer such an input with 400, and an encapsulation or hybrid ciphertext
 shorter than the lengths its header declares is refused instead of read short.
 
+Dependency versions are capped, `gate` documents reach a pipe whole,
+`scan --output` writes the text report, and a dependency named after a
+property every JavaScript object has is no longer a cryptographic library
+([#84](https://github.com/ecolibria/cryptoserve/issues/84)).
+
+- **A dependency version is capped at 256 characters**, where it is built, for
+  npm and every other ecosystem, as a finding's `evidence` and a waiver's rule
+  and reason already were. A `package.json` pinning `jose` to `1.0.0-` and
+  5,000 letters, and a `requirements.txt` pinning `cryptography` to a
+  5,000-digit version, put every character into `libraries[].version` and the
+  CBOM purl (5,019 and 5,022 characters), and `gate --max-risk low` repeated
+  them in each violation's `source`. On that tree the purls are now 269 and 278
+  characters, and the longest line `gate --max-risk low` prints is 361
+  characters rather than 5,105. A version of 256 characters or fewer is
+  carried as before.
+- **`gate --format json` and `--format sarif` reach a pipe whole.** `gate`
+  printed the document and called `process.exit()` at once, which does not
+  wait for stdout to drain. Measured on macOS through `| cat`, a 354,199-byte
+  JSON document arrived as 65,536 or 131,072 bytes and a 689,843-byte SARIF
+  document as 131,072 bytes, in 4 of 4 runs each, and none of them parsed.
+  `gate` now sets the exit code and returns, so it still exits 0 on a pass and
+  1 on a failure, and both documents arrived whole in 4 of 4 runs.
+- **`scan --output` writes the text report.** It wrote a file only for
+  `--format json` and `sarif`; with the default text format the report went to
+  stdout, no file was created, and the command exited 0. The text report is
+  now written to the file without the colour codes a terminal gets, and
+  nothing goes to stdout, as with the other two formats.
+- **A dependency named `constructor`, `toString`, `hasOwnProperty` or
+  `__proto__` is no longer inventoried.** The package tables are plain
+  objects, and looking such a name up in one found the property every object
+  inherits. `scan --format json` listed the dependency with no algorithms, and
+  `scan`'s text report, `gate` and `cbom` stopped with an error. Only a
+  table's own keys match now, in every ecosystem. On a `package.json` listing
+  `constructor`, `toString` and `hasOwnProperty` beside `crypto-js`, `gate`
+  now reaches the verdict, score and violation count it reaches for
+  `crypto-js` alone.
+- The `gate` tests run the CLI without a shell, and name their fixture
+  directories with a space. Run from a copy of `sdk/javascript` whose path
+  holds one, 60 of the file's 63 tests failed; all 65 now pass there.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
