@@ -252,11 +252,108 @@ describe('printablePath', () => {
     assert.equal(printablePath(`a${String.fromCodePoint(0x7f)}\nb.js`), 'a%7F%0Ab.js');
   });
 
+  it('encodes a literal percent sign, so a name holding one prints apart from an encoded name', () => {
+    const rlo = `a${String.fromCodePoint(0x202e)}b.js`;
+    assert.equal(printablePath(rlo), 'a%E2%80%AEb.js');
+    assert.equal(printablePath('a%E2%80%AEb.js'), 'a%25E2%2580%25AEb.js');
+    assert.equal(printablePath('src/100% done.js'), 'src/100%25 done.js');
+    assert.equal(printablePath(`100%${String.fromCodePoint(0x202e)}.js`), '100%25%E2%80%AE.js');
+  });
+
+  it('decodes back to the name it was given', () => {
+    const failures = [];
+    const check = (name) => {
+      let back;
+      try { back = decodeURIComponent(printablePath(name)); } catch (e) { back = e.message; }
+      if (back !== name) failures.push(`"${show(name)}" came back as "${show(back)}"`);
+    };
+    // Each code point of the Basic Multilingual Plane outside the surrogates,
+    // alone and between two letters.
+    for (let cp = 0; cp <= 0xffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      check(String.fromCodePoint(cp));
+      check(`a${String.fromCodePoint(cp)}b.js`);
+    }
+    // A literal percent sign beside the class, and text that is already an
+    // escape, which is exactly what decoding would otherwise misread.
+    for (const name of [
+      '%', '%%', '100%', 'a%E2%80%AEb.js', 'a%25b.js', `100%${String.fromCodePoint(0x202e)}.js`,
+      `%${IN_NAME}%0A%`, `src/${IN_NAME}/100% done.js`,
+    ]) check(name);
+    assert.deepEqual(failures, []);
+  });
+
   it('leaves an ordinary path exactly as it was', () => {
-    // Including what a careless sanitiser would also touch: a literal percent
-    // sign, a tab, a Windows separator, and letters that are not ASCII.
-    for (const p of ['src/app.js', 'src/100% done.js', 'a\tb.js', 'src\\win.js', 'données/ü.js', 'שלום/مرحبا.py']) {
+    // Including what a careless sanitiser would also touch: a tab, a Windows
+    // separator, and letters that are not ASCII.
+    for (const p of ['src/app.js', 'a\tb.js', 'src\\win.js', 'données/ü.js', 'שלום/مرحبا.py']) {
       assert.equal(printablePath(p), p);
+    }
+  });
+});
+
+describe('a file name that holds a literal percent sign', () => {
+  // Two names that printed the same path while `%` was left unencoded: one
+  // holds U+202E, the other holds the escape of U+202E as text. Each makes an
+  // MD5 call on line 2. `x%.js` makes a SHA-1 call and prints as `x%25.js`,
+  // which is the name of another file here, so a path opened as printed rather
+  // than decoded reads the wrong file. Line 2 of each ends in a marker that
+  // differs per file.
+  const RLO_NAME = `a${String.fromCodePoint(0x202e)}b.js`;
+  const PCT_NAME = 'a%E2%80%AEb.js';
+  const NAMES = [RLO_NAME, PCT_NAME, 'x%.js'];
+  const HASHES = ['md5', 'md5', 'sha1'];
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'cryptoserve-percent-'));
+    NAMES.forEach((name, i) => {
+      writeFileSync(join(root, name),
+        `const crypto = require('crypto');\ncrypto.createHash('${HASHES[i]}'); // marker-${i}\n`);
+    });
+    writeFileSync(join(root, 'x%25.js'), 'module.exports = 1;\n');
+  });
+
+  after(() => { if (root) rmSync(root, { recursive: true, force: true }); });
+
+  // Compared in their shown form, so a failure cannot print U+202E itself.
+  const SHOWN = NAMES.map(show);
+
+  /** The file a printed path decodes to, shown, or a description of why it names none. */
+  const named = (p) => {
+    let decoded;
+    try { decoded = decodeURIComponent(p); } catch { return `"${show(p)}" does not decode`; }
+    return NAMES.includes(decoded) ? show(decoded) : `"${show(p)}" decodes to "${show(decoded)}"`;
+  };
+  const sorted = (list) => [...list].sort();
+
+  it('prints a different path for each file in `scan --format json`', () => {
+    const paths = new Set(JSON.parse(run(['scan', root, '--format', 'json'])).weakPatterns.map(w => w.file));
+    assert.equal(paths.size, 3, `${paths.size} distinct paths: ${[...paths].map(show).join(', ')}`);
+    assert.deepEqual(sorted([...paths].map(named)), sorted(SHOWN));
+  });
+
+  it('gives each file a SARIF uri that decodes to exactly that file', () => {
+    const sarif = JSON.parse(run(['scan', root, '--format', 'sarif']));
+    const uris = new Set(sarif.runs[0].results.flatMap(r => r.locations.map(l => l.physicalLocation.artifactLocation.uri)));
+    assert.equal(uris.size, 3, `${uris.size} distinct uris: ${[...uris].map(show).join(', ')}`);
+    assert.deepEqual(sorted([...uris].map(named)), sorted(SHOWN));
+  });
+
+  it('keeps the MD5 calls in the two files as two `gate` violations', () => {
+    const { violations } = JSON.parse(run(['gate', root, '--format', 'json']));
+    const md5 = violations.filter(v => /^md5$/i.test(v.algorithm) && v.file !== undefined);
+    assert.deepEqual(sorted(md5.map(v => named(v.file))), sorted([RLO_NAME, PCT_NAME].map(show)));
+  });
+
+  it('reads the source context of each record from the file it names', () => {
+    const records = buildFindingRecords(scanProject(root), root);
+    assert.ok(records.some(r => named(r.file) === 'x%.js'), 'no record for x%.js');
+    for (const r of records) {
+      const name = named(r.file);
+      assert.ok(SHOWN.includes(name), name);
+      assert.match(r.context.line, new RegExp(`marker-${SHOWN.indexOf(name)}$`),
+        `record for "${show(r.file)}" read "${show(r.context.line)}"`);
     }
   });
 });

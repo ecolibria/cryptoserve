@@ -183,17 +183,13 @@ export function buildFindingRecords(scanResults, projectDir) {
   function linesOf(relPath) {
     if (fileCache.has(relPath)) return fileCache.get(relPath);
     let lines = [];
-    // A finding's path is printable, so a name carrying a terminal-steering
-    // character arrives percent-encoded; decoding it names the real file when
-    // the name holds no `%` of its own. Tried only when the path as given does
-    // not open, so an ordinary name with a literal `%` in it is still read as
-    // written.
-    for (const candidate of [() => relPath, () => decodeURIComponent(relPath)]) {
-      try {
-        lines = readFileSync(join(projectDir, candidate()), 'utf-8').split('\n');
-        break;
-      } catch { /* file moved or unreadable since the scan */ }
-    }
+    // A finding's path is printable, so a `%` or a terminal-steering character
+    // in the name arrives percent-encoded, and the file is opened by the
+    // decoded path alone. The path as printed can name a different file:
+    // `x%.js` prints as `x%25.js`, which a tree may hold as well.
+    try {
+      lines = readFileSync(join(projectDir, decodeURIComponent(relPath)), 'utf-8').split('\n');
+    } catch { /* file moved or unreadable since the scan */ }
     fileCache.set(relPath, lines);
     return lines;
   }

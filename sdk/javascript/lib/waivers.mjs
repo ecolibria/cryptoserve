@@ -236,8 +236,8 @@ const TERMINAL_UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u202a-\u202e\u
 export const stripTerminalUnsafe = (s) => s.replace(new RegExp(TERMINAL_UNSAFE.source, 'g'), '');
 
 /**
- * A path from the scanned tree, in a form that can be printed and, when the name
- * holds no `%` of its own, still opened.
+ * A path from the scanned tree, in a form that can be printed and that
+ * `decodeURIComponent` turns back into the name it came from.
  *
  * Stripping is wrong for a path: `a<RLO>b.js` stripped is `ab.js`, which names
  * a file that does not exist, so the finding would point nowhere. Each
@@ -247,16 +247,20 @@ export const stripTerminalUnsafe = (s) => s.replace(new RegExp(TERMINAL_UNSAFE.s
  * backslash in a path into a separator, and because SARIF's `uri` is a URI,
  * where this is the encoding a consumer decodes.
  *
- * Decoding gives back the real file only when the name holds no `%` of its
- * own. A literal `%` is not encoded, so a file named `a%E2%80%AEb.js` prints
- * the same as `a<RLO>b.js`, and `100%<RLO>.js` prints a form that does not
- * decode at all.
+ * A literal `%` is encoded too, as `%25`, because the encoding cannot be
+ * reversed while it is not. Left as it was, a file named `a%E2%80%AEb.js`
+ * printed the same as `a<RLO>b.js`, so findings in the two files named one
+ * path and `gate` merged an MD5 call on the same line of each into one
+ * violation; and `100%<RLO>.js` printed a form that did not decode at all. The
+ * first now prints as `a%25E2%2580%25AEb.js`. The `printablePath` tests check
+ * the round trip for each code point of the Basic Multilingual Plane outside
+ * the surrogates, alone and inside a name, and for names that mix `%` with the
+ * class.
  *
- * A path that carries none of the class is returned unchanged, so ordinary
- * paths, including ones that contain a literal `%`, read exactly as before.
+ * A path that carries neither `%` nor any of the class is returned unchanged.
  */
 export const printablePath = (s) =>
-  s.replace(new RegExp(TERMINAL_UNSAFE.source, 'g'), (ch) => encodeURIComponent(ch));
+  s.replace(new RegExp(`%|${TERMINAL_UNSAFE.source}`, 'g'), (ch) => encodeURIComponent(ch));
 
 /**
  * Every Unicode line terminator except the newline, which is the only one
