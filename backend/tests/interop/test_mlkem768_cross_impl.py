@@ -13,8 +13,14 @@ must not decapsulate to the encapsulated secret, so the check cannot pass by
 never comparing.
 
 When either implementation is absent the cross-implementation tests skip and
-name what is missing. With CRYPTOSERVE_INTEROP_REQUIRED=1 (set by the interop
-CI job) absence fails instead of skipping.
+name what is missing. With CRYPTOSERVE_INTEROP_REQUIRED=1 absence fails instead
+of skipping.
+
+No workflow under .github/workflows installs liboqs or sets
+CRYPTOSERVE_INTEROP_REQUIRED, so the backend test runs in ci.yml and
+publish.yml skip the cross-implementation tests. The job that installs liboqs
+and Go and sets the variable is tests/interop/interop.workflow.yml, a proposed
+job that is not enabled until it is copied to .github/workflows/interop.yml.
 
 Run locally from backend/ with liboqs installed and Go 1.24 or later on PATH:
 
@@ -45,6 +51,7 @@ CIPHERTEXT_BYTES = 1088
 SHARED_SECRET_BYTES = 32
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+WORKFLOWS_DIR = BACKEND_DIR.parent / ".github" / "workflows"
 
 
 @pytest.fixture(scope="session")
@@ -205,3 +212,23 @@ class TestAbsencePath:
         assert "passed" not in summary, result.stdout
         assert "skipped" not in summary, result.stdout
         assert HELPER_ENV in result.stdout
+
+
+class TestModuleDocstring:
+    """The module docstring says whether a workflow sets the required variable."""
+
+    def test_docstring_matches_the_workflows_on_the_required_variable(self):
+        if not WORKFLOWS_DIR.is_dir():
+            pytest.skip(f"{WORKFLOWS_DIR} is not in this checkout")
+        setting = sorted(
+            path.name
+            for path in WORKFLOWS_DIR.iterdir()
+            if path.suffix in {".yml", ".yaml"} and REQUIRED_ENV in path.read_text(encoding="utf-8")
+        )
+        doc = " ".join(sys.modules[__name__].__doc__.split())
+        if setting:
+            assert "No workflow under .github/workflows" not in doc, setting
+        else:
+            assert "set by the interop CI job" not in doc
+            assert f"No workflow under .github/workflows installs liboqs or sets {REQUIRED_ENV}" in doc
+            assert "tests/interop/interop.workflow.yml" in doc
