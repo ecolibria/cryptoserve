@@ -420,6 +420,15 @@ keys match now, so both names are unknown algorithms. On each of those trees,
 `scan --format json` and `cbom` exit 0 with their document, `gate` exits 0,
 and the scan reports no algorithm for the call.
 
+The decrypt engine turns a failure to parse a hybrid ciphertext into a
+`DecryptionError`, so `POST /api/v1/crypto/decrypt` answers 400 instead
+of 500 and `POST /api/v1/crypto/batch/decrypt` reports the item as "Decryption
+failed" instead of "Internal error"
+([#91](https://github.com/ecolibria/cryptoserve/issues/91)). Both routes are
+tested with a ciphertext cut short inside its ML-KEM ciphertext. The engine is
+also tested with a header that has no `mode`, names an unknown mode, carries a
+non-string `nonce` or is not a JSON object.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
