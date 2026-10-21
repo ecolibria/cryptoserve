@@ -33,7 +33,34 @@ security = HTTPBearer()
 # In-memory key storage (production should use HSM/secure storage)
 # =============================================================================
 
+# Each record names the identity that created it ("owner", and its "tenant_id"
+# where the identity carries one). Only that identity can read, use, list or
+# delete the key pair; a record that names no owner serves no identity.
 _kex_key_store: dict[str, dict] = {}
+
+
+def _belongs_to(key_info: dict, identity: Identity) -> bool:
+    """Whether a stored key pair was created by this identity."""
+    owner = key_info.get("owner")
+    if not owner or owner != getattr(identity, "id", None):
+        return False
+    tenant_id = key_info.get("tenant_id")
+    return tenant_id is None or tenant_id == getattr(identity, "tenant_id", None)
+
+
+def _owned_key(key_id: str, identity: Identity) -> dict:
+    """The caller's own stored key pair, or the 404 an absent key answers.
+
+    A key pair created by another identity answers exactly as an absent one,
+    so the response does not disclose that it exists.
+    """
+    key_info = _kex_key_store.get(key_id)
+    if key_info is None or not _belongs_to(key_info, identity):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Key not found: {key_id}",
+        )
+    return key_info
 
 
 # =============================================================================
@@ -270,7 +297,8 @@ async def generate_kex_key(
 
     Creates a new hybrid key exchange key pair combining X25519 and ML-KEM.
     Share the public keys with the sender who will use them to create
-    a shared secret via encapsulation.
+    a shared secret via encapsulation. The key pair is usable only by
+    the identity that created it.
     """
     if not is_pqc_available():
         raise HTTPException(
@@ -299,6 +327,8 @@ async def generate_kex_key(
             "mlkem_private": keypair.mlkem_private,
             "mlkem_public": keypair.mlkem_public,
             "created_at": now.isoformat(),
+            "owner": identity.id,
+            "tenant_id": getattr(identity, "tenant_id", None),
         }
 
         return GenerateKEXKeyResponse(
@@ -402,14 +432,8 @@ async def decapsulate(
             detail="PQC not available. liboqs library is not installed.",
         )
 
-    # Get key pair
-    if data.keyId not in _kex_key_store:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Key not found: {data.keyId}",
-        )
-
-    key_info = _kex_key_store[data.keyId]
+    # Get the caller's own key pair
+    key_info = _owned_key(data.keyId, identity)
 
     try:
         encap_bytes = base64.b64decode(data.encapsulation)
@@ -473,13 +497,7 @@ async def get_kex_key(
     Returns the public keys in base64 format. The private keys
     are never exposed through the API.
     """
-    if key_id not in _kex_key_store:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Key not found: {key_id}",
-        )
-
-    key_info = _kex_key_store[key_id]
+    key_info = _owned_key(key_id, identity)
 
     return GetKEXKeyResponse(
         keyId=key_id,
@@ -496,13 +514,16 @@ async def list_kex_keys(
     mode: str | None = None,
     identity: Annotated[Identity, Depends(get_sdk_identity)] = None,
 ):
-    """List all hybrid KEX key pairs.
+    """List the caller's hybrid KEX key pairs.
 
-    Returns metadata about all KEX key pairs, optionally filtered by mode.
-    Private key material is never exposed.
+    Returns metadata about the KEX key pairs the calling identity created,
+    optionally filtered by mode. Private key material is never exposed.
     """
     keys = []
     for key_id, info in _kex_key_store.items():
+        if not _belongs_to(info, identity):
+            continue
+
         # Apply filter
         if mode and info["mode"] != mode:
             continue
@@ -531,11 +552,7 @@ async def delete_kex_key(
     Permanently deletes the key pair. This action cannot be undone.
     Any shared secrets derived using these keys remain valid.
     """
-    if key_id not in _kex_key_store:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Key not found: {key_id}",
-        )
+    _owned_key(key_id, identity)
 
     del _kex_key_store[key_id]
 
