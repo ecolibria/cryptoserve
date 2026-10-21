@@ -52,13 +52,40 @@ function ruleIdFor(finding) {
   return 'cryptoserve/finding';
 }
 
+// Characters RFC 3986 allows in a path segment (pchar) without encoding, plus
+// the `/` separator, less `:` -- a colon in the first segment of a relative
+// reference reads as a scheme, so `a:b.js` would stop naming a file. A `%` that
+// already starts a `%XX` triplet is kept: `printablePath` writes terminal-unsafe
+// characters that way, and encoding the `%` again would point the decoded uri
+// at a file named with the escape text. Any other `%` is encoded.
+const URI_PATH_UNSAFE = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!$&'()*+,;=@/%]/gu;
+
+function encodeUriChar(ch) {
+  try {
+    return encodeURIComponent(ch);
+  } catch {
+    // A lone surrogate has no UTF-8 form; write the replacement character.
+    return '%EF%BF%BD';
+  }
+}
+
+/**
+ * The scanned path as a SARIF `artifactLocation.uri`, a URI reference resolved
+ * against the scanned directory. Written raw, `a#b.js` read as `a` with the
+ * fragment `b.js`, `a?b.js` as `a` with a query, and a space is not legal in a
+ * URI at all.
+ */
+export function toArtifactUri(file) {
+  return file.split('\\').join('/').replace(URI_PATH_UNSAFE, encodeUriChar);
+}
+
 function physicalLocation(finding) {
   if (!finding.file) return [];
   const region = {};
   if (Number.isInteger(finding.line) && finding.line > 0) region.startLine = finding.line;
   return [{
     physicalLocation: {
-      artifactLocation: { uri: finding.file.split('\\').join('/') },
+      artifactLocation: { uri: toArtifactUri(finding.file) },
       ...(Object.keys(region).length > 0 ? { region } : {}),
     },
   }];
