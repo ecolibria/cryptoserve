@@ -455,6 +455,24 @@ Without liboqs, `tests/test_hybrid_crypto.py` and `tests/test_pqc_enhancements.p
 skip 92 tests and `tests/interop` skips 5, so the backend test runs in `ci.yml`
 and `publish.yml` do not exercise them.
 
+`vault get constructor` and `vault delete constructor` answer `Not found:
+constructor` and exit 1 on a vault that holds no secret of that name, and
+`vault set __proto__ VALUE` stores the secret
+([#97](https://github.com/ecolibria/cryptoserve/issues/97)).
+
+The vault's secrets table was a plain object, read with `data.secrets[key]` and
+`key in data.secrets`, so a name inherited from `Object.prototype` read as an
+existing entry. On a vault holding one other secret, `vault get constructor`
+printed `undefined` and exited 0, `vault delete constructor` printed `Deleted:
+constructor` and exited 0, and `vault set __proto__ VALUE` printed `Stored:
+__proto__` while replacing the table's prototype, so `vault list` did not show
+the secret and it was not saved. The table now has no prototype. `get` and
+`delete` of `constructor`, `toString`, `hasOwnProperty` and `__proto__` report
+the name as not found until a secret of that name is stored, and each of those
+names can be stored, listed, read, deleted, exported with `vault export` and
+imported back with `importVaultBundle` as an ordinary name. `vault run` passes
+a secret named `__proto__` to the command as an environment variable.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a

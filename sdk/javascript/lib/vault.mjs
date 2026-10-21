@@ -66,11 +66,23 @@ function decryptData(packed, password) {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf-8');
 }
 
+/**
+ * The secrets table, keyed by the names users give. It has no prototype, so a
+ * lookup finds only the names the vault holds. It was a plain object, on which
+ * `constructor` and `toString` read as existing secrets and assigning
+ * `__proto__` replaced the object's prototype instead of storing a secret.
+ */
+function secretTable(entries) {
+  return Object.assign(Object.create(null), entries);
+}
+
 function loadVault(password, path = defaultVaultPath()) {
   if (!existsSync(path)) return null;
   const packed = readFileSync(path);
   const json = decryptData(packed, password);
-  return JSON.parse(json);
+  const data = JSON.parse(json);
+  data.secrets = secretTable(data.secrets);
+  return data;
 }
 
 function saveVault(data, password, path = defaultVaultPath()) {
@@ -95,7 +107,7 @@ export function initVault(password, path = defaultVaultPath()) {
   const data = {
     version: 1,
     createdAt: new Date().toISOString(),
-    secrets: {},
+    secrets: secretTable(),
   };
   saveVault(data, password, path);
   return data;
@@ -163,7 +175,9 @@ export function vaultRun(password, command, args = [], path = defaultVaultPath()
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
 
-  const secretEnv = {};
+  // No prototype, as in secretTable: on a plain object, assigning a secret
+  // named __proto__ set no variable.
+  const secretEnv = Object.create(null);
   for (const [key, entry] of Object.entries(data.secrets)) {
     secretEnv[key] = entry.value;
   }
@@ -235,7 +249,7 @@ export function importVaultBundle(password, bundle, importPassword = null, path 
   const data = loadVault(password, path) || {
     version: 1,
     createdAt: new Date().toISOString(),
-    secrets: {},
+    secrets: secretTable(),
   };
 
   for (const [key, entry] of Object.entries(secrets)) {
