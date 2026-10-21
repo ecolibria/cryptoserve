@@ -16,7 +16,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
 import { LANGUAGE_PATTERNS, scanSourceFile, scanWeakKeySizes, detectLanguage, MULTI_LANG_EXTENSIONS, newlineOffsets, lineAt } from './scanner-languages.mjs';
-import { scanManifests } from './scanner-manifests.mjs';
+import { scanManifests, VERSION_CAP } from './scanner-manifests.mjs';
 import { scanTlsConfigs } from './scanner-tls.mjs';
 import { lookupAlgorithm } from './algorithm-db.mjs';
 import { lookupNpmPackage } from './crypto-registry.mjs';
@@ -451,10 +451,11 @@ export function scanProject(projectDir, options = {}) {
           // `name` needs no cleaning: it matched a registry key exactly. The
           // version and the manifest's path are the tree's own text, and reach
           // `scan`, `gate` and `cbom` (inside the purl too), so both are made
-          // printable here rather than at each of those.
+          // printable here rather than at each of those, and the version is
+          // capped as every other ecosystem's is (see VERSION_CAP).
           results.libraries.push({
             name,
-            version: stripTerminalUnsafe(version).replace(/^[\^~]/, ''),
+            version: stripTerminalUnsafe(version).replace(/^[\^~]/, '').slice(0, VERSION_CAP),
             algorithms: info.algorithms,
             quantumRisk: info.quantumRisk,
             category: info.category,

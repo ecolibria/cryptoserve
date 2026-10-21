@@ -15,6 +15,23 @@ import { stripTerminalUnsafe } from './waivers.mjs';
 // Re-export for backward compatibility
 export { CRYPTO_PACKAGES };
 
+/**
+ * The most characters of a dependency version any report carries.
+ *
+ * A version is the manifest's own text, and it reaches `scan`, `gate` and the
+ * CBOM, inside the purl too. A finding's `evidence` (80) and a waiver's rule
+ * (80) and reason (200) are capped where they are built, for the same reason.
+ * This one is set above those so that a long range, git URL or tarball URL
+ * survives whole up to 256 characters. What reads a version tests that it is
+ * set or compares it with `unknown`, `builtin` or `source-code`. All three are
+ * shorter than the cap, so a capped version answers each of those as the
+ * whole one did.
+ *
+ * Applied after the value is cleaned, here for every other ecosystem and in
+ * `scanProject` for npm, so every output carries the same value.
+ */
+export const VERSION_CAP = 256;
+
 // ---------------------------------------------------------------------------
 // Manifest parsers
 // ---------------------------------------------------------------------------
@@ -186,9 +203,10 @@ export function scanManifests(projectDir) {
         results.push({
           name: pkg.name,
           // The parsers above capture a version as `.*` or `[^"]+`, so it is the
-          // manifest's own text. Cleaned once here for every ecosystem, so
-          // `scan`, `gate` and the CBOM purl all carry the same value.
-          version: stripTerminalUnsafe(dep.version || '') || 'unknown',
+          // manifest's own text. Cleaned and capped once here for every
+          // ecosystem, so `scan`, `gate` and the CBOM purl all carry the same
+          // value.
+          version: stripTerminalUnsafe(dep.version || '').slice(0, VERSION_CAP) || 'unknown',
           algorithms: pkg.algorithms,
           quantumRisk: pkg.quantumRisk,
           category: pkg.category,

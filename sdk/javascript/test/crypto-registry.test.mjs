@@ -101,3 +101,30 @@ describe('lookupNpmPackage', () => {
     assert.equal(lookupNpmPackage('express'), null);
   });
 });
+
+/**
+ * A dependency name is the manifest's own text, and each table is a plain
+ * object. Indexing one with a name that every object inherits found
+ * something, so a dependency called `constructor` came back as a package with
+ * no algorithms, and the text `scan`, `gate` and `cbom` then stopped on the
+ * missing list.
+ */
+describe('a name every object inherits', () => {
+  const INHERITED = ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__'];
+
+  it('is not an npm package', () => {
+    for (const name of INHERITED) assert.equal(lookupNpmPackage(name), null, name);
+  });
+
+  it('is not a package in any other ecosystem', () => {
+    for (const ecosystem of ['go', 'pypi', 'cargo', 'maven']) {
+      for (const name of INHERITED) {
+        assert.equal(lookupPackage(name, ecosystem), null, `${ecosystem}: ${name}`);
+      }
+    }
+  });
+
+  it('is not an ecosystem', () => {
+    assert.equal(lookupPackage('length', 'constructor'), null);
+  });
+});

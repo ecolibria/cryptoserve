@@ -188,4 +188,27 @@ require golang.org/x/crypto v0.17.0`);
     assert.ok(results.some(r => r.ecosystem === 'go'));
     assert.ok(results.some(r => r.ecosystem === 'pypi'));
   });
+
+  it('caps a version at 256 characters', () => {
+    writeFileSync(join(TEST_DIR, 'requirements.txt'), `cryptography==${'1'.repeat(5000)}\n`);
+    const [lib] = scanManifests(TEST_DIR);
+    assert.equal(lib.version, '1'.repeat(256));
+  });
+
+  it('leaves a version of 256 characters whole', () => {
+    writeFileSync(join(TEST_DIR, 'Cargo.toml'), `[dependencies]\nring = "${'1'.repeat(256)}"\n`);
+    const [lib] = scanManifests(TEST_DIR);
+    assert.equal(lib.version, '1'.repeat(256));
+  });
+
+  it('does not inventory a name every object inherits', () => {
+    writeFileSync(join(TEST_DIR, 'requirements.txt'), '__proto__==2.0\nconstructor==1.0\ncryptography==42.0.0\n');
+    writeFileSync(join(TEST_DIR, 'Cargo.toml'),
+      '[dependencies]\ntoString = "1.0"\n__proto__ = "1.0"\nring = "0.17"\n');
+    writeFileSync(join(TEST_DIR, 'go.mod'),
+      'module m\nrequire (\n\tconstructor v1.0.0\n\tgolang.org/x/crypto v0.17.0\n)\n');
+    const results = scanManifests(TEST_DIR);
+    assert.deepEqual(results.map(r => r.name).sort(), ['cryptography', 'golang.org/x/crypto', 'ring']);
+    for (const r of results) assert.ok(Array.isArray(r.algorithms), r.name);
+  });
 });

@@ -119,13 +119,20 @@ export const CRYPTO_PACKAGES = {
  * Look up a dependency in the crypto packages database.
  * For Go imports, also checks subpackage paths.
  * For Maven, checks groupId prefix.
+ *
+ * Every lookup asks whether the table OWNS the key. A dependency name is the
+ * manifest's own text and each table is a plain object, so indexing it with a
+ * name every object inherits (`constructor`, `toString`, `__proto__`) found
+ * something: the dependency was inventoried as a package with no algorithms,
+ * which `scan --format json` listed and on which the text `scan`, `gate` and
+ * `cbom` stopped with an error.
  */
 export function lookupPackage(name, ecosystem) {
+  if (!Object.hasOwn(CRYPTO_PACKAGES, ecosystem)) return null;
   const db = CRYPTO_PACKAGES[ecosystem];
-  if (!db) return null;
 
   // Direct match
-  if (db[name]) return { ...db[name], name };
+  if (Object.hasOwn(db, name)) return { ...db[name], name };
 
   // For Go, check if it's a subpackage of a known package
   if (ecosystem === 'go') {
@@ -155,7 +162,8 @@ export function lookupPackage(name, ecosystem) {
  * algorithms and scanner.mjs-compatible categories.
  */
 export function lookupNpmPackage(name) {
+  // An own key only, as in `lookupPackage`.
+  if (!Object.hasOwn(CRYPTO_PACKAGES.npm, name)) return null;
   const pkg = CRYPTO_PACKAGES.npm[name];
-  if (!pkg) return null;
   return { algorithms: pkg.algorithms, quantumRisk: pkg.quantumRisk, category: pkg.category };
 }
