@@ -1220,8 +1220,12 @@ class CryptoEngine:
 
             # Check if this is a hybrid ciphertext (starts with JSON object)
             if self._is_hybrid_ciphertext(packed_ciphertext):
-                # Deserialize to get the key_id
-                hybrid_ct = HybridCiphertext.deserialize(packed_ciphertext)
+                # Deserialize to get the key_id. The blob is client-supplied, so a
+                # parse failure is a decryption failure, not a server error.
+                try:
+                    hybrid_ct = HybridCiphertext.deserialize(packed_ciphertext)
+                except (ValueError, KeyError, TypeError, AttributeError) as e:
+                    raise DecryptionError(f"Invalid hybrid ciphertext: {e}") from e
                 plaintext = await self._decrypt_hybrid(
                     db, packed_ciphertext, context_name, hybrid_ct.key_id, associated_data
                 )
