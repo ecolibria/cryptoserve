@@ -1,8 +1,12 @@
 /**
- * No report field built from the scanned tree, other than the scanned
- * directory's own path, carries a terminal-steering character, in the JSON,
- * SARIF and CBOM documents of `scan`, `gate`, `cbom` and `pqc` or in the
- * `scan`, `gate` and `pqc` text reports.
+ * No report field built from the scanned tree carries a terminal-steering
+ * character, in the JSON, SARIF and CBOM documents of `scan`, `gate`, `cbom`
+ * and `pqc`, in the `scan`, `gate` and `pqc` text reports, in the summary
+ * `cbom` prints beside its document, or in the records `scan --emit-findings`
+ * writes, apart from the source lines they quote. The tree sits under a
+ * directory with a hostile name, so the scanned directory's own path is held
+ * to this as well, in those outputs and in the refusals for a path that does
+ * not exist, is a file, or holds nothing `gate` can read.
  *
  * This class was fixed one field at a time twice, and each time the review
  * that followed found a field the fix had missed. So this test does not list
@@ -13,18 +17,18 @@
  * A finding category added later fails the coverage check below until this
  * tree is taught to reach it.
  *
- * Nothing else is walked: not stderr, not the summary `cbom --output` prints,
- * and not the records `scan --emit-findings` writes, which keep these
- * characters in the source lines they quote and in the project name and
- * version they record.
+ * The refusals are read for `scan`, `pqc` and `cbom` on a missing path, `scan`
+ * on a file, and `gate` on all three. Nothing else is walked: not stderr beyond
+ * the `cbom` summary and those refusals, and not the source lines a record
+ * quotes, which are the scanned code and are kept as written.
  */
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { scanProject, toLibraryInventory } from '../lib/scanner.mjs';
 import { scanBinaries, BINARY_SIGNATURES } from '../lib/scanner-binary.mjs';
@@ -89,6 +93,15 @@ function run(args) {
   }
 }
 
+/** Both streams of a command, whatever it exits with: a refusal is on stderr. */
+function runStreams(args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf-8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (r.error) throw r.error;
+  return r;
+}
+
 function git(cwd, ...args) {
   return execFileSync('git', [
     '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
@@ -97,18 +110,29 @@ function git(cwd, ...args) {
 }
 
 describe('report fields built from the scanned tree', () => {
+  let base;
   let root;
+  let empty;
   let results;
   let gitReached = false;
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), 'cryptoserve-report-fields-'));
+    // The scanned directory sits under a hostile name of its own, because
+    // `scan`, `gate`, `cbom` and `pqc` print its whole path, parents included.
+    // Beside it, an empty directory for the refusal `gate` gives a tree it did
+    // not read.
+    base = mkdtempSync(join(tmpdir(), 'cryptoserve-report-fields-'));
+    root = join(base, `parent${IN_NAME}`, 'tree');
+    empty = join(base, `parent${IN_NAME}`, 'empty');
+    mkdirSync(root, { recursive: true });
+    mkdirSync(empty);
     const at = (...parts) => join(root, ...parts);
 
     // Manifests: a hostile VERSION in every ecosystem whose parser keeps one,
-    // and a hostile DIRECTORY above a nested workspace manifest.
+    // and a hostile DIRECTORY above a nested workspace manifest. The project's
+    // own name and version are what `scan --emit-findings` records.
     writeFileSync(at('package.json'), JSON.stringify({
-      name: 'fixture', dependencies: { 'crypto-js': `^3.1.9${IN_TEXT}` },
+      name: `fixture${IN_TEXT}`, version: `1.0.0${IN_TEXT}`, dependencies: { 'crypto-js': `^3.1.9${IN_TEXT}` },
     }));
     mkdirSync(at('packages', `pkg${IN_NAME}`), { recursive: true });
     writeFileSync(at('packages', `pkg${IN_NAME}`, 'package.json'), JSON.stringify({
@@ -152,7 +176,7 @@ describe('report fields built from the scanned tree', () => {
     results.binaryFindings = scanBinaries(root); // what `scan --binary` does
   });
 
-  after(() => { if (root) rmSync(root, { recursive: true, force: true }); });
+  after(() => { if (base) rmSync(base, { recursive: true, force: true }); });
 
   it('reaches every finding category the scanner reports', () => {
     // Enumerated from the result, not from a list here. A category added later
@@ -208,7 +232,10 @@ describe('report fields built from the scanned tree', () => {
       ['cbom', root, '--format', 'json'],
       ['pqc', root, '--format', 'json'],
     ]) {
-      assertClean(args.filter(a => a !== root).join(' '), JSON.parse(run(args)));
+      const document = JSON.parse(run(args));
+      assertClean(args.filter(a => a !== root).join(' '), document);
+      // The scanned directory's path, printable, still names that directory.
+      if (args[0] === 'pqc') assert.equal(decodeURIComponent(document.scannedPath), root);
     }
   });
 
@@ -217,6 +244,58 @@ describe('report fields built from the scanned tree', () => {
       const out = run(args);
       const lines = out.split('\n').filter(l => STEERING.test(l));
       assert.deepEqual(lines.map(show), [], `${args[0]} printed a terminal-steering character`);
+      assert.ok(out.includes(printablePath(root)), `${args[0]} does not name the scanned directory`);
+    }
+  });
+
+  it('carries none of the class in the summary `cbom` prints beside its document', () => {
+    // With --output the summary is stdout. Without it, stdout is the document
+    // and the summary goes to stderr.
+    for (const [label, text] of [
+      ['cbom --output', runStreams(['cbom', root, '--output', join(base, 'cbom.json')]).stdout],
+      ['cbom, on stderr', runStreams(['cbom', root]).stderr],
+    ]) {
+      const lines = text.split('\n').filter(l => STEERING.test(l));
+      assert.deepEqual(lines.map(show), [], `${label} printed a terminal-steering character`);
+      assert.ok(text.includes(printablePath(root)), `${label} does not name the scanned directory`);
+    }
+  });
+
+  it('carries none of the class in a refusal that names the path', () => {
+    const missing = join(root, 'missing');
+    const file = join(root, `tls${IN_NAME}.js`);
+    for (const args of [
+      ['scan', missing], ['pqc', missing], ['cbom', missing], ['scan', file],
+      ['gate', missing], ['gate', file], ['gate', empty],
+    ]) {
+      const label = `${args[0]} refusing "${show(args[1])}"`;
+      const { status, stdout, stderr } = runStreams(args);
+      assert.equal(status, 2, `${label} did not refuse`);
+      const lines = (stdout + stderr).split('\n').filter(l => STEERING.test(l));
+      assert.deepEqual(lines.map(show), [], `${label} printed a terminal-steering character`);
+      assert.ok(stderr.includes(printablePath(args[1])), `${label} does not name the path`);
+      // `gate --format json` renders the same refusal as a document.
+      if (args[0] === 'gate') {
+        const document = JSON.parse(runStreams([...args, '--format', 'json']).stdout);
+        assertClean(`${label} --format json`, document);
+        assert.ok(document.error.includes(printablePath(args[1])), `${label} --format json does not name the path`);
+      }
+    }
+  });
+
+  it('carries none of the class in the records `scan --emit-findings` writes, outside the source they quote', () => {
+    const out = join(base, 'records.jsonl');
+    run(['scan', root, '--emit-findings', out]);
+    const records = readFileSync(out, 'utf-8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+    assert.ok(records.some(r => fromHostileName(r.file)), 'no record for the hostile source file');
+    // `context` is the scanned code itself, which a record keeps as written.
+    // This tree's source lines hold none of the class, so walking them here
+    // would pass without testing anything.
+    for (const { context, ...record } of records) {
+      assertClean(`record for "${show(record.file)}" at line ${record.line}`, record);
+      // The manifest's own name and version reached the record and decode back.
+      assert.equal(decodeURIComponent(record.package.name), `fixture${IN_TEXT}`);
+      assert.equal(decodeURIComponent(record.package.version), `1.0.0${IN_TEXT}`);
     }
   });
 

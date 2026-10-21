@@ -176,16 +176,10 @@ cleaned once, where it is built, so every output carries the same value:
   file's name, and percent-encoding is the form SARIF's `uri` expects.
 
 A path holding neither `%` nor any of these characters prints exactly as
-before. The path of the scanned directory itself is not cleaned, and is printed
-as it is where a command names it, such as the `Directory` line of the text
-reports, the summary `cbom` writes to stderr and `scannedPath` in
-`pqc --format json`. A new test walks every string in the JSON, SARIF and CBOM
-documents of `scan`, `gate`, `cbom` and `pqc`, and every line of the `scan`,
-`gate` and `pqc` text reports, over a tree built to reach every finding category
-the scanner reports. It does not read the records `scan --emit-findings` writes,
-which keep these characters in the source lines they quote and in the project
-name and version they record. Those are read from `package.json`, and the name
-falls back to the scanned directory's own name.
+before. A new test walks every string in the JSON, SARIF and CBOM documents of
+`scan`, `gate`, `cbom` and `pqc`, and every line of the `scan`, `gate` and `pqc`
+text reports, over a tree built to reach every finding category the scanner
+reports.
 
 A file path from the scanned tree that holds a literal `%` now prints it as
 `%25` ([#86](https://github.com/ecolibria/cryptoserve/issues/86)).
@@ -201,6 +195,33 @@ such as `src/100% done.js` now prints as `src/100%25 done.js`.
 `scan --emit-findings` opens the file a finding names by its decoded path
 alone, because the printed path can name another file in the same tree:
 `x%.js` prints as `x%25.js`.
+
+The scanned directory's path, and the project name and version that
+`scan --emit-findings` records, now have those characters percent-encoded too
+([#88](https://github.com/ecolibria/cryptoserve/issues/88)).
+
+The fix above left them out. A newline in a parent directory's name split the
+`Directory` line of `scan`, `gate`, `pqc` and `cbom --output` in two. It did the
+same to the summary `cbom` writes to stderr, to the error `scan`, `gate`, `pqc`
+and `cbom` print for a path that does not exist or is not a directory, and to
+the one `gate` prints for a directory it found nothing to read in. ESC, DEL,
+U+009B, RLO and RLI in that name reached those lines raw, and DEL, U+009B, RLO
+and RLI reached `scannedPath` in `pqc --format json` and the error in
+`gate --format json` raw. Each of those places now prints the path the way a
+finding's path is printed, and it decodes to the directory when its name holds
+no `%`. The commands still open the path as given.
+
+`scan --emit-findings` copied the project's name and version from
+`package.json`, or the directory's own name in place of a missing name, into its
+records unchanged. They are now percent-encoded in the same way, which is the
+form a record's `file` already had. A name or version that is not a string is
+recorded as its encoded string form. The source lines a record quotes are the
+scanned code and are still kept as written.
+
+The report-fields test now scans a tree under a directory with a hostile name,
+and also reads the summary `cbom` prints beside its document, the refusals for a
+missing path, a file and an empty directory, and the records, apart from the
+source lines they quote.
 
 `gate` now fails a tree that disables TLS certificate verification
 ([#66](https://github.com/ecolibria/cryptoserve/issues/66)).

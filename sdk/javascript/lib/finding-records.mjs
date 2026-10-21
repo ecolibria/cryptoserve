@@ -34,6 +34,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { VERSION } from './version.mjs';
 import { SECRET_PATTERNS } from './scanner.mjs';
+import { printablePath } from './waivers.mjs';
 
 // Context is up to 21 lines of the caller's own source. If a credential sits
 // within that window, emitting the record verbatim would copy the credential
@@ -150,21 +151,27 @@ export function findingId({ name, ecosystem, version }, file, line, algorithm) {
  * ecosystem is "local" and the identity is whatever the manifest declares.
  * Guessing a registry identity here would let a private fork be recorded under
  * a public package's name.
+ *
+ * The name and version are the tree's own text, and so is the directory name
+ * the name falls back to. Each is recorded as `printablePath` of it, the form a
+ * record's `file` already has. Encoded rather than stripped: stripped,
+ * `a<RLO>b` and `ab` would be one name, and a finding at the same place in each
+ * would get the same `findingId`. A name or version that is not a string is
+ * recorded as its string form, so an array cannot carry such a character past
+ * the encoding.
  */
 export function projectIdentity(projectDir) {
-  const fallbackName = projectDir.split(sep).filter(Boolean).pop() || 'unknown';
+  let name = projectDir.split(sep).filter(Boolean).pop() || 'unknown';
+  let version = '0.0.0';
   const pkgPath = join(projectDir, 'package.json');
   if (existsSync(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      return {
-        name: pkg.name || fallbackName,
-        ecosystem: 'local',
-        version: pkg.version || '0.0.0',
-      };
+      name = pkg.name || name;
+      version = pkg.version || version;
     } catch { /* unparseable manifest falls through to the directory name */ }
   }
-  return { name: fallbackName, ecosystem: 'local', version: '0.0.0' };
+  return { name: printablePath(String(name)), ecosystem: 'local', version: printablePath(String(version)) };
 }
 
 /**

@@ -153,6 +153,32 @@ describe('projectIdentity', () => {
       rmSync(bare, { recursive: true, force: true });
     }
   });
+
+  // Built from a code point, never written as a literal: an override is
+  // invisible in a diff.
+  const RLO = String.fromCodePoint(0x202e);
+
+  it('percent-encodes a terminal-steering character in the name and version', () => {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `demo${RLO}app`, version: `2.1.0${RLO}` }));
+    assert.deepEqual(projectIdentity(dir), { name: 'demo%E2%80%AEapp', ecosystem: 'local', version: '2.1.0%E2%80%AE' });
+  });
+
+  it('records a name or version that is not a string as its encoded string form', () => {
+    // An array would otherwise carry the character into the record unencoded.
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: [`demo${RLO}`], version: 2 }));
+    assert.deepEqual(projectIdentity(dir), { name: 'demo%E2%80%AE', ecosystem: 'local', version: '2' });
+  });
+
+  it('percent-encodes the directory name it falls back to', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'cs-bare-'));
+    try {
+      const bare = join(parent, `bare${RLO}\n`);
+      mkdirSync(bare);
+      assert.deepEqual(projectIdentity(bare), { name: 'bare%E2%80%AE%0A', ecosystem: 'local', version: '0.0.0' });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('buildFindingRecords', () => {
