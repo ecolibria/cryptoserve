@@ -214,15 +214,21 @@ async function passwordOption(args) {
  * confident result about a path that does not exist is the defect this closes:
  * `cbom ./typo` emitted a CBOM asserting perfect quantum readiness, and
  * `pqc ./typo` scored the current directory instead.
+ *
+ * The path comes back as given, because the scan has to open it. The messages
+ * here, and the reports that name the directory, print `printablePath` of it
+ * instead, the form a finding's path takes: a newline in a parent directory's
+ * name split the line that named it in two.
  */
 async function requireDirectory(pathArg) {
   const { existsSync, statSync } = await import('node:fs');
+  const { printablePath } = await import('../lib/waivers.mjs');
   const target = pathArg ? resolve(pathArg) : process.cwd();
   if (!existsSync(target)) {
-    usageError(`Path does not exist: ${target}`);
+    usageError(`Path does not exist: ${printablePath(target)}`);
   }
   if (!statSync(target).isDirectory()) {
-    usageError(`Not a directory: ${target}`);
+    usageError(`Not a directory: ${printablePath(target)}`);
   }
   return target;
 }
@@ -383,6 +389,7 @@ async function cmdInit(args) {
 async function cmdPqc(args) {
   const { compactHeader, section, labelValue, tableHeader, tableRow, progressBar, statusBadge, divider, success, warning, error, info, dim, bold } = await import('../lib/cli-style.mjs');
   const { analyzeOffline, DATA_PROFILES } = await import('../lib/pqc-engine.mjs');
+  const { printablePath } = await import('../lib/waivers.mjs');
 
   const profile = choiceOption(args, '--profile', 'general', Object.keys(DATA_PROFILES));
   const format = choiceOption(args, '--format', 'text', ['text', 'json']);
@@ -414,14 +421,14 @@ async function cmdPqc(args) {
     // only the score cannot otherwise tell which tree it describes.
     console.log(JSON.stringify({
       ...result,
-      scannedPath: scanDir,
+      scannedPath: printablePath(scanDir),
       filesScanned: scanMeta.filesScanned ?? 0,
     }, null, 2));
     return;
   }
 
   console.log(compactHeader('pqc'));
-  console.log(labelValue('Directory', scanDir));
+  console.log(labelValue('Directory', printablePath(scanDir)));
   console.log(labelValue('Files scanned', scannedSummary(scanMeta)));
 
   // Data profile
@@ -535,6 +542,7 @@ async function cmdPqc(args) {
 async function cmdScan(args) {
   const { compactHeader, section, tableHeader, tableRow, success, warning, error, info, dim, bold, labelValue, unstyled } = await import('../lib/cli-style.mjs');
   const { scanProject } = await import('../lib/scanner.mjs');
+  const { printablePath } = await import('../lib/waivers.mjs');
   const { existsSync } = await import('node:fs');
 
   const positional = getPositional(args);
@@ -599,7 +607,7 @@ async function cmdScan(args) {
   const print = (line = '') => { lines.push(line); };
 
   print(compactHeader('scan'));
-  print(labelValue('Directory', scanDir));
+  print(labelValue('Directory', printablePath(scanDir)));
   print(labelValue('Source files', String(results.filesScanned)));
   // Named separately from source files: "Secrets found: 0" means something
   // different when no .env was read than when one was read and was clean.
@@ -1123,6 +1131,7 @@ async function cmdCbom(args) {
   const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
   const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
   const { generateCbom, toCycloneDx, toSpdx, toNativeJson } = await import('../lib/cbom.mjs');
+  const { printablePath } = await import('../lib/waivers.mjs');
 
   const positional = getPositional(args);
   const format = choiceOption(args, '--format', 'json', ['json', 'cyclonedx', 'spdx']);
@@ -1152,7 +1161,7 @@ async function cmdCbom(args) {
     writeFileSync(output, formatted + '\n');
     console.log(success(`CBOM written to ${output}`));
     console.log(labelValue('Format', format));
-    console.log(labelValue('Directory', scanDir));
+    console.log(labelValue('Directory', printablePath(scanDir)));
     console.log(labelValue('Files scanned', scannedSummary(scanResults)));
     console.log(labelValue('Components', String(cbom.components.length)));
     console.log(labelValue('Quantum readiness', `${cbom.quantumReadiness.score}/100`));
@@ -1163,7 +1172,7 @@ async function cmdCbom(args) {
     // real but wrong directory is indistinguishable from one from a clean
     // project until you can see how much was read.
     console.error(
-      `Scanned ${scannedSummary(scanResults)} under ${scanDir}: ` +
+      `Scanned ${scannedSummary(scanResults)} under ${printablePath(scanDir)}: ` +
       `${cbom.components.length} ${cbom.components.length === 1 ? 'component' : 'components'}.`
     );
   }
@@ -1173,6 +1182,7 @@ async function cmdGate(args) {
   const { scanProject, toLibraryInventory, toOwnershipInventory, weakAlgorithmSeverity, exceedsSeverity, libraryCoversLanguage } = await import('../lib/scanner.mjs');
   const { analyzeOffline, scoreContributors } = await import('../lib/pqc-engine.mjs');
   const { lookupAlgorithm } = await import('../lib/algorithm-db.mjs');
+  const { printablePath } = await import('../lib/waivers.mjs');
   const { existsSync } = await import('node:fs');
 
   const positional = getPositional(args);
@@ -1246,15 +1256,16 @@ async function cmdGate(args) {
 
   // A missing path is an error class (exit 2), not a clean pass. Without this
   // a typo in CI (`cryptoserve gate ./srcc`) silently scores 100 and lets the
-  // build through.
+  // build through. The path is printed as `requireDirectory` prints it for the
+  // other commands, and for the same reason.
   if (!existsSync(scanDir)) {
-    refuse(`Path does not exist: ${scanDir}`);
+    refuse(`Path does not exist: ${printablePath(scanDir)}`);
   }
   // Existing is not the same as scannable. `gate ./package.json --min-score 99`
   // walked zero source files, found zero violations and certified 100/100 --
   // the same fail-open as a missing path, in the CI enforcement command.
   if (!statSync(scanDir).isDirectory()) {
-    refuse(`Not a directory: ${scanDir}`);
+    refuse(`Not a directory: ${printablePath(scanDir)}`);
   }
 
   try {
@@ -1581,7 +1592,7 @@ async function cmdGate(args) {
       || (scanResults.configFilesScanned ?? 0) > 0
       || (scanResults.manifestsFound?.length ?? 0) > 0;
     if (!readSomething) {
-      refuse(`Found no files to scan under ${scanDir}. A gate cannot pass a tree it did not read.`);
+      refuse(`Found no files to scan under ${printablePath(scanDir)}. A gate cannot pass a tree it did not read.`);
     }
 
     const scoreFail = score < minScore;
@@ -1729,7 +1740,7 @@ async function cmdGate(args) {
       const { compactHeader, success, error, warning, dim, bold, labelValue } = await import('../lib/cli-style.mjs');
       console.log(compactHeader('gate'));
       console.log(labelValue('Status', pass ? success('PASS') : error('FAIL')));
-      console.log(labelValue('Directory', scanDir));
+      console.log(labelValue('Directory', printablePath(scanDir)));
       console.log(labelValue('Files scanned', scannedSummary(scanResults)));
       console.log(labelValue('Score', `${score}/100 (min: ${minScore})`));
       console.log(labelValue('Max quantum risk', maxRisk));
