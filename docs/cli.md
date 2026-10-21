@@ -532,6 +532,8 @@ to do, so a result is never reported for something that was not measured:
 
 - a path that does not exist, or exists but is not a directory
   (`scan`, `pqc`, `cbom`, `gate`)
+- a `scan --output` or `scan --emit-findings` file whose directory does not
+  exist, or has a file in its place
 - an option value the command cannot act on: `--min-score abc`, `--min-score 500`,
   `--max-risk bogus`, `--profile helthcare`, `--algorithm BOGUS`, an unknown
   `--format`, an empty `--password`

@@ -234,6 +234,39 @@ async function requireDirectory(pathArg) {
 }
 
 /**
+ * Write a file the user named, or stop with exit 2 when its directory is not
+ * there. Left to the top-level handler, `--output nodir/report.txt` printed
+ * Node's raw `ENOENT: ... open 'nodir/report.txt'` and exited 1, the code for a
+ * command that ran and reported a failure.
+ */
+async function writeNamedFile(pathArg, content) {
+  try {
+    writeFileSync(pathArg, content);
+  } catch (e) {
+    if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e;
+    const { existsSync, statSync } = await import('node:fs');
+    const { printablePath } = await import('../lib/waivers.mjs');
+    // Climb to the highest missing directory, so `a/b/out.txt` with neither
+    // present names `a`. A file standing where a directory should be is what
+    // ENOTDIR means, and it is named as not a directory.
+    let missing = dirname(resolve(pathArg));
+    while (!existsSync(dirname(missing)) && dirname(missing) !== missing) {
+      missing = dirname(missing);
+    }
+    if (existsSync(missing) && !statSync(missing).isDirectory()) {
+      usageError(`Not a directory: ${printablePath(missing)}`);
+    }
+    if (existsSync(dirname(missing)) && !statSync(dirname(missing)).isDirectory()) {
+      usageError(`Not a directory: ${printablePath(dirname(missing))}`);
+    }
+    if (!existsSync(missing)) {
+      usageError(`Path does not exist: ${printablePath(missing)}`);
+    }
+    throw e;
+  }
+}
+
+/**
  * What was actually read, in one line.
  *
  * "Files scanned: 0" beside a confident readiness score reads as a broken run
@@ -568,16 +601,16 @@ async function cmdScan(args) {
   if (emitFindings) {
     const { buildFindingRecords, toJsonl } = await import('../lib/finding-records.mjs');
     const records = buildFindingRecords(results, scanDir);
-    writeFileSync(emitFindings, records.length > 0 ? toJsonl(records) + '\n' : '');
+    await writeNamedFile(emitFindings, records.length > 0 ? toJsonl(records) + '\n' : '');
     console.error(`Wrote ${records.length} finding record(s) to ${emitFindings}`);
     console.error('Records contain source context from this tree and are unlabeled. Review before sharing.');
   }
 
   const outputPath = getOption(args, '--output');
 
-  function emit(document) {
+  async function emit(document) {
     if (outputPath) {
-      writeFileSync(outputPath, document + '\n');
+      await writeNamedFile(outputPath, document + '\n');
       console.error(`Written to ${outputPath}`);
     } else {
       console.log(document);
@@ -586,12 +619,12 @@ async function cmdScan(args) {
 
   if (format === 'sarif') {
     const { collectFindings, toSarif } = await import('../lib/sarif.mjs');
-    emit(JSON.stringify(toSarif(collectFindings(results)), null, 2));
+    await emit(JSON.stringify(toSarif(collectFindings(results)), null, 2));
     return;
   }
 
   if (format === 'json') {
-    emit(JSON.stringify(results, null, 2));
+    await emit(JSON.stringify(results, null, 2));
     return;
   }
 
@@ -755,7 +788,7 @@ async function cmdScan(args) {
 
   // The colour codes are for the terminal stdout may be, not for a file.
   const report = lines.join('\n');
-  emit(outputPath ? unstyled(report) : report);
+  await emit(outputPath ? unstyled(report) : report);
 }
 
 async function cmdEncrypt(args) {
