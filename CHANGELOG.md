@@ -296,10 +296,19 @@ not cover the CLI tarball. Every `LICENSE` in the repository, including the
 copies in the npm and PyPI packages, is now the published Apache License 2.0
 text with its APPENDIX; the license is still Apache-2.0.
 
-The documentation test now rejects a sentence saying checksums cover all, every
-or each of something, however it is worded or wrapped, unless it is limited to
-the CLI releases from `js-v0.4.0`. It accepts a download command only for a tag
-on a list of releases checked to verify, so a mistyped tag fails.
+The documentation test now rejects a sentence of `README.md`, `docs/trust.md`
+or `docs/security/transparency-report.md` that contains `checksum`,
+`SHA256SUMS`, `SHA-256 digest` or `SHA-256 hash`, in any letter case, and the
+word all, every or each, unless it also contains from `js-v0.4.0` or
+`js-v0.4.0` onward. It matches those words, not what the sentence means. It
+joins the wrapped lines of a paragraph, but reads a line that starts with `#`
+or `|` on its own and does not join a line that starts with a list marker
+(`-`, `*`, `+` or a number and a period) to the line above it. It ends a
+sentence at a `.`, `!` or `?` followed by a space and a capital letter, a
+backtick, a double quote or an opening parenthesis. A sentence wrapped onto
+one of those lines, or holding such a stop, is checked in parts. It accepts a
+download command only for a tag on a list of releases checked to verify, so a
+mistyped tag fails.
 
 The server's ML-KEM encapsulation and decapsulation refuse keys and ciphertexts
 of the wrong length before calling liboqs, as FIPS 203 §7.2 and §7.3 require
