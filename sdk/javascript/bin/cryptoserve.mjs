@@ -1259,7 +1259,7 @@ async function cmdCbom(args) {
   const { compactHeader, section, labelValue, success, dim, bold, info } = await import('../lib/cli-style.mjs');
   const { scanProject, toLibraryInventory } = await import('../lib/scanner.mjs');
   const { analyzeOffline } = await import('../lib/pqc-engine.mjs');
-  const { generateCbom, toCycloneDx, toSpdx, toNativeJson } = await import('../lib/cbom.mjs');
+  const { generateCbom, toCycloneDx, toSpdx, toNativeJson, remoteUserinfoRemoved } = await import('../lib/cbom.mjs');
   const { printablePath } = await import('../lib/waivers.mjs');
 
   const positional = getPositional(args);
@@ -1278,6 +1278,10 @@ async function cmdCbom(args) {
   const projectName = basename(scanDir);
 
   const cbom = generateCbom(scanResults, pqcResult, projectName, scanDir);
+  // Only the native document carries the origin remote. It holds it without
+  // its userinfo and records nothing about that, so the summary says so,
+  // never what was removed.
+  const userinfoRemoved = format === 'json' && remoteUserinfoRemoved(cbom);
 
   let formatted;
   switch (format) {
@@ -1295,6 +1299,7 @@ async function cmdCbom(args) {
     console.log(labelValue('Components', String(cbom.components.length)));
     console.log(labelValue('Quantum readiness', `${cbom.quantumReadiness.score}/100`));
     console.log(labelValue('Risk level', cbom.quantumReadiness.riskLevel));
+    if (userinfoRemoved) console.log(labelValue('Origin remote', 'written without its userinfo'));
   } else {
     console.log(formatted);
     // To stderr, so the document on stdout stays pipeable. An empty CBOM from a
@@ -1302,7 +1307,8 @@ async function cmdCbom(args) {
     // project until you can see how much was read.
     console.error(
       `Scanned ${scannedSummary(scanResults)} under ${printablePath(scanDir)}: ` +
-      `${cbom.components.length} ${cbom.components.length === 1 ? 'component' : 'components'}.`
+      `${cbom.components.length} ${cbom.components.length === 1 ? 'component' : 'components'}.` +
+      (userinfoRemoved ? ' Origin remote written without its userinfo.' : '')
     );
   }
 }

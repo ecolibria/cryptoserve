@@ -43,9 +43,55 @@ export function generatePurl(name, version, ecosystem) {
 // Git metadata
 // ---------------------------------------------------------------------------
 
+/**
+ * The origin remote without the userinfo of its URL, and whether it had any.
+ *
+ * A clone made with a credential in its URL keeps it in the origin remote,
+ * and a CBOM is a document people pass around. `new URL()` decides what the
+ * userinfo is and its own serialization is what is written, so the two cannot
+ * disagree; a remote with no userinfo is returned untouched. A remote it
+ * refuses (a port that is not a number, a zoned IPv6 host) is cut at the last
+ * `@` before the path, the one the parser splits on, so a password holding an
+ * `@` goes whole. The scp-like form (`user@host:path`) names an account and
+ * has no password field, so it is left as it is.
+ */
+function withoutUserinfo(remote) {
+  if (!remote.includes('://')) return { remote, removed: false };
+  let url;
+  try {
+    url = new URL(remote);
+  } catch {
+    const cut = remote.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1');
+    return { remote: cut, removed: cut !== remote };
+  }
+  if (!url.username && !url.password) return { remote, removed: false };
+  url.username = '';
+  url.password = '';
+  // The serialization gives a remote with no path a `/` it did not have.
+  const href = url.href.endsWith('/') && !remote.endsWith('/') ? url.href.slice(0, -1) : url.href;
+  return { remote: href, removed: true };
+}
+
+/**
+ * The CBOMs whose origin remote lost its userinfo when they were built. Kept
+ * beside the document rather than in it, because a property recording the
+ * removal would be a change to the document's schema; the `cbom` command says
+ * it in its summary instead. Weak, so asking about a CBOM does not retain it.
+ */
+const REMOTE_USERINFO_REMOVED = new WeakSet();
+
+/**
+ * Whether `generateCbom` removed the userinfo of the origin remote when it
+ * built this CBOM.
+ */
+export function remoteUserinfoRemoved(cbom) {
+  return REMOTE_USERINFO_REMOVED.has(cbom);
+}
+
 function getGitMetadata(projectDir) {
   const opts = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], cwd: projectDir || process.cwd() };
   const result = { gitCommit: null, gitBranch: null, gitRepo: null };
+  let userinfoRemoved = false;
   try {
     result.gitCommit = execSync('git rev-parse HEAD', opts).trim();
   } catch { /* not a git repo */ }
@@ -56,9 +102,12 @@ function getGitMetadata(projectDir) {
     result.gitBranch = stripTerminalUnsafe(execSync('git rev-parse --abbrev-ref HEAD', opts).trim());
   } catch { /* ignore */ }
   try {
-    result.gitRepo = stripTerminalUnsafe(execSync('git remote get-url origin', opts).trim());
+    // The userinfo goes before anything else reads the remote.
+    const origin = withoutUserinfo(execSync('git remote get-url origin', opts).trim());
+    result.gitRepo = stripTerminalUnsafe(origin.remote);
+    userinfoRemoved = origin.removed;
   } catch { /* ignore */ }
-  return result;
+  return { git: result, userinfoRemoved };
 }
 
 // ---------------------------------------------------------------------------
@@ -171,9 +220,9 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
   const componentsJson = JSON.stringify(components);
   const contentHash = createHash('sha256').update(componentsJson).digest('hex');
 
-  const git = getGitMetadata(projectDir);
+  const { git, userinfoRemoved } = getGitMetadata(projectDir);
 
-  return {
+  const cbom = {
     id: randomUUID(),
     version: '1.0.0',
     createdAt: new Date().toISOString(),
@@ -196,6 +245,8 @@ export function generateCbom(scanResults, pqcAnalysis, projectName = null, proje
       toolVersion: VERSION,
     },
   };
+  if (userinfoRemoved) REMOTE_USERINFO_REMOVED.add(cbom);
+  return cbom;
 }
 
 // ---------------------------------------------------------------------------
