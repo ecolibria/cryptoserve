@@ -435,6 +435,17 @@ a mode other than the key's
 ([#92](https://github.com/ecolibria/cryptoserve/issues/92)). A `true` or `false`
 length in the header is refused as a bad length instead of read as 1 or 0.
 
+The ML-KEM interop test's docstring said the interop CI job sets
+`CRYPTOSERVE_INTEROP_REQUIRED=1`. No workflow under `.github/workflows` sets it
+or installs liboqs; the docstring now says so and names
+`backend/tests/interop/interop.workflow.yml` as the proposed job that does
+([#93](https://github.com/ecolibria/cryptoserve/issues/93)). A test reads the
+workflows: when no workflow file names the variable, the docstring must not
+contain `set by the interop CI job` and must say that no workflow sets it.
+Without liboqs, `tests/test_hybrid_crypto.py` and `tests/test_pqc_enhancements.py`
+skip 92 tests and `tests/interop` skips 5, so the backend test runs in `ci.yml`
+and `publish.yml` do not exercise them.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
