@@ -9,6 +9,10 @@ Tests for:
 import pytest
 import base64
 import os
+import secrets
+import uuid
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from app.core.crypto_engine import CipherFactory, CryptoError, DecryptionError
 from app.core.hybrid_crypto import (
@@ -283,9 +287,12 @@ class TestHybridKeyExchange:
         assert info1024["quantum_security_bits"] == 256
 
 
+KEX_ROUTE_CALLER_ID = "kex-route-test-identity"
+
+
 @pytest.fixture
 def kex_client():
-    """The key exchange routes, with the SDK identity check stubbed."""
+    """The key exchange routes, with the SDK identity check stubbed to one identity."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -293,7 +300,8 @@ def kex_client():
 
     app = FastAPI()
     app.include_router(kex_api.router)
-    app.dependency_overrides[kex_api.get_sdk_identity] = lambda: object()
+    caller = SimpleNamespace(id=KEX_ROUTE_CALLER_ID, tenant_id=None)
+    app.dependency_overrides[kex_api.get_sdk_identity] = lambda: caller
     stored_before = set(kex_api._kex_key_store)
     with TestClient(app) as client:
         yield client
@@ -401,6 +409,8 @@ class TestHybridKEXDecapsulateHeaderErrors:
                 "mlkem_private": b"\x03" * 2400,
                 "mlkem_public": b"\x04" * 1184,
                 "created_at": "2026-01-01T00:00:00+00:00",
+                "owner": KEX_ROUTE_CALLER_ID,
+                "tenant_id": None,
             },
         )
         return kex_client
@@ -440,6 +450,273 @@ class TestHybridKEXDecapsulateHeaderErrors:
 
         assert response.status_code == 400, response.text
         assert "Mode mismatch" in response.json()["detail"]
+
+    @pytest.mark.parametrize("owner", [None, "kex-header-test-other-identity"])
+    def test_a_malformed_header_on_a_key_the_caller_does_not_own_answers_as_an_absent_key(
+        self, client, monkeypatch, owner
+    ):
+        from app.api import hybrid_kex as kex_api
+
+        record = {k: v for k, v in kex_api._kex_key_store[self.KEY_ID].items() if k not in ("owner", "tenant_id")}
+        if owner is not None:
+            record["owner"] = owner
+        monkeypatch.setitem(kex_api._kex_key_store, self.KEY_ID, record)
+        not_owned = self._decapsulate(client, [1, 2, 3])
+        monkeypatch.delitem(kex_api._kex_key_store, self.KEY_ID)
+        absent = self._decapsulate(client, [1, 2, 3])
+
+        assert not_owned.status_code == 404, not_owned.text
+        assert not_owned.content == absent.content
+
+
+@pytest.fixture
+async def kex_callers(db_session, test_user):
+    """The key exchange routes, called by two SDK identities of one tenant.
+
+    Each identity presents the token the identity manager issued for it, so the
+    routes resolve the caller through their own authentication dependency.
+    """
+    import httpx
+    from fastapi import FastAPI
+
+    from app.api import hybrid_kex as kex_api
+    from app.core.identity_manager import identity_manager
+    from app.database import get_db
+    from app.models import IdentityType
+
+    async def use_test_db():
+        yield db_session
+
+    app = FastAPI()
+    app.include_router(kex_api.router)
+    app.dependency_overrides[get_db] = use_test_db
+
+    callers = []
+    for name in ("KEX Creator", "KEX Other"):
+        identity, token = await identity_manager.create_identity(
+            db=db_session,
+            user=test_user,
+            name=name,
+            identity_type=IdentityType.SERVICE,
+            team="kex",
+            environment="development",
+            allowed_contexts=["general"],
+        )
+        callers.append(SimpleNamespace(identity=identity, headers={"Authorization": f"Bearer {token}"}))
+
+    stored_before = set(kex_api._kex_key_store)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield SimpleNamespace(client=client, creator=callers[0], other=callers[1])
+    for key_id in set(kex_api._kex_key_store) - stored_before:
+        del kex_api._kex_key_store[key_id]
+
+
+@pytest.fixture
+def decapsulate_reaches_its_key_lookup(monkeypatch):
+    """Let the decapsulate route reach its key lookup on a host without liboqs.
+
+    The route answers 503 before reading the store when liboqs is absent. The
+    answers under test are given at the lookup, before any ML-KEM operation.
+    """
+    from app.api import hybrid_kex as kex_api
+
+    monkeypatch.setattr(kex_api, "is_pqc_available", lambda: True)
+
+
+def _store_key_pair(owner, tenant_id=None):
+    """Place a key pair record in the route store, as generation records one.
+
+    ``owner`` is the identity that created it, or None for a record that names
+    no owner. The key material is random bytes of the stored sizes: reading,
+    listing and deleting a record, and refusing one, need no ML-KEM operation.
+    """
+    from app.api import hybrid_kex as kex_api
+    from app.core.hybrid_crypto import MLKEM
+    from app.core.hybrid_kex import HybridKeyExchange, HybridKEXMode, get_hybrid_kex_info
+
+    mode = HybridKEXMode.X25519_MLKEM_768
+    sizes = get_hybrid_kex_info(mode)
+    mlkem_sizes = MLKEM.PARAMS[HybridKeyExchange.MLKEM_VARIANTS[mode]]
+    record = {
+        "mode": mode.value,
+        "x25519_private": os.urandom(sizes["x25519_public_key_bytes"]),
+        "x25519_public": os.urandom(sizes["x25519_public_key_bytes"]),
+        "mlkem_private": os.urandom(mlkem_sizes["sk_len"]),
+        "mlkem_public": os.urandom(sizes["mlkem_public_key_bytes"]),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if owner is not None:
+        record["owner"] = owner.id
+        record["tenant_id"] = owner.tenant_id if tenant_id is None else tenant_id
+
+    key_id = secrets.token_hex(16)
+    kex_api._kex_key_store[key_id] = record
+    return key_id
+
+
+def _an_encapsulation():
+    return base64.b64encode(os.urandom(64)).decode("ascii")
+
+
+class TestKEXKeyOwnership:
+    """A key exchange key pair is usable only by the identity that created it."""
+
+    async def test_decapsulate_serves_only_the_identity_that_created_the_key_pair(
+        self, kex_callers, decapsulate_reaches_its_key_lookup
+    ):
+        key_id = _store_key_pair(kex_callers.creator.identity)
+
+        response = await kex_callers.client.post(
+            "/api/v1/kex/decapsulate",
+            json={"encapsulation": _an_encapsulation(), "keyId": key_id},
+            headers=kex_callers.other.headers,
+        )
+
+        assert response.status_code == 404, response.text
+        assert "sharedSecret" not in response.json()
+
+    async def test_read_serves_only_the_identity_that_created_the_key_pair(self, kex_callers):
+        key_id = _store_key_pair(kex_callers.creator.identity)
+
+        response = await kex_callers.client.get(f"/api/v1/kex/keys/{key_id}", headers=kex_callers.other.headers)
+
+        assert response.status_code == 404, response.text
+        assert "x25519PublicKey" not in response.json()
+        assert "mlkemPublicKey" not in response.json()
+
+    async def test_delete_serves_only_the_identity_that_created_the_key_pair(self, kex_callers):
+        from app.api import hybrid_kex as kex_api
+
+        key_id = _store_key_pair(kex_callers.creator.identity)
+
+        response = await kex_callers.client.delete(f"/api/v1/kex/keys/{key_id}", headers=kex_callers.other.headers)
+
+        assert response.status_code == 404, response.text
+        assert key_id in kex_api._kex_key_store
+        kept = await kex_callers.client.get(f"/api/v1/kex/keys/{key_id}", headers=kex_callers.creator.headers)
+        assert kept.status_code == 200, kept.text
+
+    async def test_list_holds_only_the_callers_own_key_pairs(self, kex_callers):
+        creator_key = _store_key_pair(kex_callers.creator.identity)
+        other_key = _store_key_pair(kex_callers.other.identity)
+
+        for caller, own_key in ((kex_callers.creator, creator_key), (kex_callers.other, other_key)):
+            response = await kex_callers.client.get("/api/v1/kex/keys", headers=caller.headers)
+
+            assert response.status_code == 200, response.text
+            assert [key["keyId"] for key in response.json()["keys"]] == [own_key]
+
+    async def test_the_creating_identity_reads_lists_and_deletes_its_key_pair(self, kex_callers):
+        from app.api import hybrid_kex as kex_api
+
+        key_id = _store_key_pair(kex_callers.creator.identity)
+        stored = kex_api._kex_key_store[key_id]
+        headers = kex_callers.creator.headers
+
+        read = await kex_callers.client.get(f"/api/v1/kex/keys/{key_id}", headers=headers)
+        assert read.status_code == 200, read.text
+        assert read.json()["x25519PublicKey"] == base64.b64encode(stored["x25519_public"]).decode("ascii")
+        assert read.json()["mlkemPublicKey"] == base64.b64encode(stored["mlkem_public"]).decode("ascii")
+
+        listed = await kex_callers.client.get("/api/v1/kex/keys", params={"mode": stored["mode"]}, headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert key_id in [key["keyId"] for key in listed.json()["keys"]]
+
+        deleted = await kex_callers.client.delete(f"/api/v1/kex/keys/{key_id}", headers=headers)
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json() == {"deleted": True, "keyId": key_id}
+        assert key_id not in kex_api._kex_key_store
+
+    async def test_a_key_pair_of_another_identity_answers_as_an_absent_one(
+        self, kex_callers, decapsulate_reaches_its_key_lookup
+    ):
+        from app.api import hybrid_kex as kex_api
+
+        key_id = _store_key_pair(kex_callers.creator.identity)
+        requests = {
+            "decapsulate": ("POST", "/api/v1/kex/decapsulate", {"encapsulation": _an_encapsulation(), "keyId": key_id}),
+            "read": ("GET", f"/api/v1/kex/keys/{key_id}", None),
+            "delete": ("DELETE", f"/api/v1/kex/keys/{key_id}", None),
+        }
+
+        async def send_as_other():
+            return {
+                name: await kex_callers.client.request(method, url, json=body, headers=kex_callers.other.headers)
+                for name, (method, url, body) in requests.items()
+            }
+
+        held = await send_as_other()
+        kex_api._kex_key_store.pop(key_id, None)
+        absent = await send_as_other()
+
+        for name in requests:
+            assert absent[name].status_code == 404, name
+            assert held[name].status_code == absent[name].status_code, name
+            assert held[name].content == absent[name].content, name
+
+    async def test_a_key_pair_with_no_recorded_owner_serves_no_identity(
+        self, kex_callers, decapsulate_reaches_its_key_lookup
+    ):
+        from app.api import hybrid_kex as kex_api
+
+        key_id = _store_key_pair(owner=None)
+
+        for caller in (kex_callers.creator, kex_callers.other):
+            used = await kex_callers.client.post(
+                "/api/v1/kex/decapsulate",
+                json={"encapsulation": _an_encapsulation(), "keyId": key_id},
+                headers=caller.headers,
+            )
+            read = await kex_callers.client.get(f"/api/v1/kex/keys/{key_id}", headers=caller.headers)
+            deleted = await kex_callers.client.delete(f"/api/v1/kex/keys/{key_id}", headers=caller.headers)
+            listed = await kex_callers.client.get("/api/v1/kex/keys", headers=caller.headers)
+
+            assert [used.status_code, read.status_code, deleted.status_code] == [404, 404, 404]
+            assert key_id not in [key["keyId"] for key in listed.json()["keys"]]
+        assert key_id in kex_api._kex_key_store
+
+    async def test_a_key_pair_recorded_under_another_tenant_serves_no_identity(self, kex_callers):
+        key_id = _store_key_pair(kex_callers.creator.identity, tenant_id=str(uuid.uuid4()))
+
+        read = await kex_callers.client.get(f"/api/v1/kex/keys/{key_id}", headers=kex_callers.creator.headers)
+        listed = await kex_callers.client.get("/api/v1/kex/keys", headers=kex_callers.creator.headers)
+
+        assert read.status_code == 404, read.text
+        assert key_id not in [key["keyId"] for key in listed.json()["keys"]]
+
+    @pqc_skip
+    async def test_the_creating_identity_decapsulates_with_its_generated_key_pair(self, kex_callers):
+        client, creator, other = kex_callers.client, kex_callers.creator, kex_callers.other
+
+        key = await client.post(
+            "/api/v1/kex/keys/generate", json={"mode": "X25519+ML-KEM-768"}, headers=creator.headers
+        )
+        assert key.status_code == 200, key.text
+        key = key.json()
+        sent = await client.post(
+            "/api/v1/kex/encapsulate",
+            json={
+                "x25519PublicKey": key["x25519PublicKey"],
+                "mlkemPublicKey": key["mlkemPublicKey"],
+                "mode": key["mode"],
+            },
+            headers=other.headers,
+        )
+        assert sent.status_code == 200, sent.text
+        body = {"encapsulation": sent.json()["encapsulation"], "keyId": key["keyId"]}
+
+        refused = await client.post("/api/v1/kex/decapsulate", json=body, headers=other.headers)
+        assert refused.status_code == 404, refused.text
+        assert "sharedSecret" not in refused.json()
+
+        received = await client.post("/api/v1/kex/decapsulate", json=body, headers=creator.headers)
+        assert received.status_code == 200, received.text
+        assert received.json()["sharedSecret"] == sent.json()["sharedSecret"]
+
+        for caller, expected in ((creator, [key["keyId"]]), (other, [])):
+            listed = await client.get("/api/v1/kex/keys", headers=caller.headers)
+            assert [entry["keyId"] for entry in listed.json()["keys"]] == expected
 
 
 @pqc_skip

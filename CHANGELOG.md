@@ -731,6 +731,8 @@ keeps a bundle's `updatedAt`, and `vault list` shows `unknown` for it. A number
 of milliseconds, or an array holding a date string, showed an age and now shows
 `unknown` as well.
 
+Key-exchange key pairs are scoped to the identity that created them; a request for another identity's key answers 404.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
