@@ -227,8 +227,10 @@ const TERMINAL_UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u202a-\u202e\u
  * content and printed, and it reaches a report through a pattern that matches
  * these bytes rather than through a pragma. Dependency versions, paths in the
  * tree, and the CBOM's git branch, remote and project name go through this or
- * `printablePath` where they are built, and the report-fields test walks every
- * emitted document to hold that. The path of the scanned directory itself is
+ * `printablePath` where they are built. The report-fields test holds that for
+ * the JSON, SARIF and CBOM documents of `scan`, `gate`, `cbom` and `pqc` and
+ * for the `scan`, `gate` and `pqc` text reports; it does not read the records
+ * `scan --emit-findings` writes. The path of the scanned directory itself is
  * not cleaned.
  */
 export const stripTerminalUnsafe = (s) => s.replace(new RegExp(TERMINAL_UNSAFE.source, 'g'), '');
