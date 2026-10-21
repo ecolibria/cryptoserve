@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   initVault, setSecret, getSecret, listSecrets,
   deleteSecret, resetVault, vaultExists, importEnvFile,
-  exportVault, importVaultBundle,
+  exportVault, importVaultBundle, vaultRun,
   _encryptData, _decryptData,
 } from '../lib/vault.mjs';
 
@@ -167,6 +167,82 @@ describe('vault export/import bundle', () => {
     assert.equal(count, 2);
     assert.equal(getSecret(PW, 'A', newVaultPath), '1');
     assert.equal(getSecret(PW, 'B', newVaultPath), '2');
+  });
+});
+
+describe('vault secret names inherited from Object.prototype', () => {
+  // The secrets table was a plain object read with `data.secrets[key]` and
+  // `key in data.secrets`, so these names behaved as existing entries:
+  // getSecret('constructor') returned undefined instead of null,
+  // deleteSecret('constructor') returned true, and setSecret('__proto__')
+  // replaced the table's prototype, so the value was never saved.
+  const INHERITED = ['constructor', 'toString', 'hasOwnProperty', '__proto__'];
+  const sorted = list => list.map(s => s.key).sort();
+
+  beforeEach(() => {
+    setup();
+    initVault(PW, VAULT_PATH);
+    setSecret(PW, 'REAL_NAME', 'v1', VAULT_PATH);
+  });
+  afterEach(cleanup);
+
+  it('get finds no secret under an inherited name', () => {
+    for (const name of INHERITED) {
+      assert.equal(getSecret(PW, name, VAULT_PATH), null, name);
+    }
+  });
+
+  it('delete reports an inherited name as missing', () => {
+    for (const name of INHERITED) {
+      assert.equal(deleteSecret(PW, name, VAULT_PATH), false, name);
+    }
+    assert.deepEqual(sorted(listSecrets(PW, VAULT_PATH)), ['REAL_NAME']);
+  });
+
+  it('stores, lists, reads and deletes them as ordinary names', () => {
+    for (const name of INHERITED) setSecret(PW, name, `value of ${name}`, VAULT_PATH);
+    assert.deepEqual(sorted(listSecrets(PW, VAULT_PATH)), ['REAL_NAME', ...INHERITED].sort());
+    for (const name of INHERITED) {
+      assert.equal(getSecret(PW, name, VAULT_PATH), `value of ${name}`, name);
+    }
+    assert.equal(getSecret(PW, 'REAL_NAME', VAULT_PATH), 'v1');
+    for (const name of INHERITED) {
+      assert.equal(deleteSecret(PW, name, VAULT_PATH), true, name);
+      assert.equal(getSecret(PW, name, VAULT_PATH), null, name);
+    }
+    assert.deepEqual(sorted(listSecrets(PW, VAULT_PATH)), ['REAL_NAME']);
+  });
+
+  it('carries them through export and import', () => {
+    for (const name of INHERITED) setSecret(PW, name, `value of ${name}`, VAULT_PATH);
+    const bundle = exportVault(PW, null, VAULT_PATH);
+    const newVaultPath = join(TEST_DIR, 'vault2.enc');
+    initVault(PW, newVaultPath);
+    assert.equal(importVaultBundle(PW, bundle, null, newVaultPath), INHERITED.length + 1);
+    assert.deepEqual(sorted(listSecrets(PW, newVaultPath)), ['REAL_NAME', ...INHERITED].sort());
+    for (const name of INHERITED) {
+      assert.equal(getSecret(PW, name, newVaultPath), `value of ${name}`, name);
+    }
+  });
+
+  it('imports a bundle entry named __proto__ as a secret', () => {
+    // Written as JSON text: in an object literal, `__proto__:` sets the prototype.
+    const json = '{"__proto__":{"value":"p","updatedAt":"2026-01-01T00:00:00.000Z"},"constructor":"c"}';
+    const bundle = _encryptData(json, PW).toString('base64');
+    assert.equal(importVaultBundle(PW, bundle, null, VAULT_PATH), 2);
+    assert.equal(getSecret(PW, '__proto__', VAULT_PATH), 'p');
+    assert.equal(getSecret(PW, 'constructor', VAULT_PATH), 'c');
+    assert.deepEqual(sorted(listSecrets(PW, VAULT_PATH)), ['REAL_NAME', '__proto__', 'constructor'].sort());
+  });
+
+  it('vault run gives the command a secret named __proto__', async () => {
+    setSecret(PW, '__proto__', 'p', VAULT_PATH);
+    setSecret(PW, 'constructor', 'c', VAULT_PATH);
+    const check = [
+      'const has = (k, v) => Object.entries(process.env).some(([n, x]) => n === k && x === v);',
+      'process.exit(has("__proto__", "p") && has("constructor", "c") && has("REAL_NAME", "v1") ? 0 : 3);',
+    ].join(' ');
+    assert.equal(await vaultRun(PW, process.execPath, ['-e', check], VAULT_PATH), 0);
   });
 });
 

@@ -471,6 +471,33 @@ describe('vault positionals', () => {
   });
 });
 
+describe('vault secret names inherited from Object.prototype', () => {
+  it('finds no secret named constructor and stores one named __proto__', () => {
+    // On a vault holding one secret, `vault get constructor` printed
+    // "undefined" and exited 0, `vault delete constructor` printed
+    // "Deleted: constructor" and exited 0, and `vault set __proto__ V` printed
+    // "Stored: __proto__" while `vault list` did not show it.
+    const home = tempDir('vault-names');
+    const env = { CRYPTOSERVE_HOME: home };
+    assert.equal(run(['vault', 'init', '--password', 'vp'], { env }).code, 0);
+    assert.equal(run(['vault', 'set', 'REAL_NAME', 'v1', '--password', 'vp'], { env }).code, 0);
+
+    const get = run(['vault', 'get', 'constructor', '--password', 'vp'], { env });
+    assert.equal(get.code, 1);
+    assert.equal(get.stdout, '');
+    assert.match(get.stderr, /Not found: constructor/);
+
+    const del = run(['vault', 'delete', 'constructor', '--password', 'vp'], { env });
+    assert.equal(del.code, 1);
+    assert.doesNotMatch(del.stdout, /Deleted/);
+    assert.match(del.stderr, /Not found: constructor/);
+
+    assert.equal(run(['vault', 'set', '__proto__', 'proto-value', '--password', 'vp'], { env }).code, 0);
+    assert.match(run(['vault', 'list', '--password', 'vp'], { env }).stdout, /__proto__/);
+    assert.equal(run(['vault', 'get', '__proto__', '--password', 'vp'], { env }).stdout.trim(), 'proto-value');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Secrets outside source files
 // ---------------------------------------------------------------------------
