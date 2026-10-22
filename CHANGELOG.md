@@ -175,6 +175,27 @@ before asking for the password. `vault run --password P -- CMD --help
 the vault help and exited `0` without running the command for `--help`, and
 stopped with `--password was given more than once.` for `--password`.
 
+`cryptoserve census` in the default text format now renders a snapshot that
+lacks a figure, as `--format json` and `--format html` do
+([#109](https://github.com/ecolibria/cryptoserve/issues/109)). A cached
+snapshot without `weakPercentage`, `modernPercentage` or `pqcPercentage`
+printed no report, only
+`Error: Cannot read properties of undefined (reading 'toFixed')`, and exited
+`1`. A percentage held as `null` printed the same error with `null` in place of
+`undefined`, and a snapshot without `pypi`, `cveBreakdown` or
+`advisoryBreakdown`, or with a package without `tier` or an advisory without
+`bySeverity`, stopped the same way on another property. Where the snapshot
+lacks a figure the report prints, or holds it as `null`, the report now prints
+`not in this snapshot` in its place (`absent` in a table column), names each
+such field on a `Not in this snapshot:` line in its Data Sources section, and
+exits `0`. A `null` `weakToPqcRatio` still prints
+`No PQC downloads detected`. A missing weak, modern or PQC download count, or
+NIST deadline, printed `undefined`; a missing `totalPqcDownloads` printed
+`NaN%` as the PQC readiness and a missing `totalDownloads` printed `0%`; a
+missing `collectedAt` left the `Snapshot collected` line out. Each now prints
+`not in this snapshot`. A snapshot that carries every field prints the same
+report as before.
+
 `census --output` with the default text format now writes the report to the
 file, without colour codes, and prints `Census report written to <file>`
 ([#108](https://github.com/ecolibria/cryptoserve/issues/108)). It printed the
