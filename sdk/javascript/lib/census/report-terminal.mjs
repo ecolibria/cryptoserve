@@ -26,13 +26,15 @@ function formatDate(iso) {
  * Render census results as the terminal report. The caller prints it, or
  * writes it to the `--output` file.
  *
- * Each field is checked where it is read, so a snapshot that lacks one still
- * shows the figures it has. Read unchecked, a snapshot without the
+ * Each field is checked where it is read, so a field the snapshot lacks does
+ * not stop the report. Read unchecked, a snapshot without the
  * percentages printed no report, only Node's `Cannot read properties of
- * undefined (reading 'toFixed')`, and exited 1. A field the snapshot lacks,
- * holds as null, or holds as a type other than the one its line reads is named
- * under Data Sources, and a line that reports it prints ABSENT (ABSENT_CELL in
- * a table column), never 0, `undefined` or `NaN`.
+ * undefined (reading 'toFixed')`, and exited 1. A field read through `figure`,
+ * `text` or `list` that the snapshot lacks, holds as null, or holds as a type
+ * other than the one its line reads is named under Data Sources, and a line
+ * that reports it prints ABSENT (ABSENT_CELL in a table column), never 0,
+ * `undefined` or `NaN`. An npm or PyPI section that lists no package is left
+ * out before its tier counts are read, so a tier count it lacks is not named.
  *
  * @param {Object} data - The published census snapshot
  * @param {Object} style - Destructured cli-style exports
