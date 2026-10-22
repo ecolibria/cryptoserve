@@ -438,6 +438,8 @@ cryptoserve vault reset                     # Delete vault
 |------|-------------|
 | `--password <pw>` | Vault password (prompted if omitted) |
 
+An argument after `--` is a name, a value or part of the command `vault run` starts, not an option, so `--password` goes before `--`. `cryptoserve vault delete --password P -- --verbose` removes the entry named `--verbose`.
+
 ---
 
 ## Setup Commands

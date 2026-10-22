@@ -157,6 +157,24 @@ it was meant to fix.
 
 ### Fixed
 
+The `vault delete` command that `vault list` and `vault run` print for an entry
+that is not a secret now removes it when the entry's name starts with `-`
+([#112](https://github.com/ecolibria/cryptoserve/issues/112)). For the entry
+`--verbose`, the printed `cryptoserve vault delete '--verbose'` printed `Usage:
+vault delete KEY` and exited `2`, and for `--password` it stopped with `Error:
+--password was given more than once.` The vault commands now read an argument
+after the first `--` as a name, a value or part of the command `vault run`
+starts, not as an option, and the printed command puts `--` before such a
+name, as in `cryptoserve vault delete -- '--verbose'`. With the password given
+before `--`, that command removes the entries `--verbose`, `--`, `--password`,
+`--help` and `-h`. `vault delete` given more than one name after `--`, as in
+`vault delete -- '--verbose' --password P`, prints `Error: vault delete takes
+one name after --; put options such as --password before --.` and exits `2`
+before asking for the password. `vault run --password P -- CMD --help
+--password x` now passes `--help --password x` to the command, where it printed
+the vault help and exited `0` without running the command for `--help`, and
+stopped with `--password was given more than once.` for `--password`.
+
 `census --output` with the default text format now writes the report to the
 file, without colour codes, and prints `Census report written to <file>`
 ([#108](https://github.com/ecolibria/cryptoserve/issues/108)). It printed the
