@@ -1053,6 +1053,9 @@ async function cmdVault(args) {
   // All other commands need the vault password
   const pw = flagPassword || await promptPassword('Vault password: ', { hint: HINT_PASSWORD });
 
+  // The command that removes an entry that is not a secret.
+  const removeWith = key => `Remove it with: cryptoserve vault delete ${shellWord(key)}`;
+
   try {
     switch (subcommand) {
       case 'set': {
@@ -1084,8 +1087,13 @@ async function cmdVault(args) {
         } else {
           console.log(tableHeader(['Key', 'Updated'], [30, 24]));
           for (const s of secrets) {
-            const ago = timeSince(new Date(s.updatedAt));
+            const ago = s.problem ? 'not a secret' : timeSince(new Date(s.updatedAt));
             console.log(tableRow([s.key, ago], [30, 24]));
+          }
+          const notSecrets = secrets.filter(s => s.problem);
+          if (notSecrets.length > 0) console.log();
+          for (const s of notSecrets) {
+            console.log(warning(`${JSON.stringify(s.key)} is not a secret: it ${s.problem}. ${removeWith(s.key)}`));
           }
         }
         break;
@@ -1108,7 +1116,11 @@ async function cmdVault(args) {
           console.error('Usage: vault run -- COMMAND [ARGS...]');
           process.exit(1);
         }
-        const exitCode = await vault.vaultRun(pw, cmdArgs[0], cmdArgs.slice(1));
+        // On stderr: the command's own output is on stdout.
+        const onSkip = ({ key, problem }) => console.error(warning(
+          `${JSON.stringify(key)} is not passed to the command: it ${problem}. ${removeWith(key)}`));
+        const exitCode = await vault.vaultRun(pw, cmdArgs[0], cmdArgs.slice(1),
+          vault.defaultVaultPath(), { onSkip });
         process.exit(exitCode);
         break;
       }
@@ -2076,6 +2088,15 @@ function timeSince(date) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+/**
+ * A name as one word of a POSIX shell command the user can paste: as it is
+ * when it is letters, digits, '_', '.' and '-' and starts with a letter, digit
+ * or '_', and in single quotes otherwise, where the shell expands nothing.
+ */
+function shellWord(name) {
+  return /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name) ? name : `'${name.replaceAll("'", "'\\''")}'`;
 }
 
 // ---------------------------------------------------------------------------

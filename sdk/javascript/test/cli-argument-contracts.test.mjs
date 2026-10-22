@@ -26,6 +26,7 @@ import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { _encryptData } from '../lib/vault.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cryptoserve.mjs');
@@ -498,6 +499,58 @@ describe('vault secret names inherited from Object.prototype', () => {
     assert.equal(run(['vault', 'set', '__proto__', 'proto-value', '--password', 'vp'], { env }).code, 0);
     assert.match(run(['vault', 'list', '--password', 'vp'], { env }).stdout, /__proto__/);
     assert.equal(run(['vault', 'get', '__proto__', '--password', 'vp'], { env }).stdout.trim(), 'proto-value');
+  });
+});
+
+describe('vault already holding an entry that is not a secret', () => {
+  it('lists and runs the secrets, and names each such entry with the command that removes it', () => {
+    // On a vault an earlier bundle import left holding a null entry, `vault
+    // list` printed "Cannot read properties of null (reading 'updatedAt')" and
+    // `vault run` the same for 'value', each exiting 1 without naming the entry.
+    const home = tempDir('vault-not-secret');
+    const env = { CRYPTOSERVE_HOME: home };
+    const secrets = {
+      KEPT: { value: 'k', updatedAt: '2026-01-01T00:00:00.000Z' },
+      A: null,
+      'my key': ['x'],
+      "it's": { value: 7 },
+    };
+    writeFileSync(join(home, 'vault.enc'), _encryptData(JSON.stringify({ version: 1, secrets }), 'vp'));
+
+    const list = run(['vault', 'list', '--password', 'vp'], { env });
+    assert.equal(list.code, 0, list.stderr);
+    assert.match(list.stdout, /^ {2}KEPT +\d+d ago/m);
+    assert.match(list.stdout, /^ {2}A +not a secret/m);
+    for (const line of [
+      '"A" is not a secret: it is null. Remove it with: cryptoserve vault delete A',
+      `"my key" is not a secret: it is an array. Remove it with: cryptoserve vault delete 'my key'`,
+      `"it's" is not a secret: it has no string "value". Remove it with: cryptoserve vault delete 'it'\\''s'`,
+    ]) {
+      assert.ok(list.stdout.includes(line), `missing: ${line}\n${list.stdout}`);
+    }
+
+    // The command's own exit code, so 7 means it ran and saw KEPT and not A.
+    const check = 'process.exit(process.env.KEPT === "k" && !("A" in process.env) ? 7 : 3)';
+    const ran = run(['vault', 'run', '--password', 'vp', '--', process.execPath, '-e', check], { env });
+    assert.equal(ran.code, 7, ran.stderr);
+    assert.ok(ran.stderr.includes(
+      '"A" is not passed to the command: it is null. Remove it with: cryptoserve vault delete A'), ran.stderr);
+    assert.doesNotMatch(ran.stdout, /not passed/);
+
+    // Each printed name is one a shell reads back as the entry's name, and
+    // deleting that name leaves a vault list and run report nothing about.
+    for (const name of ['A', 'my key', "it's"]) {
+      const line = list.stdout.split('\n').find(l => l.includes(`${JSON.stringify(name)} is not a secret`));
+      const word = line.slice(line.indexOf('vault delete ') + 'vault delete '.length);
+      assert.equal(spawnSync('/bin/sh', ['-c', `printf %s ${word}`], { encoding: 'utf-8' }).stdout, name, word);
+      assert.equal(run(['vault', 'delete', name, '--password', 'vp'], { env }).code, 0, name);
+    }
+    const after = run(['vault', 'list', '--password', 'vp'], { env });
+    assert.match(after.stdout, /^ {2}KEPT /m);
+    assert.doesNotMatch(after.stdout, /not a secret/);
+    const clean = run(['vault', 'run', '--password', 'vp', '--', process.execPath, '-e', check], { env });
+    assert.equal(clean.code, 7, clean.stderr);
+    assert.doesNotMatch(clean.stderr, /not passed/);
   });
 });
 

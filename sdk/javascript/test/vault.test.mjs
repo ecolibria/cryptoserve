@@ -281,6 +281,84 @@ describe('vault import of a bundle entry that is not a secret', () => {
   });
 });
 
+describe('vault already holding an entry that is not a secret', () => {
+  // importVaultBundle now refuses such an entry, but it used to store one as it
+  // was, and a vault it wrote then still holds it. listSecrets threw
+  // "Cannot read properties of null (reading 'updatedAt')" for a null entry and
+  // vaultRun the same for 'value', so one entry stopped list and run for every
+  // secret, and neither named it.
+  const KEPT = { value: 'k', updatedAt: '2026-01-01T00:00:00.000Z' };
+  const writeVault = secrets => writeFileSync(VAULT_PATH,
+    _encryptData(JSON.stringify({ version: 1, secrets }), PW));
+  const absent = names => `process.exit(process.env.KEPT === "k" && ${JSON.stringify(names)}`
+    + '.every(n => !(n in process.env)) ? 0 : 3)';
+
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('lists every name and marks the null entry', () => {
+    writeVault({ KEPT, A: null });
+    assert.deepEqual(listSecrets(PW, VAULT_PATH), [
+      { key: 'KEPT', updatedAt: KEPT.updatedAt },
+      { key: 'A', updatedAt: null, problem: 'is null' },
+    ]);
+  });
+
+  it('says what each entry that is not a secret is', () => {
+    const cases = [
+      ['null', 'is null'],
+      ['["x"]', 'is an array'],
+      ['42', 'is a number'],
+      ['true', 'is a boolean'],
+      ['"bare"', 'is a string'],
+      ['{}', 'has no string "value"'],
+      ['{"value":7}', 'has no string "value"'],
+      ['{"value":null}', 'has no string "value"'],
+      ['{"value":["a","b"]}', 'has no string "value"'],
+      ['{"value":{"toString":1}}', 'has no string "value"'],
+    ];
+    for (const [entry, problem] of cases) {
+      writeVault({ KEPT, BAD: JSON.parse(entry) });
+      assert.deepEqual(listSecrets(PW, VAULT_PATH), [
+        { key: 'KEPT', updatedAt: KEPT.updatedAt },
+        { key: 'BAD', updatedAt: null, problem },
+      ], entry);
+    }
+  });
+
+  it('vault run passes the secrets, leaves out the null entry and reports it', async () => {
+    writeVault({ KEPT, A: null });
+    const skipped = [];
+    const onSkip = s => skipped.push(s);
+    assert.equal(await vaultRun(PW, process.execPath, ['-e', absent(['A'])], VAULT_PATH, { onSkip }), 0);
+    assert.deepEqual(skipped, [{ key: 'A', problem: 'is null' }]);
+    // Without onSkip as well.
+    assert.equal(await vaultRun(PW, process.execPath, ['-e', absent(['A'])], VAULT_PATH), 0);
+  });
+
+  it('vault run leaves out a value that is not a string', async () => {
+    // A value of null reached the command as "null" and an array as "a,b", and
+    // an object without a usable toString threw before the command started.
+    writeVault({ KEPT, N: { value: null }, ARR: { value: ['a', 'b'] }, OBJ: { value: { toString: 1 } } });
+    const skipped = [];
+    const code = await vaultRun(PW, process.execPath, ['-e', absent(['N', 'ARR', 'OBJ'])], VAULT_PATH,
+      { onSkip: s => skipped.push(s) });
+    assert.equal(code, 0);
+    assert.deepEqual(skipped.map(s => s.key), ['N', 'ARR', 'OBJ']);
+    assert.ok(skipped.every(s => s.problem === 'has no string "value"'));
+  });
+
+  it('delete removes the entry, after which list and run report nothing', async () => {
+    writeVault({ KEPT, A: null });
+    assert.equal(deleteSecret(PW, 'A', VAULT_PATH), true);
+    assert.deepEqual(listSecrets(PW, VAULT_PATH), [{ key: 'KEPT', updatedAt: KEPT.updatedAt }]);
+    const skipped = [];
+    assert.equal(await vaultRun(PW, process.execPath, ['-e', absent(['A'])], VAULT_PATH,
+      { onSkip: s => skipped.push(s) }), 0);
+    assert.deepEqual(skipped, []);
+  });
+});
+
 describe('vault secret names inherited from Object.prototype', () => {
   // The secrets table was a plain object read with `data.secrets[key]` and
   // `key in data.secrets`, so these names behaved as existing entries:

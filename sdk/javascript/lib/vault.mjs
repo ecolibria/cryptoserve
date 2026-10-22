@@ -131,13 +131,20 @@ export function getSecret(password, key, path = defaultVaultPath()) {
   return entry.value;
 }
 
+/**
+ * The name and update time of every entry, never a value. An entry that is not
+ * a secret is listed with `updatedAt: null` and a `problem` saying what it is,
+ * so it can be found and removed with deleteSecret. This used to read
+ * `updatedAt` of every entry, which threw for a null entry, so one such entry
+ * stopped the listing of every secret.
+ */
 export function listSecrets(password, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
-  return Object.entries(data.secrets).map(([key, entry]) => ({
-    key,
-    updatedAt: entry.updatedAt,
-  }));
+  return Object.entries(data.secrets).map(([key, entry]) => {
+    const problem = entryProblem(entry);
+    return problem ? { key, updatedAt: null, problem } : { key, updatedAt: entry.updatedAt };
+  });
 }
 
 export function deleteSecret(password, key, path = defaultVaultPath()) {
@@ -171,7 +178,15 @@ export function resetVault(password, path = defaultVaultPath()) {
 // vault run — inject secrets as env vars into a child process
 // ---------------------------------------------------------------------------
 
-export function vaultRun(password, command, args = [], path = defaultVaultPath()) {
+/**
+ * Run a command with each secret as an environment variable and resolve with
+ * its exit code. An entry that is not a secret is left out, and `onSkip` is
+ * called with its { key, problem } before the command starts. This used to read
+ * `value` of every entry: a null entry threw before the command started, as
+ * did a value that does not convert to a string, and a value of null or an
+ * array reached the command as the text "null" or "a,b".
+ */
+export function vaultRun(password, command, args = [], path = defaultVaultPath(), { onSkip } = {}) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
 
@@ -179,7 +194,9 @@ export function vaultRun(password, command, args = [], path = defaultVaultPath()
   // named __proto__ set no variable.
   const secretEnv = Object.create(null);
   for (const [key, entry] of Object.entries(data.secrets)) {
-    secretEnv[key] = entry.value;
+    const problem = entryProblem(entry);
+    if (problem) onSkip?.({ key, problem });
+    else secretEnv[key] = entry.value;
   }
 
   return new Promise((resolve, reject) => {
@@ -248,6 +265,20 @@ function jsonKind(value) {
 }
 
 /**
+ * What keeps an entry from being a secret, such as 'is null' or 'has no string
+ * "value"', or null when it is one: an object with a string `value`, the shape
+ * setSecret writes. importVaultBundle stores nothing else, but it used to store
+ * a bundle's object entries as they were, and a vault it wrote then still holds
+ * them, so listSecrets and vaultRun check each entry too.
+ */
+function entryProblem(entry) {
+  const kind = jsonKind(entry);
+  if (kind !== 'an object') return `is ${kind}`;
+  if (typeof entry.value !== 'string') return 'has no string "value"';
+  return null;
+}
+
+/**
  * The [name, entry] pairs a bundle holds, each entry in the shape setSecret
  * writes, { value, updatedAt }. A bundle entry is a string, or an object with a
  * string `value` as exportVault writes it, whose `updatedAt` is kept when it is
@@ -269,13 +300,11 @@ function bundleEntries(secrets) {
   const entries = [];
   const refused = [];
   for (const [key, entry] of Object.entries(secrets)) {
-    const name = JSON.stringify(key);
-    if (typeof entry === 'string') {
+    const problem = typeof entry === 'string' ? null : entryProblem(entry);
+    if (problem) {
+      refused.push(`${JSON.stringify(key)} ${problem}`);
+    } else if (typeof entry === 'string') {
       entries.push([key, { value: entry, updatedAt: now }]);
-    } else if (jsonKind(entry) !== 'an object') {
-      refused.push(`${name} is ${jsonKind(entry)}`);
-    } else if (typeof entry.value !== 'string') {
-      refused.push(`${name} has no string "value"`);
     } else {
       const { updatedAt } = entry;
       const dated = typeof updatedAt === 'string' && !Number.isNaN(Date.parse(updatedAt));
