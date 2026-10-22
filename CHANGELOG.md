@@ -165,6 +165,12 @@ The request log records the names of query parameters and not their values.
 
 `cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.
 
+The Python CLI login accepts a callback only when it carries the per-login state the CLI issued.
+The server's CLI login routes (`/auth/login/<provider>`, `/auth/github`,
+`/auth/dev-login`) return the `state` a CLI sends alongside `cli_callback` on
+the redirect to the callback, so the Python CLI's browser login needs a server
+with this change; `login --cookie` works with any server.
+
 The `vault delete` command that `vault list` and `vault run` print for an entry
 that is not a secret now removes it when the entry's name starts with `-`
 ([#112](https://github.com/ecolibria/cryptoserve/issues/112)). For the entry
