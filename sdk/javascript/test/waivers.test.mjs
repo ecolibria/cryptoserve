@@ -527,17 +527,32 @@ describe('parseWaiverPragmas', () => {
     // took 1.5 seconds inside a single scanProject call. Found by adversarial
     // review. The bound is loose on purpose, because a tight one turns a slow
     // CI machine into a red build; quadratic growth blows through it either way.
+    //
+    // One parse of 2,000 lines takes about a millisecond, so one pause during a
+    // single wall-clock run of the large input could carry linear code past the
+    // bound on a loaded machine. So each sample parses its input REPS times,
+    // counts CPU time rather than wall-clock time so time spent waiting for a
+    // core does not count, and each size keeps the fastest of RUNS runs, taken
+    // alternately, because load only ever adds time.
+    const REPS = 10;
+    const RUNS = 5;
     const time = (n) => {
       const src = '// cryptoserve-ignore misuse/create-cipher -- r\n'.repeat(n);
-      const t = process.hrtime.bigint();
-      parseWaiverPragmas(src, 'javascript');
-      return Number(process.hrtime.bigint() - t) / 1e6;
+      const before = process.cpuUsage();
+      for (let i = 0; i < REPS; i++) parseWaiverPragmas(src, 'javascript');
+      const { user, system } = process.cpuUsage(before);
+      return (user + system) / 1000;
     };
     time(2000);                       // warm up, so JIT does not skew the ratio
-    const small = Math.max(time(2000), 1);
-    const large = time(16000);
+    let small = Infinity;
+    let large = Infinity;
+    for (let run = 0; run < RUNS; run++) {
+      small = Math.min(small, time(2000));
+      large = Math.min(large, time(16000));
+    }
+    small = Math.max(small, 1);
     assert.ok(large < small * 24,
-      `8x the input took ${(large / small).toFixed(1)}x the time (${small.toFixed(1)}ms -> ${large.toFixed(1)}ms)`);
+      `8x the input took ${(large / small).toFixed(1)}x the CPU time (${small.toFixed(1)}ms -> ${large.toFixed(1)}ms)`);
   });
 });
 

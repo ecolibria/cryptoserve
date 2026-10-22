@@ -157,6 +157,48 @@ it was meant to fix.
 
 ### Fixed
 
+`census --output` now stops the way `scan`, `cbom`, `gate`, `encrypt` and
+`decrypt` do ([#103](https://github.com/ecolibria/cryptoserve/issues/103)). A
+file in a directory that does not exist prints
+`Error: Path does not exist: <directory>` and exits `2`; `--format json` and
+`--format html` printed Node's raw `ENOENT` text and exited `1`. An empty value,
+or `--output` with nothing after it, prints `Error: --output was given no value.`
+and exits `2`; with `--format json` both printed the JSON on stdout, wrote no
+file and exited `0`.
+`--output` given twice prints `Error: --output was given more than once.` and
+exits `2`; the first path was written and the command exited `0`.
+
+An `--output` path, or a `scan --emit-findings` path, that the system refuses
+for a reason #99 did not name is now named with that reason and exit `2`, on
+`scan`, `cbom`, `gate`, `encrypt --file`, `decrypt --file` and `census`. A name
+longer than the system allows prints `Error: File name too long: <path>`, a loop
+of symbolic links `Error: Too many levels of symbolic links: <path>`, and a write
+to `/dev/full` `Error: No space left on device: /dev/full`. These printed Node's
+raw `ENAMETOOLONG`, `ELOOP` and `ENOSPC` text and exited `1`, and `gate` printed
+the raw text with exit `2`. A symbolic link into a directory that does not exist
+prints `Error: Path does not exist: <directory> (<link> points to <target>)`,
+where it printed raw `ENOENT` text with exit `1`. A name ending in `/` names
+a directory: `--output newdir/` prints `Error: Path does not exist: <path>` when
+`newdir` does not exist, and `--output app.js/` prints
+`Error: Not a directory: <path>` when `app.js` is a file. macOS printed raw
+`ENOENT` and `ENOTDIR` text for these with exit `1`, and Linux printed
+`Error: Is a directory: <path>` for both.
+
+`gate --format json` given `--output`, `--min-score`, `--max-risk` or
+`--max-severity` twice now puts its JSON error document on stdout, with
+`"error": "--output was given more than once."` (or the option given), and
+exits `2`, as it does for an unusable value of these options. It printed the
+message as plain text on stderr and nothing on stdout.
+
+docs/cli.md used `-o` and `-p` in the `cbom`, `census`, `encrypt` and `decrypt`
+examples and listed them in the flag tables. The Node.js CLI has no short form
+of `--output` or `--password` and reads them as positional arguments:
+`cryptoserve cbom --format cyclonedx -o cbom.json` stopped with
+`Error: Path does not exist: <cwd>/-o`, and `census --format json -o out.json`
+printed the JSON on stdout and wrote no file. The examples and tables now use
+`--output` and `--password`, and the page names the Python CLI commands that
+accept `-o` and `-p`.
+
 `cbom --output`, `gate --output`, `encrypt --file --output` and
 `decrypt --file --output` given a file in a directory that does not exist now
 print `Error: Path does not exist: <directory>` and exit `2`, as `scan` does
