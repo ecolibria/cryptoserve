@@ -753,11 +753,24 @@ describe('login', () => {
     // 'error' and the process died with a raw Node EADDRINUSE stack trace.
     const { createServer } = await import('node:http');
     const { login } = await import('../lib/client.mjs');
-    const blocker = createServer(() => {});
-    await new Promise((res, rej) => { blocker.once('error', rej); blocker.listen(9876, res); });
+    // The blocker binds 127.0.0.1, the listener's own address: a wildcard
+    // bind does not make a 127.0.0.1 bind fail on every platform.
+    // login-callback.test.mjs uses the same port and test files run in
+    // parallel, so a port that file holds for a moment is waited for.
+    let blocker;
+    for (let attempt = 0; ; attempt++) {
+      blocker = createServer(() => {});
+      try {
+        await new Promise((res, rej) => { blocker.once('error', rej); blocker.listen(9876, '127.0.0.1', res); });
+        break;
+      } catch (err) {
+        if (err.code !== 'EADDRINUSE' || attempt >= 200) throw err;
+        await new Promise((res) => setTimeout(res, 50));
+      }
+    }
     try {
       await assert.rejects(
-        () => login('https://example.invalid'),
+        () => login('https://example.invalid', { openBrowser: () => {} }),
         (err) => {
           assert.ok(err instanceof Error, 'a non-Error was thrown');
           assert.match(err.message, /9876/, `the message must name the port: ${err.message}`);
