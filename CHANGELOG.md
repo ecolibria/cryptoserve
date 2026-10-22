@@ -605,6 +605,23 @@ printed `vault delete` command names the entry in single quotes unless the name
 is letters, digits, `_`, `.` and `-` starting with a letter, digit or `_`, as in
 `cryptoserve vault delete 'my key'`.
 
+`setSecret` refuses a value that is not a string, and `exportVault` refuses to
+export a vault holding an entry that `importVaultBundle` refuses
+([#106](https://github.com/ecolibria/cryptoserve/issues/106)).
+
+`setSecret` accepted a value that was not a string, such as `8080`, `true`,
+`null`, `undefined` or `{"x":1}`. Since the fix for #101, `importVaultBundle`
+refused the bundle `exportVault` then wrote, with an error that begins `Bundle
+not imported: "PORT" has no string "value".`, so the library could not import
+its own export. `setSecret` now throws a `TypeError` such as `Secret "PORT" not
+stored: its value is a number, not a string.` before it reads the vault, and
+the vault file is left as it was. A vault that already holds such an entry,
+written by an earlier version, is not exported: `vault export` prints `Vault
+not exported: "PORT" has no string "value". The bundle would not import. Store
+each such secret again as a string, or delete it.`, naming up to five such
+entries, and exits 1. After `vault set PORT 8080` or `vault delete PORT`, the
+bundle `vault export` writes imports.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
