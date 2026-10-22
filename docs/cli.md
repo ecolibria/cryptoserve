@@ -541,13 +541,13 @@ to do, so a result is never reported for something that was not measured:
 - a path that does not exist, or exists but is not a directory
   (`scan`, `pqc`, `cbom`, `gate`)
 - an `--output` file (`scan`, `cbom`, `gate`, `encrypt --file`,
-  `decrypt --file`, `census`) or a `scan --emit-findings` file that cannot be
-  written where it was named: its directory does not exist or has a file in its
-  place, it is a symbolic link into a directory that does not exist, the path
-  is a directory, or the system refuses the write for a reason the message
-  names (permission denied, operation not permitted, read-only file system,
-  file name too long, too many levels of symbolic links, no space left on
-  device)
+  `decrypt --file`, `census --format json`, `census --format html`) or a
+  `scan --emit-findings` file that cannot be written where it was named: its
+  directory does not exist or has a file in its place, it is a symbolic link
+  into a directory that does not exist, the path is a directory, or the system
+  refuses the write for a reason the message names (permission denied,
+  operation not permitted, read-only file system, file name too long, too many
+  levels of symbolic links, no space left on device)
 - an option value the command cannot act on: `--min-score abc`, `--min-score 500`,
   `--max-risk bogus`, `--profile helthcare`, `--algorithm BOGUS`, an unknown
   `--format`, an empty `--password`, an empty or missing `--output` value

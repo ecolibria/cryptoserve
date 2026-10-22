@@ -158,11 +158,13 @@ it was meant to fix.
 ### Fixed
 
 `census --output` now stops the way `scan`, `cbom`, `gate`, `encrypt` and
-`decrypt` do ([#103](https://github.com/ecolibria/cryptoserve/issues/103)). A
-file in a directory that does not exist prints
-`Error: Path does not exist: <directory>` and exits `2`; `--format json` and
-`--format html` printed Node's raw `ENOENT` text and exited `1`. An empty value,
-or `--output` with nothing after it, prints `Error: --output was given no value.`
+`decrypt` do ([#103](https://github.com/ecolibria/cryptoserve/issues/103)).
+With `--format json` or `--format html`, the two formats that write the file,
+a file in a directory that does not exist prints
+`Error: Path does not exist: <directory>` and exits `2`; both printed Node's
+raw `ENOENT` text and exited `1`. The default text format prints the report on
+stdout and does not write `--output`. In every format, an empty value, or
+`--output` with nothing after it, prints `Error: --output was given no value.`
 and exits `2`; with `--format json` both printed the JSON on stdout, wrote no
 file and exited `0`.
 `--output` given twice prints `Error: --output was given more than once.` and
@@ -170,8 +172,9 @@ exits `2`; the first path was written and the command exited `0`.
 
 An `--output` path, or a `scan --emit-findings` path, that the system refuses
 for a reason #99 did not name is now named with that reason and exit `2`, on
-`scan`, `cbom`, `gate`, `encrypt --file`, `decrypt --file` and `census`. A name
-longer than the system allows prints `Error: File name too long: <path>`, a loop
+`scan`, `cbom`, `gate`, `encrypt --file`, `decrypt --file`,
+`census --format json` and `census --format html`. A name longer than the
+system allows prints `Error: File name too long: <path>`, a loop
 of symbolic links `Error: Too many levels of symbolic links: <path>`, and a write
 to `/dev/full` `Error: No space left on device: /dev/full`. These printed Node's
 raw `ENAMETOOLONG`, `ELOOP` and `ENOSPC` text and exited `1`, and `gate` printed
