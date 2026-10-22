@@ -185,15 +185,18 @@ cached snapshot without `weakPercentage`, `modernPercentage` or
 `undefined`, and a snapshot without `pypi`, `cveBreakdown` or
 `advisoryBreakdown`, or with a package without `tier` or an advisory without
 `bySeverity`, stopped the same way on another property. The report now prints
-such a snapshot and exits `0`. A Headline or PQC Readiness line, or an npm or
-PyPI tier count, whose figure the snapshot lacks or holds as `null` prints
-`not in this snapshot` in its place, and such a table cell prints `absent`;
-the field is named on a `Not in this snapshot:` line in the Data Sources
-section. A missing CVE or advisory count prints no line, as a count of `0`
-does, and a missing `npm`, `pypi`, `cveBreakdown` or `advisoryBreakdown`
-leaves its section out; each is named on that line too. A `null`
-`weakToPqcRatio` still prints
-`No PQC downloads detected`. A missing weak, modern or PQC download count, or
+such a snapshot and exits `0`. A Headline or PQC Readiness line, or the tier
+count of an npm or PyPI section that lists a package, whose figure the
+snapshot lacks or holds as `null` prints `not in this snapshot` in its place,
+and such a table cell prints `absent`; the field is named on a
+`Not in this snapshot:` line in the Data Sources section. A missing or `null`
+CVE or advisory count prints no line, as a count of `0` does, and a missing
+`npm`, `pypi`, `cveBreakdown` or `advisoryBreakdown` leaves its section out;
+each is named on that line too. An npm or PyPI section that lists no package
+is left out, as one with an empty `topPackages` was before, and a tier count
+it lacks is not named. A `null` `weakToPqcRatio` still prints
+`No PQC downloads detected` and is not named. A missing weak, modern or PQC
+download count, or
 NIST deadline, printed `undefined`; a missing `totalPqcDownloads` printed
 `NaN%` as the PQC readiness and a missing `totalDownloads` printed `0%`; a
 missing `collectedAt` left the `Snapshot collected` line out. Each now prints
