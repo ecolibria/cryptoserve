@@ -2094,10 +2094,12 @@ async function cmdCensus(args) {
   } = await import('../lib/cli-style.mjs');
 
   const format = choiceOption(args, '--format', 'text', ['text', 'json', 'html']);
-  // Read and written as scan, cbom, gate, encrypt and decrypt read and write
-  // it. Through getOption and writeFileSync, `--output ''` printed the JSON to
-  // stdout with exit 0, the first of two values was used, and a file in a
-  // directory that does not exist printed Node's raw ENOENT text with exit 1.
+  // Read as scan, cbom, gate, encrypt and decrypt read it, and written by the
+  // json and html formats as they write it; the text format prints the report
+  // to stdout and does not use it. Through getOption and writeFileSync,
+  // `--output ''` printed the JSON to stdout with exit 0, the first of two
+  // values was used, and a file in a directory that does not exist printed
+  // Node's raw ENOENT text with exit 1.
   const output = fileOption(args, '--output');
   const verbose = getFlag(args, '--verbose');
   const noCache = getFlag(args, '--no-cache');
