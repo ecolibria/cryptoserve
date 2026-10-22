@@ -168,7 +168,8 @@ stdout and does not write `--output`. In every format, an empty value, or
 and exits `2`; with `--format json` both printed the JSON on stdout, wrote no
 file and exited `0`.
 `--output` given twice prints `Error: --output was given more than once.` and
-exits `2`; the first path was written and the command exited `0`.
+exits `2`; with `--format json` or `--format html` the first path was written
+and the command exited `0`.
 
 An `--output` path, or a `scan --emit-findings` path, that the system refuses
 for a reason #99 did not name is now named with that reason and exit `2`, on
@@ -183,9 +184,13 @@ prints `Error: Path does not exist: <directory> (<link> points to <target>)`,
 where it printed raw `ENOENT` text with exit `1`. A name ending in `/` names
 a directory: `--output newdir/` prints `Error: Path does not exist: <path>` when
 `newdir` does not exist, and `--output app.js/` prints
-`Error: Not a directory: <path>` when `app.js` is a file. macOS printed raw
-`ENOENT` and `ENOTDIR` text for these with exit `1`, and Linux printed
-`Error: Is a directory: <path>` for both.
+`Error: Not a directory: <path>` when `app.js` is a file. On `scan`, `cbom`,
+`gate`, `encrypt --file` and `decrypt --file`, macOS printed raw `ENOENT` and
+`ENOTDIR` text for these with exit `1`, or `2` from `gate`, and Linux printed
+`Error: Is a directory: <path>` for both. `census --format json` and
+`census --format html` wrote the file at the name without its trailing `/`:
+`--output newdir/` created a file named `newdir`, `--output app.js/` overwrote
+`app.js`, and both exited `0`.
 
 `gate --format json` given `--output`, `--min-score`, `--max-risk` or
 `--max-severity` twice now puts its JSON error document on stdout, with
