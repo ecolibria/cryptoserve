@@ -14,6 +14,10 @@
  *     `cryptography` (over a billion downloads a month) was printed as 0.
  *   - The CLI carried its own catalog, which drifted to 357 entries against the
  *     census's 355, so the two disagreed on the denominator of every share.
+ *   - The text report called toFixed on each percentage without checking it,
+ *     so a snapshot without them printed no report, only `Cannot read
+ *     properties of undefined (reading 'toFixed')`, and exited 1, while
+ *     `--format json` and `--format html` rendered the same snapshot.
  */
 
 import { describe, it, mock } from 'node:test';
@@ -22,8 +26,11 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import { formatNumber } from '../lib/census/format.mjs';
+import { renderTerminal } from '../lib/census/report-terminal.mjs';
+import * as style from '../lib/cli-style.mjs';
 
 /** A payload with the fields the client validates and the renderers read. */
 function snapshot(overrides = {}) {
@@ -72,6 +79,18 @@ async function loadClient(home) {
 }
 
 const libFile = (rel) => fileURLToPath(new URL(`../lib/census/${rel}`, import.meta.url));
+
+const CLI = fileURLToPath(new URL('../bin/cryptoserve.mjs', import.meta.url));
+
+/** The text report for `data`, without colour codes. */
+function renderText(data) {
+  return style.unstyled(renderTerminal(data, style));
+}
+
+/** A PyPI section with one package, which snapshot() leaves out. */
+const pypi = (pkg = { name: 'cryptography', downloads: 1_200_000_000, tier: 'modern' }) => ({
+  weak: 5, modern: 1_500_000, pqc: 0, total: 1_500_005, topPackages: [pkg],
+});
 
 describe('format', () => {
   it('abbreviates at each threshold', () => {
@@ -195,5 +214,109 @@ describe('census client', () => {
       assert.equal(existsSync(libFile(gone)), false,
         `lib/census/${gone} is back; the CLI is measuring the census again`);
     }
+  });
+});
+
+describe('census text report', () => {
+  it('prints each figure of a complete snapshot as published', () => {
+    const out = renderText(snapshot({ pypi: pypi() }));
+
+    assert.match(out, /Weak crypto downloads +1\.0B\/month \(14\.5%\)/);
+    assert.match(out, /Modern crypto downloads +6\.1B\/month \(85\.5%\)/);
+    assert.match(out, /PQC crypto downloads +4\.4M\/month \(0\.1%\)/);
+    assert.match(out, /Weak-to-PQC ratio +1 PQC for every 233 weak/);
+    assert.match(out, /cryptography +1\.2B +MODERN/);
+    assert.doesNotMatch(out, /not in this snapshot|\babsent\b/i,
+      'a complete snapshot was reported as lacking a figure');
+  });
+
+  it('shows the counts of a snapshot that lacks the percentages, and names them', () => {
+    // Each percentage was read with toFixed unchecked: this snapshot printed
+    // no report, only Node's TypeError, and exited 1.
+    const data = snapshot({ pypi: pypi(), modernPercentage: null });
+    delete data.weakPercentage;
+    delete data.pqcPercentage;
+
+    const out = renderText(data);
+
+    assert.match(out, /Weak crypto downloads +1\.0B\/month \(share not in this snapshot\)/);
+    assert.match(out, /Modern crypto downloads +6\.1B\/month \(share not in this snapshot\)/);
+    assert.match(out, /PQC crypto downloads +4\.4M\/month \(share not in this snapshot\)/);
+    assert.match(out, /^ {2}Not in this snapshot: weakPercentage, modernPercentage, pqcPercentage$/m);
+    assert.doesNotMatch(out, /undefined|NaN/);
+  });
+
+  it('marks a table cell or date the snapshot lacks instead of stopping the report', () => {
+    // A package without a tier stopped the report at `pkg.tier.toUpperCase()`
+    // and an advisory without bySeverity at `adv.bySeverity.critical`. A
+    // snapshot without collectedAt printed no collection date and said nothing.
+    const data = snapshot({
+      pypi: pypi({ name: 'cryptography', downloads: 1_200_000_000 }),
+      advisoryBreakdown: [{ cweId: 'CWE-327', count: 7 }],
+      weakToPqcRatio: null,
+    });
+    delete data.collectedAt;
+
+    const out = renderText(data);
+
+    assert.match(out, /Snapshot collected +not in this snapshot/);
+    assert.match(out, /cryptography +1\.2B +absent/);
+    assert.match(out, /CWE-327 +7 +absent +absent +absent +absent/);
+    assert.match(out, /Weak-to-PQC ratio +No PQC downloads detected/,
+      'a null ratio no longer reads as no PQC downloads');
+    assert.match(out, new RegExp('^ {2}Not in this snapshot: collectedAt, pypi\\.topPackages\\[\\]\\.tier, ' +
+      'advisoryBreakdown\\[\\]\\.bySeverity\\.critical, advisoryBreakdown\\[\\]\\.bySeverity\\.high, ' +
+      'advisoryBreakdown\\[\\]\\.bySeverity\\.medium, advisoryBreakdown\\[\\]\\.bySeverity\\.low$', 'm'));
+    assert.doesNotMatch(out, /undefined|NaN/);
+  });
+
+  it('renders a cached snapshot that lacks most figures, on stdout and to --output, and exits 0, as json and html do', () => {
+    // The payload the `census --output` tests carried until #108 gave them
+    // every field the text report reads. `cryptoserve census` printed
+    // `Error: Cannot read properties of undefined (reading 'toFixed')` and
+    // exited 1 on it, and `census --output` wrote no file.
+    const home = mkdtempSync(join(tmpdir(), 'cs-census-'));
+    writeFileSync(join(home, 'census-cache.json'), JSON.stringify({
+      fetchedAt: new Date().toISOString(),
+      source: 'test',
+      payload: {
+        totalDownloads: 100,
+        collectedAt: '2026-07-28T04:34:38.416Z',
+        npm: { weak: 0, modern: 0, pqc: 0, total: 0, topPackages: [], period: {} },
+      },
+    }));
+
+    // A closed local port: a run that did not use the cache fails at once
+    // instead of reaching the network.
+    const census = (...args) => spawnSync(process.execPath, [CLI, 'census', ...args], {
+      encoding: 'utf-8',
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        NO_COLOR: '1',
+        CRYPTOSERVE_HOME: home,
+        CRYPTOSERVE_CENSUS_URL: 'http://127.0.0.1:9/api/census',
+      },
+    });
+    const r = census();
+    const report = join(home, 'report.txt');
+    const written = census('--output', report);
+    const file = existsSync(report) ? readFileSync(report, 'utf-8') : null;
+    rmSync(home, { recursive: true, force: true });
+
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, '');
+    assert.match(r.stdout, /Snapshot collected +2026-07-28/);
+    assert.match(r.stdout, /Weak crypto downloads +not in this snapshot/);
+    assert.match(r.stdout, /PQC Readiness\n {2}not in this snapshot/);
+    assert.match(r.stdout, new RegExp('^ {2}Not in this snapshot: totalWeakDownloads, weakPercentage, ' +
+      'totalModernDownloads, modernPercentage, totalPqcDownloads, pqcPercentage, weakToPqcRatio, ' +
+      'totalCryptoCves, totalAdvisories, nistDeadline2030, nistDeadline2035, pypi, cveBreakdown, ' +
+      'advisoryBreakdown$', 'm'));
+    assert.doesNotMatch(r.stdout, /undefined|NaN/);
+
+    assert.equal(written.status, 0, written.stderr);
+    assert.equal(written.stdout.trim(), `Census report written to ${report}`);
+    assert.equal(file, r.stdout, 'census --output wrote another report than census printed');
   });
 });
