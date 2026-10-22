@@ -157,6 +157,8 @@ it was meant to fix.
 
 ### Fixed
 
+`cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.
+
 The `vault delete` command that `vault list` and `vault run` print for an entry
 that is not a secret now removes it when the entry's name starts with `-`
 ([#112](https://github.com/ecolibria/cryptoserve/issues/112)). For the entry

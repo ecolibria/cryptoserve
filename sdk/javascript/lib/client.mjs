@@ -7,9 +7,15 @@
 
 import { loadToken, saveToken } from './credentials.mjs';
 import { createServer } from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 const DEFAULT_SERVER = 'https://localhost:8003';
 const CALLBACK_PORT = 9876;
+// A loopback IP literal rather than "localhost" (RFC 8252 section 7.3): the
+// listener is reachable from this machine only, and no resolver decides which
+// interface the redirect lands on.
+const CALLBACK_HOST = '127.0.0.1';
+const MAX_TOKEN_LENGTH = 8192;
 
 // ---------------------------------------------------------------------------
 // URL validation (SSRF protection)
@@ -92,8 +98,26 @@ export async function getStatus(server = null) {
 }
 
 // ---------------------------------------------------------------------------
-// Login flow (browser OAuth with localhost callback)
+// Login flow (browser OAuth with a loopback callback)
 // ---------------------------------------------------------------------------
+
+function launchBrowser(url) {
+  // Use spawn with array args to prevent command injection
+  import('node:child_process').then(m => {
+    const cmd = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'start'
+      : 'xdg-open';
+    m.spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+  });
+}
+
+/** Constant-time comparison. A value of another length is a mismatch. */
+function stateMatches(received, expected) {
+  if (typeof received !== 'string') return false;
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 /**
  * Browser login against an explicit server.
@@ -103,12 +127,22 @@ export async function getStatus(server = null) {
  * their machine, and the flow could only ever time out. The CLI cannot know
  * the operator's server, and a guess that is wrong for everyone is worse than
  * an error that names what to pass.
+ *
+ * The callback listener binds 127.0.0.1 only. The authorization URL carries a
+ * random `state`, and the listener stores a token only from a GET to /callback
+ * that returns that `state` unchanged. Any other request is answered with an
+ * error and stores nothing, and the listener keeps waiting for the right
+ * callback or the timeout.
+ *
+ * `openBrowser` replaces the browser launch; tests pass a no-op.
  */
-export async function login(serverUrl) {
+export async function login(serverUrl, { openBrowser = launchBrowser } = {}) {
   if (!serverUrl) {
     throw new Error('login requires a server URL. Pass --server <url>.');
   }
   const server = validateServerUrl(serverUrl);
+  const redirectUri = `http://${CALLBACK_HOST}:${CALLBACK_PORT}/callback`;
+  const state = randomBytes(32).toString('base64url');
 
   // Start local callback server
   return new Promise((resolve, reject) => {
@@ -122,19 +156,36 @@ export async function login(serverUrl) {
       fn(arg);
     };
 
-    const httpServer = createServer((req, res) => {
-      const url = new URL(req.url, `http://localhost:${CALLBACK_PORT}`);
-      const token = url.searchParams.get('token') || url.searchParams.get('session');
+    // Every refusal answers and returns without calling finish, so the
+    // listener keeps waiting for the right callback or the timeout.
+    const refuse = (res, status, message, headers = {}) => {
+      res.writeHead(status, headers);
+      res.end(message);
+    };
 
-      if (token) {
-        saveToken(token, server);
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body><h2>Login successful</h2><p>You can close this tab.</p></body></html>');
-        finish(resolve, { success: true, server });
-      } else {
-        res.writeHead(400);
-        res.end('Missing token');
+    const httpServer = createServer((req, res) => {
+      let url;
+      try {
+        url = new URL(req.url, `http://${CALLBACK_HOST}:${CALLBACK_PORT}`);
+      } catch {
+        // A request target such as `//[` is accepted by the HTTP parser and
+        // throws here; uncaught, it would end the login.
+        return refuse(res, 400, 'Bad request');
       }
+      if (url.pathname !== '/callback') return refuse(res, 404, 'Not found');
+      if (req.method !== 'GET') return refuse(res, 405, 'Method not allowed', { Allow: 'GET' });
+      if (!stateMatches(url.searchParams.get('state'), state)) {
+        return refuse(res, 400, 'Missing or wrong state');
+      }
+
+      const token = url.searchParams.get('token') || url.searchParams.get('session');
+      if (!token) return refuse(res, 400, 'Missing token');
+      if (token.length > MAX_TOKEN_LENGTH) return refuse(res, 400, 'Token too long');
+
+      saveToken(token, server);
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body><h2>Login successful</h2><p>You can close this tab.</p></body></html>');
+      finish(resolve, { success: true, server });
     });
 
     // Without this the http server emits an unhandled 'error' and the process
@@ -148,17 +199,10 @@ export async function login(serverUrl) {
       finish(reject, new Error(message));
     });
 
-    httpServer.listen(CALLBACK_PORT, () => {
-      const authUrl = `${server}/auth/cli?redirect=http://localhost:${CALLBACK_PORT}/callback`;
+    httpServer.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
+      const authUrl = `${server}/auth/cli?redirect=${encodeURIComponent(redirectUri)}&state=${state}`;
       console.log(`\nOpen this URL to log in:\n  ${authUrl}\n`);
-
-      // Try to open browser (use spawn with array args to prevent command injection)
-      import('node:child_process').then(m => {
-        const cmd = process.platform === 'darwin' ? 'open'
-          : process.platform === 'win32' ? 'start'
-          : 'xdg-open';
-        m.spawn(cmd, [authUrl], { stdio: 'ignore', detached: true }).unref();
-      });
+      openBrowser(authUrl);
     });
 
     // Timeout after 120 seconds
