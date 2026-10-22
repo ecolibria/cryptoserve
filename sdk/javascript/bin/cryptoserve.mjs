@@ -993,7 +993,17 @@ async function cmdVault(args) {
   // used to take restArgs[1] literally and store the string "--password" as the
   // secret, exit 0 -- silent corruption through the very form the docs recommend
   // for CI. getPositional already knows which flags carry a value.
-  const vaultPositionals = getPositional(restArgs);
+  //
+  // An argument after the first `--` is a name, a value or part of the command
+  // `vault run` starts, not an option. getPositional drops every argument that
+  // starts with `--`, so without this an entry named `--verbose` or
+  // `--password` could not be named at all: `vault delete '--verbose'` printed
+  // the usage line and `vault delete '--password'` stopped with "--password was
+  // given more than once".
+  const dashIdx = restArgs.indexOf('--');
+  const optionArgs = dashIdx >= 0 ? restArgs.slice(0, dashIdx) : restArgs;
+  const operands = dashIdx >= 0 ? restArgs.slice(dashIdx + 1) : [];
+  const vaultPositionals = [...getPositional(optionArgs), ...operands];
 
   if (!subcommand || subcommand === 'help') {
     console.log(compactHeader('vault'));
@@ -1013,7 +1023,7 @@ async function cmdVault(args) {
   const vault = await import('../lib/vault.mjs');
 
   // Support --password flag for non-interactive/CI usage
-  const flagPassword = await passwordOption(restArgs);
+  const flagPassword = await passwordOption(optionArgs);
 
   if (subcommand === 'init') {
     if (vault.vaultExists()) {
@@ -1050,11 +1060,21 @@ async function cmdVault(args) {
     return;
   }
 
+  // In `vault delete -- '--verbose' --password PW`, `--password` and `PW` come
+  // after `--`, so they are names and not the password. Refused before the
+  // password prompt, which a CI job cannot answer.
+  if (subcommand === 'delete' && operands.length > 1) {
+    usageError('vault delete takes one name after --; put options such as --password before --.',
+      'vault delete [--password P] -- KEY');
+  }
+
   // All other commands need the vault password
   const pw = flagPassword || await promptPassword('Vault password: ', { hint: HINT_PASSWORD });
 
-  // The command that removes an entry that is not a secret.
-  const removeWith = key => `Remove it with: cryptoserve vault delete ${shellWord(key)}`;
+  // The command that removes an entry that is not a secret. A name that starts
+  // with '-' goes after `--`, where it is read as the name and not as a flag.
+  const removeWith = key => `Remove it with: cryptoserve vault delete ${
+    key.startsWith('-') ? '-- ' : ''}${shellWord(key)}`;
 
   try {
     switch (subcommand) {
@@ -1110,8 +1130,7 @@ async function cmdVault(args) {
         break;
       }
       case 'run': {
-        const dashIdx = restArgs.indexOf('--');
-        const cmdArgs = dashIdx >= 0 ? restArgs.slice(dashIdx + 1) : restArgs;
+        const cmdArgs = dashIdx >= 0 ? operands : restArgs;
         if (cmdArgs.length === 0) {
           console.error('Usage: vault run -- COMMAND [ARGS...]');
           process.exit(1);
@@ -2235,9 +2254,13 @@ const args = process.argv.slice(2);
 const command = args[0];
 const commandArgs = args.slice(1);
 
-// Intercept --help / -h for any subcommand
+// Intercept --help / -h for any subcommand. For vault, not after `--`: there it
+// is an entry's name, as in `vault delete -- --help`, or an argument of the
+// command `vault run -- CMD` starts.
 if (command && !['help', '--help', '-h', 'version', '--version', '-v', undefined].includes(command)) {
-  if (commandArgs.includes('--help') || commandArgs.includes('-h')) {
+  const dashIdx = command === 'vault' ? commandArgs.indexOf('--') : -1;
+  const optionArgs = dashIdx >= 0 ? commandArgs.slice(0, dashIdx) : commandArgs;
+  if (optionArgs.includes('--help') || optionArgs.includes('-h')) {
     showCommandHelp(command);
     process.exit(0);
   }

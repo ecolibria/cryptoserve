@@ -554,6 +554,72 @@ describe('vault already holding an entry that is not a secret', () => {
   });
 });
 
+describe('vault entry whose name starts with -', () => {
+  const NAMES = ['--verbose', '--', '--password', '--help', '-h'];
+
+  function vaultWithDashNames() {
+    const home = tempDir('vault-dash-names');
+    const secrets = { KEPT: { value: 'k', updatedAt: '2026-01-01T00:00:00.000Z' } };
+    for (const name of NAMES) secrets[name] = null;
+    writeFileSync(join(home, 'vault.enc'), _encryptData(JSON.stringify({ version: 1, secrets }), 'vp'));
+    return { CRYPTOSERVE_HOME: home };
+  }
+
+  it('prints a vault delete command that removes it', () => {
+    // `vault list` printed `cryptoserve vault delete '--verbose'`, and that
+    // command printed "Usage: vault delete KEY" and exited 2, because every
+    // argument starting with `--` was read as an option. For '--password' it
+    // stopped with "--password was given more than once".
+    const env = vaultWithDashNames();
+    const list = run(['vault', 'list', '--password', 'vp'], { env });
+    assert.equal(list.code, 0, list.stderr);
+
+    for (const name of NAMES) {
+      const line = list.stdout.split('\n').find(l => l.includes(`${JSON.stringify(name)} is not a secret`));
+      assert.ok(line, `no warning for ${name}\n${list.stdout}`);
+      const command = line.slice(line.indexOf('Remove it with: ') + 'Remove it with: '.length);
+      // The words a shell reads from the printed command.
+      const words = spawnSync('/bin/sh', ['-c', `printf '%s\\0' ${command}`], { encoding: 'utf-8' })
+        .stdout.split('\0').slice(0, -1);
+      assert.deepEqual(words.slice(0, 4), ['cryptoserve', 'vault', 'delete', '--'], command);
+      assert.deepEqual(words.slice(4), [name], command);
+      // The password goes with the options, before `--`.
+      const del = run(['vault', 'delete', '--password', 'vp', ...words.slice(3)], { env });
+      assert.equal(del.code, 0, `${command}\n${del.stdout}${del.stderr}`);
+      assert.ok(del.stdout.includes(`Deleted: ${name}`), del.stdout);
+    }
+
+    const after = run(['vault', 'list', '--password', 'vp'], { env });
+    assert.match(after.stdout, /^ {2}KEPT /m);
+    assert.doesNotMatch(after.stdout, /not a secret/);
+  });
+
+  it('refuses a second name after --, before asking for the password', () => {
+    const env = vaultWithDashNames();
+    const del = run(['vault', 'delete', '--', '--verbose', '--password', 'vp'], { env });
+    assert.equal(del.code, 2, del.stdout + del.stderr);
+    assert.match(del.stderr,
+      /^Error: vault delete takes one name after --; put options such as --password before --\.$/m);
+    assert.doesNotMatch(del.stderr, /terminal|prompt/i);
+    assert.match(run(['vault', 'list', '--password', 'vp'], { env }).stdout, /^ {2}--verbose +not a secret/m);
+  });
+
+  it('passes --help and --password after -- to the command vault run starts', () => {
+    // Both were read as the CLI's own: `--help` printed the vault help and
+    // exited 0 without running the command, and `--password` stopped with
+    // "--password was given more than once".
+    const env = vaultWithDashNames();
+    const script = join(env.CRYPTOSERVE_HOME, 'args.mjs');
+    writeFileSync(script, 'process.exit(process.argv.slice(2).join(" ") === "--help --password x" ? 7 : 3);\n');
+    const ran = run(['vault', 'run', '--password', 'vp', '--', process.execPath, script,
+      '--help', '--password', 'x'], { env });
+    assert.equal(ran.code, 7, ran.stdout + ran.stderr);
+    assert.ok(ran.stderr.includes(
+      `"--verbose" is not passed to the command: it is null. Remove it with: cryptoserve vault delete -- '--verbose'`),
+    ran.stderr);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Secrets outside source files
 // ---------------------------------------------------------------------------
