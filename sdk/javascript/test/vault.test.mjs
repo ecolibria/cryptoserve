@@ -359,6 +359,35 @@ describe('vault already holding an entry that is not a secret', () => {
   });
 });
 
+describe('vault already holding a secret whose update time is missing or not a date', () => {
+  // importVaultBundle now dates such an entry at the import, but it used to
+  // store a bundle's object entries as they were, and a vault it wrote then
+  // still holds them. listSecrets returned the stored updatedAt as it was, and
+  // `vault list` showed "NaNd ago" for a missing one or "not a date", and an
+  // age counted from 1970 for null, 0 or true.
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('lists an update time that is not a string Date.parse reads as null', () => {
+    const kept = '2026-01-01T00:00:00.000Z';
+    const secrets = {
+      KEPT: { value: 'k', updatedAt: kept },
+      NODATE: { value: 'a' },
+      BADDATE: { value: 'b', updatedAt: 'not a date' },
+      EMPTY: { value: 'e', updatedAt: '' },
+      NULLDATE: { value: 'c', updatedAt: null },
+      ZERO: { value: 'z', updatedAt: 0 },
+      TRUE: { value: 't', updatedAt: true },
+      MILLIS: { value: 'm', updatedAt: Date.parse(kept) },
+      ARR: { value: 'r', updatedAt: [kept] },
+      OBJ: { value: 'o', updatedAt: {} },
+    };
+    writeFileSync(VAULT_PATH, _encryptData(JSON.stringify({ version: 1, secrets }), PW));
+    assert.deepEqual(listSecrets(PW, VAULT_PATH),
+      Object.keys(secrets).map(key => ({ key, updatedAt: key === 'KEPT' ? kept : null })));
+  });
+});
+
 describe('vault set of a value that is not a string', () => {
   // setSecret stored a value such as 8080, true or null, exportVault wrote it
   // into the bundle unchanged, and importVaultBundle refused that bundle with

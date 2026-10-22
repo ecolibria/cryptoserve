@@ -620,6 +620,31 @@ describe('vault entry whose name starts with -', () => {
   });
 });
 
+describe('vault list of a secret whose update time is missing or not a date', () => {
+  it('shows unknown in place of the age', () => {
+    // On a vault an earlier bundle import left holding {"value":"a"} or
+    // {"value":"b","updatedAt":"not a date"}, `vault list` showed "NaNd ago" in
+    // the Updated column, and for an updatedAt of null an age counted from 1970.
+    const home = tempDir('vault-no-date');
+    const env = { CRYPTOSERVE_HOME: home };
+    const secrets = {
+      KEPT: { value: 'k', updatedAt: '2026-01-01T00:00:00.000Z' },
+      NODATE: { value: 'a' },
+      BADDATE: { value: 'b', updatedAt: 'not a date' },
+      NULLDATE: { value: 'c', updatedAt: null },
+    };
+    writeFileSync(join(home, 'vault.enc'), _encryptData(JSON.stringify({ version: 1, secrets }), 'vp'));
+
+    const list = run(['vault', 'list', '--password', 'vp'], { env });
+    assert.equal(list.code, 0, list.stderr);
+    assert.match(list.stdout, /^ {2}KEPT +\d+d ago/m);
+    for (const name of ['NODATE', 'BADDATE', 'NULLDATE']) {
+      assert.match(list.stdout, new RegExp(`^ {2}${name} +unknown *$`, 'm'), list.stdout);
+    }
+    assert.doesNotMatch(list.stdout, /NaN/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Secrets outside source files
 // ---------------------------------------------------------------------------
