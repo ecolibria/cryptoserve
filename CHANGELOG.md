@@ -583,6 +583,28 @@ time of the import otherwise, so `vault list` shows an age counted from the
 import for an entry whose `updatedAt` was missing or not a date, where it showed
 `NaNd ago`.
 
+`vault list` and `vault run` work on a vault that already holds an entry that is
+not an object with a string `value`, as `importVaultBundle` could store before
+it checked bundle entries, and name each such entry with the command that
+removes it ([#105](https://github.com/ecolibria/cryptoserve/issues/105)).
+
+On a vault holding the entry `"A": null`, `vault list` printed `Cannot read
+properties of null (reading 'updatedAt')` and `vault run` printed `Cannot read
+properties of null (reading 'value')`, each exiting 1 without naming the entry,
+whatever other secrets the vault held. `vault list` now lists every name, shows
+`not a secret` in place of the update time of such an entry, and prints a
+warning for it such as `"A" is not a secret: it is null. Remove it with:
+cryptoserve vault delete A`. `vault run` passes each entry whose `value` is a
+string to the command and leaves out every other entry, naming it on stderr with
+the same command, for example `"A" is not passed to the command: it is null.`
+An entry whose `value` is not a string is left out as well: a `value` of
+`null`, `["a","b"]`, `7` or `{}` reached the command as the text `null`, `a,b`,
+`7` or `[object Object]`, and a `value` of `{"toString":1}` stopped `vault run`
+with `Cannot convert object to primitive value` before the command started. The
+printed `vault delete` command names the entry in single quotes unless the name
+is letters, digits, `_`, `.` and `-` starting with a letter, digit or `_`, as in
+`cryptoserve vault delete 'my key'`.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
