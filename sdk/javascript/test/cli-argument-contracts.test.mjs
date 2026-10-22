@@ -1145,22 +1145,40 @@ describe('census --output', () => {
   // scan, cbom, gate, encrypt and decrypt had stopped doing either: a file in a
   // directory that does not exist printed Node's raw ENOENT text and exited 1,
   // `--output ''` printed the JSON on stdout and exited 0, and of two values
-  // the first was written, with exit 0.
+  // the first was written, with exit 0. The default text format printed the
+  // report on stdout, wrote no file and exited 0, also when the file's
+  // directory did not exist.
 
   /**
    * A state directory holding a snapshot fetched just now, so the command
    * renders it without a request. The URL is a closed local port, so a run
    * that did not use the cache fails at once instead of reaching the network.
+   * The payload carries every field the text report reads.
    */
   function censusEnv() {
     const home = tempDir('census-home');
+    const tier = { weak: 0, modern: 0, pqc: 0, total: 0, topPackages: [] };
     writeFileSync(join(home, 'census-cache.json'), JSON.stringify({
       fetchedAt: new Date().toISOString(),
       source: 'test',
       payload: {
         totalDownloads: 100,
+        totalWeakDownloads: 20,
+        totalModernDownloads: 79,
+        totalPqcDownloads: 1,
+        weakPercentage: 20,
+        modernPercentage: 79,
+        pqcPercentage: 1,
+        weakToPqcRatio: 20,
+        totalCryptoCves: 0,
+        totalAdvisories: 0,
+        nistDeadline2030: '3 yrs, 158 days',
+        nistDeadline2035: '8 yrs, 159 days',
         collectedAt: '2026-07-28T04:34:38.416Z',
-        npm: { weak: 0, modern: 0, pqc: 0, total: 0, topPackages: [], period: {} },
+        npm: { ...tier, period: {} },
+        pypi: tier,
+        cveBreakdown: [],
+        advisoryBreakdown: [],
       },
     }));
     return { CRYPTOSERVE_HOME: home, CRYPTOSERVE_CENSUS_URL: 'http://127.0.0.1:9/api/census' };
@@ -1174,7 +1192,31 @@ describe('census --output', () => {
     assert.equal(JSON.parse(readFileSync(join(dir, 'out.json'), 'utf-8')).totalDownloads, 100);
   });
 
-  for (const format of ['json', 'html']) {
+  it('writes the text report to the file in the default format, not to stdout', () => {
+    const dir = tempDir('census-text');
+    const env = censusEnv();
+    const printed = run(['census'], { cwd: dir, env });
+    assert.equal(printed.code, 0, printed.stderr);
+    assert.match(printed.stdout, /Weak crypto downloads/);
+    const { code, stdout, stderr } = run(['census', '--output', 'report.txt'], { cwd: dir, env });
+    assert.equal(code, 0, stderr);
+    assert.equal(stdout.trim(), 'Census report written to report.txt');
+    assert.equal(readFileSync(join(dir, 'report.txt'), 'utf-8'), printed.stdout);
+  });
+
+  it('leaves out of the text file the colour codes chosen for a terminal', () => {
+    const dir = tempDir('census-colour');
+    const env = censusEnv();
+    const colour = { ...env, NO_COLOR: '', FORCE_COLOR: '1' };
+    // Holds the premise: without it the comparison below proves nothing.
+    assert.match(run(['census'], { cwd: dir, env: colour }).stdout, /\x1b\[/);
+    const plain = run(['census'], { cwd: dir, env }).stdout;
+    const { code, stderr } = run(['census', '--output', 'report.txt'], { cwd: dir, env: colour });
+    assert.equal(code, 0, stderr);
+    assert.equal(readFileSync(join(dir, 'report.txt'), 'utf-8'), plain);
+  });
+
+  for (const format of ['text', 'json', 'html']) {
     it(`names the missing directory and exits 2 (--format ${format})`, () => {
       const dir = tempDir('census-nodir');
       const { code, stdout, stderr } = run(['census', '--format', format, '--output', `nodir/census.${format}`], { cwd: dir, env: censusEnv() });
@@ -1203,6 +1245,15 @@ describe('census --output', () => {
     assert.equal(stdout, '');
     assert.equal(existsSync(join(dir, 'a.json')), false);
     assert.equal(existsSync(join(dir, 'b.json')), false);
+  });
+
+  it('stops on a text --output that names a directory', () => {
+    const dir = tempDir('census-isdir');
+    mkdirSync(join(dir, 'out'));
+    const { code, stdout, stderr } = run(['census', '--output', 'out'], { cwd: dir, env: censusEnv() });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Is a directory: ${join(dir, 'out')}`);
+    assert.equal(stdout, '');
   });
 });
 

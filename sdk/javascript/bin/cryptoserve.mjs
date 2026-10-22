@@ -2117,16 +2117,16 @@ function shellWord(name) {
 async function cmdCensus(args) {
   const {
     compactHeader, section, labelValue, tableHeader, tableRow,
-    warning, info, dim, bold, divider, progressBar,
+    warning, info, dim, bold, divider, progressBar, unstyled,
   } = await import('../lib/cli-style.mjs');
 
   const format = choiceOption(args, '--format', 'text', ['text', 'json', 'html']);
-  // Read as scan, cbom, gate, encrypt and decrypt read it, and written by the
-  // json and html formats as they write it; the text format prints the report
-  // to stdout and does not use it. Through getOption and writeFileSync,
+  // Read and written as scan, cbom, gate, encrypt and decrypt read and write
+  // it, in every format. Through getOption and writeFileSync,
   // `--output ''` printed the JSON to stdout with exit 0, the first of two
   // values was used, and a file in a directory that does not exist printed
-  // Node's raw ENOENT text with exit 1.
+  // Node's raw ENOENT text with exit 1. The text format printed the report to
+  // stdout, wrote no file and exited 0, the directory missing or not.
   const output = fileOption(args, '--output');
   const verbose = getFlag(args, '--verbose');
   const noCache = getFlag(args, '--no-cache');
@@ -2185,10 +2185,17 @@ async function cmdCensus(args) {
   }
 
   const { renderTerminal } = await import('../lib/census/report-terminal.mjs');
-  renderTerminal(data, {
+  const report = renderTerminal(data, {
     compactHeader, section, labelValue, tableHeader, tableRow,
     warning, info, dim, bold, divider, progressBar,
   });
+  // The colour codes are for the terminal stdout may be, not for a file.
+  if (output) {
+    await writeNamedFile(output, unstyled(report) + '\n');
+    console.log(`Census report written to ${output}`);
+  } else {
+    console.log(report);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2208,7 +2215,7 @@ const COMMAND_HELP = {
   vault: 'cryptoserve vault init|set|get|list|delete|run|import|export|reset [--password P]\n\n  Manage an encrypted secrets vault.\n  Use --password for non-interactive/CI usage.',
   login: 'cryptoserve login [--server URL]\n\n  Authenticate with a CryptoServe server.',
   status: 'cryptoserve status\n\n  Show configuration and server connection status.',
-  census: 'cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]\n\n  Render the published global crypto adoption census: 11 ecosystems, NVD and\n  GitHub advisories, collected on the date the snapshot carries.\n\n  The snapshot is fetched from census.cryptoserve.dev and cached for a day.\n  --no-cache re-fetches it. This command reports the published measurement and\n  does not collect its own, so its figures match census.cryptoserve.dev exactly.',
+  census: 'cryptoserve census [--format json|html] [--output file] [--no-cache] [--verbose]\n\n  Render the published global crypto adoption census: 11 ecosystems, NVD and\n  GitHub advisories, collected on the date the snapshot carries.\n\n  The snapshot is fetched from census.cryptoserve.dev and cached for a day.\n  --no-cache re-fetches it. This command reports the published measurement and\n  does not collect its own, so its figures match census.cryptoserve.dev exactly.\n\n  --output writes the report to a file in any format; the text report is\n  written there without colour codes.',
 };
 
 function showCommandHelp(command) {

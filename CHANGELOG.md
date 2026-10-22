@@ -157,13 +157,20 @@ it was meant to fix.
 
 ### Fixed
 
+`census --output` with the default text format now writes the report to the
+file, without colour codes, and prints `Census report written to <file>`
+([#108](https://github.com/ecolibria/cryptoserve/issues/108)). It printed the
+report on stdout, wrote no file and exited `0`, also when the file's directory
+did not exist. A path that cannot be written now stops as it does with
+`--format json` and `--format html`: a file in a directory that does not exist
+prints `Error: Path does not exist: <directory>` and exits `2`, and a path that
+is a directory prints `Error: Is a directory: <path>` and exits `2`.
+
 `census --output` now stops the way `scan`, `cbom`, `gate`, `encrypt` and
 `decrypt` do ([#103](https://github.com/ecolibria/cryptoserve/issues/103)).
-With `--format json` or `--format html`, the two formats that write the file,
-a file in a directory that does not exist prints
-`Error: Path does not exist: <directory>` and exits `2`; both printed Node's
-raw `ENOENT` text and exited `1`. The default text format prints the report on
-stdout and does not write `--output`. In every format, an empty value, or
+With `--format json` or `--format html`, a file in a directory that does not
+exist prints `Error: Path does not exist: <directory>` and exits `2`; both
+printed Node's raw `ENOENT` text and exited `1`. In every format, an empty value, or
 `--output` with nothing after it, prints `Error: --output was given no value.`
 and exits `2`; with `--format json` both printed the JSON on stdout, wrote no
 file and exited `0`.
