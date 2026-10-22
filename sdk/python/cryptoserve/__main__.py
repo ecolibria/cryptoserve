@@ -185,10 +185,35 @@ def _get_cli_server_url():
 _get_server_url = _get_cli_server_url
 
 
+# Login callback listener. A loopback IP literal rather than "localhost": the
+# listener is reachable from this machine only, and no resolver decides which
+# interface the redirect lands on.
+_LOGIN_CALLBACK_HOST = "127.0.0.1"
+_LOGIN_CALLBACK_PORT = 9876
+_LOGIN_CALLBACK_PATH = "/callback"
+_LOGIN_TIMEOUT_SECONDS = 120
+_LOGIN_MAX_SESSION_LENGTH = 8192
+
+
+def _printable(text: str, limit: int = 300) -> str:
+    """Keep printable characters only, so a value read from a URL cannot drive the terminal."""
+    return "".join(ch for ch in text if ch.isprintable())[:limit]
+
+
 def cmd_login():
-    """Login to CryptoServe via browser."""
+    """Login to CryptoServe via browser.
+
+    The callback listener binds 127.0.0.1 only. The authorization URL carries a
+    random `state` issued for this login, and the listener stores a session only
+    from a GET to the callback path that returns that `state` unchanged. Any
+    other request is answered with 400 (or 501 for another method) and stores
+    nothing, and the listener keeps waiting for the right callback or the
+    timeout.
+    """
     import webbrowser
+    import hmac
     import http.server
+    import secrets
     import urllib.parse
     import threading
     import requests
@@ -264,69 +289,126 @@ def cmd_login():
 
     print()
 
-    # We'll use a simple callback server to capture the auth
-    callback_port = 9876
-    auth_result = {"success": False, "cookie": None, "user": None}
+    # The state ties the callback to this login: the server returns it
+    # unchanged, and a request that does not carry it is refused.
+    login_state = secrets.token_urlsafe(32)
+    auth_result = {"success": False, "cookie": None, "user": None, "error": None, "message": ""}
+    settle_lock = threading.Lock()
+    settled = threading.Event()
 
     class CallbackHandler(http.server.BaseHTTPRequestHandler):
+        # An idle connection is closed rather than held open.
+        timeout = 10
+
         def log_message(self, format, *args):
             pass  # Suppress logging
 
+        def _respond(self, status, content_type, body):
+            self.send_response(status)
+            self.send_header("Content-type", content_type)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _refuse(self, reason):
+            # Nothing is stored, and the login keeps waiting.
+            self._respond(400, "text/plain; charset=utf-8", reason.encode())
+
+        def _settle(self, page, **outcome):
+            # The first callback that carries the issued state settles the
+            # login. Its page is written before the waiting thread wakes.
+            with settle_lock:
+                if auth_result["success"] or auth_result["error"]:
+                    return self._refuse("This login has already completed")
+                auth_result.update(outcome)
+            try:
+                self._respond(200, "text/html", page)
+            finally:
+                settled.set()
+
         def do_GET(self):
-            parsed = urllib.parse.urlparse(self.path)
-            params = urllib.parse.parse_qs(parsed.query)
+            try:
+                parsed = urllib.parse.urlsplit(self.path)
+                params = urllib.parse.parse_qs(parsed.query)
+            except ValueError:
+                return self._refuse("Bad request")
+            if parsed.path != _LOGIN_CALLBACK_PATH:
+                return self._refuse("Not the login callback")
+            received = params.get("state", [])
+            if len(received) != 1 or not hmac.compare_digest(
+                received[0].encode("utf-8"), login_state.encode("utf-8")
+            ):
+                return self._refuse("Missing or wrong state")
 
-            if "session" in params:
-                auth_result["success"] = True
-                auth_result["cookie"] = params["session"][0]
-                auth_result["user"] = params.get("user", [""])[0]
-
-                self.send_response(200)
-                self.send_header("Content-type", "text/html")
-                self.end_headers()
-                self.wfile.write(b"""
+            sessions = params.get("session", [])
+            if "error" in params and not sessions:
+                return self._settle(
+                    b"""
+                    <html><body style="font-family: system-ui; text-align: center; padding: 50px;">
+                    <h1>Login was not completed</h1>
+                    <p>Return to the terminal for details.</p>
+                    </body></html>
+                    """,
+                    error=_printable(params["error"][0], 64) or "error",
+                    message=_printable(params.get("message", [""])[0]),
+                )
+            if len(sessions) != 1:
+                return self._refuse("Missing session")
+            if len(sessions[0]) > _LOGIN_MAX_SESSION_LENGTH:
+                return self._refuse("Session too long")
+            return self._settle(
+                b"""
                     <html><body style="font-family: system-ui; text-align: center; padding: 50px;">
                     <h1>Login Successful!</h1>
                     <p>You can close this window and return to the terminal.</p>
                     </body></html>
-                """)
-            else:
-                self.send_response(400)
-                self.end_headers()
+                """,
+                success=True,
+                cookie=sessions[0],
+                user=params.get("user", [""])[0],
+            )
+
+    class CallbackServer(http.server.ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            pass  # A request that fails is dropped; the login keeps waiting.
 
     # Start callback server
     try:
-        httpd = http.server.HTTPServer(("127.0.0.1", callback_port), CallbackHandler)
+        httpd = CallbackServer((_LOGIN_CALLBACK_HOST, _LOGIN_CALLBACK_PORT), CallbackHandler)
     except OSError:
-        print(error(f"Port {callback_port} is in use. Please try again."))
+        print(error(f"Port {_LOGIN_CALLBACK_PORT} is in use. Please try again."))
         return 1
 
-    def run_server():
-        httpd.handle_request()  # Handle single request then stop
-
-    server_thread = threading.Thread(target=run_server)
+    # Serves every request until the matching callback settles the login or
+    # the timeout passes; a refused request does not end it.
+    server_thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
     server_thread.start()
 
     # Build login URL based on mode
-    callback_url = f"http://127.0.0.1:{callback_port}"
+    callback_url = f"http://{_LOGIN_CALLBACK_HOST}:{_LOGIN_CALLBACK_PORT}{_LOGIN_CALLBACK_PATH}"
+    query = urllib.parse.urlencode({"cli_callback": callback_url, "state": login_state})
     if use_dev:
-        login_url = f"{server_url}/auth/dev-login?cli_callback={callback_url}"
+        login_url = f"{server_url}/auth/dev-login?{query}"
         print(info("Using development mode authentication"))
     else:
         # Use the first available provider
         provider = providers[0]
-        login_url = f"{server_url}/auth/login/{provider}?cli_callback={callback_url}"
+        login_url = f"{server_url}/auth/login/{provider}?{query}"
         print(info(f"Opening browser for {provider.title()} authentication"))
 
     print()
     print(dim(f"  URL: {login_url}"))
     print()
 
-    webbrowser.open(login_url)
+    try:
+        webbrowser.open(login_url)
 
-    # Wait for callback with visual feedback
-    print(dim("  Waiting for authentication..."))
-    server_thread.join(timeout=120)  # 2 minute timeout
+        # Wait for callback with visual feedback
+        print(dim("  Waiting for authentication..."))
+        settled.wait(timeout=_LOGIN_TIMEOUT_SECONDS)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        server_thread.join()
 
     print()
     if auth_result["success"]:
@@ -347,7 +429,12 @@ def cmd_login():
         return 0
     else:
         print(divider())
-        print(error("Authentication timed out or was cancelled"))
+        if auth_result["error"]:
+            print(error(f"The server did not complete the login ({auth_result['error']})"))
+            if auth_result["message"]:
+                print(dim(f"  {auth_result['message']}"))
+        else:
+            print(error("Authentication timed out or was cancelled"))
         print()
         print(dim("  Alternatives:"))
         print(dim(f"    1. Visit the URL manually: {login_url}"))

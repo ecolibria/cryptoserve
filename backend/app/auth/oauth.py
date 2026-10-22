@@ -7,11 +7,13 @@ Supports GitHub, Google, Azure AD, Okta, and generic OIDC.
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 import time
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +32,28 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # OAuth state token expiration (5 minutes)
 OAUTH_STATE_EXPIRATION = 300
+
+# A CLI login sends its own state, as the query parameter `state`, alongside
+# `cli_callback`. The server returns it unchanged on the redirect to the
+# loopback callback, so the CLI can refuse a callback that does not carry the
+# state it issued. URL-safe base64, as the CLIs issue it.
+CLI_STATE_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,128}")
+
+
+def check_cli_state(cli_state: str | None) -> None:
+    """Refuse a CLI state that is not 16 to 128 URL-safe base64 characters."""
+    if cli_state is not None and not CLI_STATE_PATTERN.fullmatch(cli_state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CLI state must be 16 to 128 URL-safe base64 characters",
+        )
+
+
+def with_cli_state(params: dict, cli_state: str | None) -> dict:
+    """The CLI callback parameters, with the CLI's state when it sent one."""
+    if cli_state and CLI_STATE_PATTERN.fullmatch(cli_state):
+        return {**params, "state": cli_state}
+    return params
 
 
 def generate_oauth_state(provider: str) -> str:
@@ -105,12 +129,15 @@ async def oauth_login(
     provider: str,
     request: Request,
     cli_callback: str | None = None,
+    cli_state: Annotated[str | None, Query(alias="state")] = None,
 ):
     """Initiate OAuth login with specified provider.
 
     Args:
         provider: OAuth provider name (github, google, azure_ad, okta, oidc)
         cli_callback: Optional callback URL for CLI login flow
+        cli_state: The CLI's own state (query parameter `state`), returned
+            unchanged on the redirect to `cli_callback`
     """
     oauth_provider = get_provider(provider)
     if not oauth_provider:
@@ -130,6 +157,7 @@ async def oauth_login(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="CLI callback must be localhost",
             )
+        check_cli_state(cli_state)
 
     # Generate CSRF state token (includes provider name)
     state = generate_oauth_state(provider)
@@ -164,6 +192,19 @@ async def oauth_login(
             samesite="strict",
             max_age=OAUTH_STATE_EXPIRATION,
         )
+        # The CLI's state rides with the callback URL through the provider
+        # round-trip; a login that sends none drops any earlier one.
+        if cli_state:
+            response.set_cookie(
+                key="cli_state",
+                value=cli_state,
+                httponly=True,
+                secure=settings.cookie_secure,
+                samesite="strict",
+                max_age=OAUTH_STATE_EXPIRATION,
+            )
+        else:
+            response.delete_cookie("cli_state")
 
     return response
 
@@ -297,16 +338,20 @@ async def oauth_callback(
                 from urllib.parse import urlencode
 
                 callback_params = urlencode(
-                    {
-                        "error": "not_authorized",
-                        "message": "You are not authorized to access this system. Contact an administrator for an invitation.",
-                    }
+                    with_cli_state(
+                        {
+                            "error": "not_authorized",
+                            "message": "You are not authorized to access this system. Contact an administrator for an invitation.",
+                        },
+                        request.cookies.get("cli_state"),
+                    )
                 )
                 response = RedirectResponse(
                     url=f"{cli_callback}?{callback_params}",
                     status_code=status.HTTP_302_FOUND,
                 )
                 response.delete_cookie("cli_callback")
+                response.delete_cookie("cli_state")
                 response.delete_cookie("oauth_state")
                 return response
 
@@ -384,10 +429,13 @@ async def oauth_callback(
             )
 
         callback_params = urlencode(
-            {
-                "session": jwt_token,
-                "user": user.github_username,
-            }
+            with_cli_state(
+                {
+                    "session": jwt_token,
+                    "user": user.github_username,
+                },
+                request.cookies.get("cli_state"),
+            )
         )
         callback_url = f"{cli_callback}?{callback_params}"
 
@@ -396,6 +444,7 @@ async def oauth_callback(
             status_code=status.HTTP_302_FOUND,
         )
         response.delete_cookie("cli_callback")
+        response.delete_cookie("cli_state")
         response.delete_cookie("oauth_state")
         return response
 
@@ -420,12 +469,16 @@ async def oauth_callback(
 # Backwards compatibility aliases for GitHub
 @router.get("/github")
 @limiter.limit("10/minute")
-async def github_login(request: Request, cli_callback: str | None = None):
+async def github_login(
+    request: Request,
+    cli_callback: str | None = None,
+    cli_state: Annotated[str | None, Query(alias="state")] = None,
+):
     """Redirect to GitHub OAuth (backwards compatibility).
 
     New code should use /auth/login/github instead.
     """
-    return await oauth_login("github", request, cli_callback)
+    return await oauth_login("github", request, cli_callback, cli_state)
 
 
 @router.get("/github/callback")
@@ -449,8 +502,12 @@ async def dev_login(
     request: Request,
     db: AsyncSession = Depends(get_db),
     cli_callback: str | None = None,
+    cli_state: Annotated[str | None, Query(alias="state")] = None,
 ):
-    """Development mode login - bypasses OAuth for testing."""
+    """Development mode login - bypasses OAuth for testing.
+
+    A CLI login's `state` is returned unchanged on the redirect to `cli_callback`.
+    """
     if not settings.dev_mode:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -466,6 +523,7 @@ async def dev_login(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="CLI callback must be localhost",
             )
+        check_cli_state(cli_state)
 
     from app.core.tenant import get_or_create_default_tenant
 
@@ -517,10 +575,13 @@ async def dev_login(
         from urllib.parse import urlencode
 
         callback_params = urlencode(
-            {
-                "session": jwt_token,
-                "user": user.github_username,
-            }
+            with_cli_state(
+                {
+                    "session": jwt_token,
+                    "user": user.github_username,
+                },
+                cli_state,
+            )
         )
         callback_url = f"{cli_callback}?{callback_params}"
 

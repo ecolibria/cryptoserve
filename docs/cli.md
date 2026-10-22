@@ -482,6 +482,21 @@ token only from that request. Any other request (another path or method, a
 missing or different `state`) is answered with an error and stores nothing,
 and the CLI keeps waiting for the right callback until 120 seconds pass.
 
+The Python CLI (`python -m cryptoserve login`) listens on `127.0.0.1:9876`
+only. Its authorization URL, `<server>/auth/login/<provider>` (or
+`<server>/auth/dev-login` on a server in development mode), carries
+`cli_callback=http://127.0.0.1:9876/callback` and a `state` value of 32 random
+bytes in URL-safe base64, issued for that login. The server returns `state`
+unchanged, with the session in `session`, in a GET to `/callback`, and the CLI
+stores a session only from that request, comparing `state` in constant time.
+Another path, a missing or different `state`, or a session longer than 8192
+characters is answered `400`, and another method `501`; none of them stores
+anything or ends the login, and the CLI keeps waiting for the right callback
+until 120 seconds pass. A callback that carries the issued `state` and an
+`error` ends the login and prints the server's message. The browser login
+therefore needs a server whose CLI login routes return `state`;
+`login --cookie <token>` stores a session without the browser.
+
 ### `context`: List Encryption Contexts
 
 ```bash
