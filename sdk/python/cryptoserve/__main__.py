@@ -292,7 +292,7 @@ def cmd_login():
     # The state ties the callback to this login: the server returns it
     # unchanged, and a request that does not carry it is refused.
     login_state = secrets.token_urlsafe(32)
-    auth_result = {"success": False, "cookie": None, "user": None, "error": None, "message": ""}
+    auth_result = {"success": False, "cookie": None, "user": None, "error": None, "message": "", "closed": False}
     settle_lock = threading.Lock()
     settled = threading.Event()
 
@@ -317,8 +317,8 @@ def cmd_login():
             # The first callback that carries the issued state settles the
             # login. Its page is written before the waiting thread wakes.
             with settle_lock:
-                if auth_result["success"] or auth_result["error"]:
-                    return self._refuse("This login has already completed")
+                if auth_result["closed"] or auth_result["success"] or auth_result["error"]:
+                    return self._refuse("This login is no longer waiting")
                 auth_result.update(outcome)
             try:
                 self._respond(200, "text/html", page)
@@ -406,6 +406,10 @@ def cmd_login():
         print(dim("  Waiting for authentication..."))
         settled.wait(timeout=_LOGIN_TIMEOUT_SECONDS)
     finally:
+        with settle_lock:
+            # From here on a callback is refused, so the browser page and
+            # this command report the same outcome.
+            auth_result["closed"] = True
         httpd.shutdown()
         httpd.server_close()
         server_thread.join()
