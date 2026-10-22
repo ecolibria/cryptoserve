@@ -17,10 +17,12 @@ function formatDate(iso) {
 }
 
 /**
- * Render census results to the terminal.
+ * Render census results as the terminal report. The caller prints it, or
+ * writes it to the `--output` file.
  *
  * @param {Object} data - Aggregated census data from aggregate()
  * @param {Object} style - Destructured cli-style exports
+ * @returns {string} The report, with the colour codes cli-style adds
  */
 export function renderTerminal(data, style) {
   const {
@@ -168,5 +170,5 @@ export function renderTerminal(data, style) {
   lines.push(warning(`NIST deprecates quantum-vulnerable public-key crypto by 2030 -- ${data.nistDeadline2030} remaining`));
   lines.push('');
 
-  console.log(lines.join('\n'));
+  return lines.join('\n');
 }

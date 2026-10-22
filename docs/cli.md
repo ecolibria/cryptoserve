@@ -350,12 +350,13 @@ its figures match the site exactly rather than approximately.
 cryptoserve census                            # Render the published snapshot
 cryptoserve census --no-cache                 # Re-fetch rather than use the day-old cache
 cryptoserve census --format json --output out.json  # JSON output
+cryptoserve census --output census.txt        # Text report to a file, without colour codes
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--format <fmt>` | Output format: `text` (default), `json`, `html` |
-| `--output <file>` | Write output to a file |
+| `--output <file>` | Write output to a file, in any format |
 | `--no-cache` | Re-fetch the snapshot instead of using the cached copy |
 | `--verbose` | Show detailed progress |
 
@@ -541,13 +542,13 @@ to do, so a result is never reported for something that was not measured:
 - a path that does not exist, or exists but is not a directory
   (`scan`, `pqc`, `cbom`, `gate`)
 - an `--output` file (`scan`, `cbom`, `gate`, `encrypt --file`,
-  `decrypt --file`, `census --format json`, `census --format html`) or a
-  `scan --emit-findings` file that cannot be written where it was named: its
-  directory does not exist or has a file in its place, it is a symbolic link
-  into a directory that does not exist, the path is a directory, or the system
-  refuses the write for a reason the message names (permission denied,
-  operation not permitted, read-only file system, file name too long, too many
-  levels of symbolic links, no space left on device)
+  `decrypt --file`, `census`) or a `scan --emit-findings` file that cannot be
+  written where it was named: its directory does not exist or has a file in its
+  place, it is a symbolic link into a directory that does not exist, the path
+  is a directory, or the system refuses the write for a reason the message
+  names (permission denied, operation not permitted, read-only file system,
+  file name too long, too many levels of symbolic links, no space left on
+  device)
 - an option value the command cannot act on: `--min-score abc`, `--min-score 500`,
   `--max-risk bogus`, `--profile helthcare`, `--algorithm BOGUS`, an unknown
   `--format`, an empty `--password`, an empty or missing `--output` value
