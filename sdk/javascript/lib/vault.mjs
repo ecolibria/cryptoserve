@@ -76,6 +76,14 @@ function secretTable(entries) {
   return Object.assign(Object.create(null), entries);
 }
 
+/** What a value is, as an error message names it. */
+function kindOf(value) {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
 function loadVault(password, path = defaultVaultPath()) {
   if (!existsSync(path)) return null;
   const packed = readFileSync(path);
@@ -113,7 +121,16 @@ export function initVault(password, path = defaultVaultPath()) {
   return data;
 }
 
+/**
+ * Store a secret, whose value must be a string. A value such as 8080, true or
+ * null used to be stored, and exportVault then wrote a bundle that
+ * importVaultBundle refuses.
+ */
 export function setSecret(password, key, value, path = defaultVaultPath()) {
+  if (typeof value !== 'string') {
+    throw new TypeError(`Secret ${JSON.stringify(String(key))} not stored: its value is `
+      + `${kindOf(value)}, not a string.`);
+  }
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
   data.secrets[key] = {
@@ -248,20 +265,46 @@ export function importEnvFile(password, envPath, path = defaultVaultPath()) {
 // vault export — create encrypted bundle
 // ---------------------------------------------------------------------------
 
+/**
+ * The vault's secrets as an encrypted bundle. A vault holding an entry that
+ * importVaultBundle refuses, such as a number setSecret stored before it
+ * refused one, is not exported, because the bundle would not import.
+ */
 export function exportVault(password, exportPassword = null, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found.');
+
+  const refused = refusedEntries(data.secrets);
+  if (refused) {
+    throw new Error(`Vault not exported: ${refused}. The bundle would not import. `
+      + 'Store each such secret again as a string, or delete it.');
+  }
 
   const json = JSON.stringify(data.secrets);
   const pw = exportPassword || password;
   return encryptData(json, pw).toString('base64');
 }
 
-/** What a parsed JSON value is, as an error message names it. */
-function jsonKind(value) {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'an array';
-  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+/**
+ * The entries of a secrets table that importVaultBundle refuses, as its error
+ * message names them: the first five and a count of the rest, or '' when there
+ * are none. The import takes an entry that is a string, or an object with a
+ * string `value` as exportVault writes it. exportVault applies the same check
+ * before it writes a bundle.
+ */
+function refusedEntries(secrets) {
+  const refused = [];
+  for (const [key, entry] of Object.entries(secrets)) {
+    const name = JSON.stringify(key);
+    if (typeof entry === 'string') continue;
+    if (kindOf(entry) !== 'an object') {
+      refused.push(`${name} is ${kindOf(entry)}`);
+    } else if (typeof entry.value !== 'string') {
+      refused.push(`${name} has no string "value"`);
+    }
+  }
+  const more = refused.length > 5 ? `, and ${refused.length - 5} more` : '';
+  return refused.length > 0 ? `${refused.slice(0, 5).join(', ')}${more}` : '';
 }
 
 /**
@@ -272,7 +315,7 @@ function jsonKind(value) {
  * them, so listSecrets and vaultRun check each entry too.
  */
 function entryProblem(entry) {
-  const kind = jsonKind(entry);
+  const kind = kindOf(entry);
   if (kind !== 'an object') return `is ${kind}`;
   if (typeof entry.value !== 'string') return 'has no string "value"';
   return null;
@@ -291,32 +334,23 @@ function entryProblem(entry) {
  * getSecret as undefined.
  */
 function bundleEntries(secrets) {
-  const kind = jsonKind(secrets);
+  const kind = kindOf(secrets);
   if (kind !== 'an object') {
     throw new Error(`Bundle not imported: it holds ${kind}, not a table of secrets. `
       + 'The vault was not changed.');
   }
+  const refused = refusedEntries(secrets);
+  if (refused) {
+    throw new Error(`Bundle not imported: ${refused}. Each entry must be a string or an object `
+      + 'with a string "value". The vault was not changed.');
+  }
   const now = new Date().toISOString();
-  const entries = [];
-  const refused = [];
-  for (const [key, entry] of Object.entries(secrets)) {
-    const problem = typeof entry === 'string' ? null : entryProblem(entry);
-    if (problem) {
-      refused.push(`${JSON.stringify(key)} ${problem}`);
-    } else if (typeof entry === 'string') {
-      entries.push([key, { value: entry, updatedAt: now }]);
-    } else {
-      const { updatedAt } = entry;
-      const dated = typeof updatedAt === 'string' && !Number.isNaN(Date.parse(updatedAt));
-      entries.push([key, { value: entry.value, updatedAt: dated ? updatedAt : now }]);
-    }
-  }
-  if (refused.length > 0) {
-    const more = refused.length > 5 ? `, and ${refused.length - 5} more` : '';
-    throw new Error(`Bundle not imported: ${refused.slice(0, 5).join(', ')}${more}. Each entry `
-      + 'must be a string or an object with a string "value". The vault was not changed.');
-  }
-  return entries;
+  return Object.entries(secrets).map(([key, entry]) => {
+    if (typeof entry === 'string') return [key, { value: entry, updatedAt: now }];
+    const { updatedAt } = entry;
+    const dated = typeof updatedAt === 'string' && !Number.isNaN(Date.parse(updatedAt));
+    return [key, { value: entry.value, updatedAt: dated ? updatedAt : now }];
+  });
 }
 
 export function importVaultBundle(password, bundle, importPassword = null, path = defaultVaultPath()) {

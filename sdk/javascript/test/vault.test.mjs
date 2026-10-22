@@ -359,6 +359,102 @@ describe('vault already holding an entry that is not a secret', () => {
   });
 });
 
+describe('vault set of a value that is not a string', () => {
+  // setSecret stored a value such as 8080, true or null, exportVault wrote it
+  // into the bundle unchanged, and importVaultBundle refused that bundle with
+  // 'Bundle not imported: "PORT" has no string "value"'.
+  const NOT_STRINGS = [
+    [8080, 'a number'], [true, 'a boolean'], [null, 'null'], [undefined, 'undefined'],
+    [{ x: 1 }, 'an object'], [['x'], 'an array'], [10n, 'a bigint'], [() => 'x', 'a function'],
+  ];
+  const newVaultPath = join(TEST_DIR, 'vault2.enc');
+
+  beforeEach(() => {
+    setup();
+    initVault(PW, VAULT_PATH);
+    setSecret(PW, 'KEPT', 'k', VAULT_PATH);
+  });
+  afterEach(cleanup);
+
+  it('refuses the value and leaves the vault file as it was', () => {
+    const before = readFileSync(VAULT_PATH);
+    for (const [value, kind] of NOT_STRINGS) {
+      assert.throws(() => setSecret(PW, 'PORT', value, VAULT_PATH), {
+        name: 'TypeError',
+        message: `Secret "PORT" not stored: its value is ${kind}, not a string.`,
+      }, kind);
+      assert.deepEqual(readFileSync(VAULT_PATH), before, kind);
+    }
+    assert.deepEqual(listSecrets(PW, VAULT_PATH).map(s => s.key), ['KEPT']);
+  });
+
+  it('refuses the value before it reads the vault', () => {
+    assert.throws(() => setSecret('wrong-password', 'PORT', 8080, VAULT_PATH), { name: 'TypeError' });
+    assert.throws(() => setSecret(PW, 'PORT', 8080, newVaultPath), { name: 'TypeError' });
+    assert.ok(!existsSync(newVaultPath));
+  });
+
+  it('leaves a vault whose export imports', () => {
+    for (const [value, kind] of NOT_STRINGS) {
+      assert.throws(() => setSecret(PW, 'PORT', value, VAULT_PATH), TypeError, kind);
+    }
+    setSecret(PW, 'PORT', '8080', VAULT_PATH);
+    assert.equal(importVaultBundle(PW, exportVault(PW, null, VAULT_PATH), null, newVaultPath), 2);
+    assert.equal(getSecret(PW, 'PORT', newVaultPath), '8080');
+    assert.equal(getSecret(PW, 'KEPT', newVaultPath), 'k');
+  });
+});
+
+describe('vault export of an entry the import refuses', () => {
+  // A vault written before setSecret refused a value that is not a string, or
+  // one that imported a null or array entry before #101, was exported as it
+  // was, and importVaultBundle refused the bundle.
+  const at = '2026-01-02T03:04:05.000Z';
+  const writeVault = secrets => writeFileSync(VAULT_PATH, _encryptData(JSON.stringify({
+    version: 1, createdAt: at, secrets,
+  }), PW));
+
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('refuses to export it and names each such entry', () => {
+    writeVault({
+      KEPT: { value: 'k', updatedAt: at },
+      PORT: { value: 8080, updatedAt: at },
+      FLAG: { value: true, updatedAt: at },
+      GONE: { updatedAt: at },
+      NONE: null,
+      LIST: ['x'],
+      PLAIN: 'p',
+    });
+    assert.throws(() => exportVault(PW, null, VAULT_PATH), {
+      message: 'Vault not exported: "PORT" has no string "value", "FLAG" has no string "value", '
+        + '"GONE" has no string "value", "NONE" is null, "LIST" is an array. The bundle would '
+        + 'not import. Store each such secret again as a string, or delete it.',
+    });
+  });
+
+  it('names the first five such entries and counts the rest', () => {
+    writeVault({ B1: null, OK: 'v', B2: [], B3: {}, B4: 1, B5: false, B6: null, B7: null });
+    assert.throws(() => exportVault(PW, null, VAULT_PATH), {
+      message: 'Vault not exported: "B1" is null, "B2" is an array, "B3" has no string "value", '
+        + '"B4" is a number, "B5" is a boolean, and 2 more. The bundle would not import. '
+        + 'Store each such secret again as a string, or delete it.',
+    });
+  });
+
+  it('exports a bundle that imports once each is stored again or deleted', () => {
+    writeVault({ KEPT: { value: 'k', updatedAt: at }, PORT: { value: 8080, updatedAt: at }, NONE: null });
+    assert.throws(() => exportVault(PW, null, VAULT_PATH), /^Error: Vault not exported: "PORT"/);
+    setSecret(PW, 'PORT', '8080', VAULT_PATH);
+    assert.equal(deleteSecret(PW, 'NONE', VAULT_PATH), true);
+    const newVaultPath = join(TEST_DIR, 'vault2.enc');
+    assert.equal(importVaultBundle(PW, exportVault(PW, null, VAULT_PATH), null, newVaultPath), 2);
+    assert.equal(getSecret(PW, 'PORT', newVaultPath), '8080');
+    assert.equal(getSecret(PW, 'KEPT', newVaultPath), 'k');
+  });
+});
+
 describe('vault secret names inherited from Object.prototype', () => {
   // The secrets table was a plain object read with `data.secrets[key]` and
   // `key in data.secrets`, so these names behaved as existing entries:
