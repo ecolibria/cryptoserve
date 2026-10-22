@@ -1107,7 +1107,8 @@ async function cmdVault(args) {
         } else {
           console.log(tableHeader(['Key', 'Updated'], [30, 24]));
           for (const s of secrets) {
-            const ago = s.problem ? 'not a secret' : timeSince(new Date(s.updatedAt));
+            const ago = s.problem ? 'not a secret'
+              : s.updatedAt === null ? 'unknown' : timeSince(new Date(s.updatedAt));
             console.log(tableRow([s.key, ago], [30, 24]));
           }
           const notSecrets = secrets.filter(s => s.problem);

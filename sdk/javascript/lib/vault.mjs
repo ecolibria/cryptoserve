@@ -84,6 +84,15 @@ function kindOf(value) {
   return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
 }
 
+/**
+ * An entry's `updatedAt` when it is a string Date.parse reads, the shape
+ * setSecret writes, or null otherwise. importVaultBundle keeps a bundle's
+ * `updatedAt` only when it is one, and listSecrets lists any other as null.
+ */
+function readableTime(updatedAt) {
+  return typeof updatedAt === 'string' && !Number.isNaN(Date.parse(updatedAt)) ? updatedAt : null;
+}
+
 function loadVault(password, path = defaultVaultPath()) {
   if (!existsSync(path)) return null;
   const packed = readFileSync(path);
@@ -154,13 +163,19 @@ export function getSecret(password, key, path = defaultVaultPath()) {
  * so it can be found and removed with deleteSecret. This used to read
  * `updatedAt` of every entry, which threw for a null entry, so one such entry
  * stopped the listing of every secret.
+ *
+ * A secret whose `updatedAt` is not a string Date.parse reads, as a vault an
+ * earlier bundle import wrote can hold, is listed with `updatedAt: null`. It
+ * was listed as stored, and `vault list` showed "NaNd ago" for a missing one or
+ * "not a date", and an age counted from 1970 for null, 0 or true.
  */
 export function listSecrets(password, path = defaultVaultPath()) {
   const data = loadVault(password, path);
   if (!data) throw new Error('Vault not found. Run "cryptoserve vault init" first.');
   return Object.entries(data.secrets).map(([key, entry]) => {
     const problem = entryProblem(entry);
-    return problem ? { key, updatedAt: null, problem } : { key, updatedAt: entry.updatedAt };
+    if (problem) return { key, updatedAt: null, problem };
+    return { key, updatedAt: readableTime(entry.updatedAt) };
   });
 }
 
@@ -347,9 +362,7 @@ function bundleEntries(secrets) {
   const now = new Date().toISOString();
   return Object.entries(secrets).map(([key, entry]) => {
     if (typeof entry === 'string') return [key, { value: entry, updatedAt: now }];
-    const { updatedAt } = entry;
-    const dated = typeof updatedAt === 'string' && !Number.isNaN(Date.parse(updatedAt));
-    return [key, { value: entry.value, updatedAt: dated ? updatedAt : now }];
+    return [key, { value: entry.value, updatedAt: readableTime(entry.updatedAt) ?? now }];
   });
 }
 

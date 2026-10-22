@@ -647,6 +647,20 @@ each such secret again as a string, or delete it.`, naming up to five such
 entries, and exits 1. After `vault set PORT 8080` or `vault delete PORT`, the
 bundle `vault export` writes imports.
 
+`vault list` shows `unknown` in the Updated column for a secret whose update
+time is missing or not a date
+([#113](https://github.com/ecolibria/cryptoserve/issues/113)).
+
+`listSecrets` returned a secret's `updatedAt` as the vault stored it, and `vault
+list` turned it into an age. On a vault an earlier bundle import wrote, it
+showed `NaNd ago` for an entry stored without an `updatedAt`, or with one of
+`"not a date"`, `""` or `{}`, and an age counted from 1970, such as `20748d
+ago`, for `null`, `0` or `true`. `listSecrets` now lists an `updatedAt` that is
+not a string `Date.parse` reads as `null`, the rule by which `importVaultBundle`
+keeps a bundle's `updatedAt`, and `vault list` shows `unknown` for it. A number
+of milliseconds, or an array holding a date string, showed an age and now shows
+`unknown` as well.
+
 ### Known limitations
 
 The misuse patterns match code, not prose, and they cannot tell either from a
