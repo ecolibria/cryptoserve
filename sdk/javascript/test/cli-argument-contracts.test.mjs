@@ -20,7 +20,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, writeFileSync, readFileSync, rmSync, realpathSync, existsSync,
-  mkdirSync, chmodSync, statSync,
+  mkdirSync, chmodSync, statSync, symlinkSync,
 } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -952,6 +952,238 @@ describe('--output naming a directory, or a path that cannot be written', () => 
     const { code, stdout } = run(['gate', '.', '--format', 'json', '--output', 'somedir'], { cwd: dir });
     assert.equal(code, 2);
     assert.deepEqual(JSON.parse(stdout), { status: 'error', error: `Is a directory: ${join(dir, 'somedir')}` });
+  });
+});
+
+describe('--output a path the system refuses for any other reason', () => {
+  // writeNamedFile explained a fixed list of codes and rethrew the rest to the
+  // top-level handler, which printed Node's raw text and exited 1: a name too
+  // long printed "ENAMETOOLONG: name too long, open 'aaa...'" and a loop of
+  // symbolic links "ELOOP: too many symbolic links encountered, open 'loop1'".
+  // A symbolic link into a directory that does not exist, and a missing
+  // directory named with a trailing separator, came back as raw ENOENT text on
+  // macOS: the directory the climb started from, the one beside the link and
+  // the parent of `newdir`, exists.
+  const symlinks = process.platform === 'win32' ? 'symbolic links need privileges here' : false;
+
+  function loopTree() {
+    const dir = md5Tree('output-eloop');
+    symlinkSync('loop2', join(dir, 'loop1'));
+    symlinkSync('loop1', join(dir, 'loop2'));
+    return dir;
+  }
+
+  it('names a file name that is too long and exits 2', () => {
+    const dir = md5Tree('output-toolong');
+    const name = 'a'.repeat(300);
+    const { code, stderr } = run(['scan', '.', '--output', name], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: File name too long: ${join(dir, name)}`);
+  });
+
+  it('names a loop of symbolic links and exits 2', { skip: symlinks }, () => {
+    const dir = loopTree();
+    const { code, stderr } = run(['scan', '.', '--output', 'loop1'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Too many levels of symbolic links: ${join(dir, 'loop1')}`);
+  });
+
+  it('names a reason it has no text of its own for in Node\'s words, and exits 2',
+    { skip: existsSync('/dev/full') ? false : 'no /dev/full here' }, () => {
+      // A write to /dev/full fails with ENOSPC, which printed
+      // "ENOSPC: no space left on device, write" and exited 1.
+      const { code, stderr } = run(['scan', '.', '--output', '/dev/full'], { cwd: md5Tree('output-enospc') });
+      assert.equal(code, 2, stderr);
+      assert.equal(stderr.trim(), 'Error: No space left on device: /dev/full');
+    });
+
+  it('follows a symbolic link to the directory that is missing, and names the link', { skip: symlinks }, () => {
+    const dir = md5Tree('output-dangling');
+    symlinkSync(join(dir, 'gone', 'out.txt'), join(dir, 'dangling.txt'));
+    const { code, stderr } = run(['scan', '.', '--output', 'dangling.txt'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'gone')} `
+      + `(${join(dir, 'dangling.txt')} points to ${join(dir, 'gone', 'out.txt')})`);
+    assert.equal(existsSync(join(dir, 'gone')), false);
+  });
+
+  it('names a missing directory given with a trailing separator', () => {
+    // Linux answers EISDIR here and macOS ENOENT; both now print this.
+    const dir = md5Tree('output-trailing');
+    const { code, stderr } = run(['scan', '.', '--output', 'newdir/'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'newdir')}`);
+  });
+
+  it('names a file given with a trailing separator as not a directory', () => {
+    // Linux answers EISDIR here and macOS ENOTDIR; both now print this.
+    const dir = md5Tree('output-trailing');
+    const { code, stderr } = run(['scan', '.', '--output', 'app.js/'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Not a directory: ${join(dir, 'app.js')}`);
+  });
+
+  it('still names a directory given with a trailing separator as a directory', () => {
+    const dir = md5Tree('output-trailing');
+    mkdirSync(join(dir, 'somedir'));
+    const { code, stderr } = run(['scan', '.', '--output', 'somedir/'], { cwd: dir });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.trim(), `Error: Is a directory: ${join(dir, 'somedir')}`);
+  });
+
+  it('stops the same way on cbom, gate, encrypt --file and decrypt --file', { skip: symlinks }, () => {
+    const dir = loopTree();
+    assert.equal(run(['encrypt', '--file', 'app.js', '--output', 'app.enc', ...FILE_PASSWORD], { cwd: dir }).code, 0);
+    for (const args of [
+      ['cbom', '.', '--output', 'loop1'],
+      ['gate', '.', '--output', 'loop1'],
+      ['encrypt', '--file', 'app.js', '--output', 'loop1', ...FILE_PASSWORD],
+      ['decrypt', '--file', 'app.enc', '--output', 'loop1', ...FILE_PASSWORD],
+    ]) {
+      const { code, stdout, stderr } = run(args, { cwd: dir });
+      assert.equal(code, 2, `${args.join(' ')}: ${stderr}`);
+      assert.equal(stderr.trim(), `Error: Too many levels of symbolic links: ${join(dir, 'loop1')}`, args.join(' '));
+      assert.equal(stdout, '', args.join(' '));
+    }
+  });
+
+  it('says so in a JSON document on stdout for gate --format json', { skip: symlinks }, () => {
+    const dir = loopTree();
+    const { code, stdout } = run(['gate', '.', '--format', 'json', '--output', 'loop1'], { cwd: dir });
+    assert.equal(code, 2);
+    assert.deepEqual(JSON.parse(stdout), {
+      status: 'error', error: `Too many levels of symbolic links: ${join(dir, 'loop1')}`,
+    });
+  });
+});
+
+describe('gate --format json and an option given twice', () => {
+  // optionValue stopped on a repeated option through usageError, which prints
+  // plain text on stderr, so these printed nothing on stdout, where every
+  // other refusal of `gate --format json` puts a JSON error document.
+  const cases = [
+    ['--output', 'a.json', 'b.json'],
+    ['--min-score', '10', '20'],
+    ['--max-risk', 'high', 'low'],
+    ['--max-severity', 'low', 'none'],
+  ];
+  for (const [name, first, second] of cases) {
+    it(`reports ${name} given twice in the JSON document on stdout`, () => {
+      const dir = md5Tree('gate-twice');
+      const { code, stdout, stderr } = run(['gate', '.', '--format', 'json', name, first, name, second], { cwd: dir });
+      assert.equal(code, 2, stderr);
+      assert.deepEqual(JSON.parse(stdout), { status: 'error', error: `${name} was given more than once.` });
+      assert.equal(stderr, '');
+      assert.equal(existsSync(join(dir, 'a.json')), false);
+      assert.equal(existsSync(join(dir, 'b.json')), false);
+    });
+  }
+
+  it('still reports it as plain text on stderr in the text format', () => {
+    const { code, stdout, stderr } = run(['gate', '.', '--min-score', '10', '--min-score', '20'], { cwd: md5Tree('gate-twice') });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.split('\n')[0], 'Error: --min-score was given more than once.');
+    assert.equal(stdout, '');
+  });
+});
+
+describe('census --output', () => {
+  // census read --output with getOption and wrote it with writeFileSync after
+  // scan, cbom, gate, encrypt and decrypt had stopped doing either: a file in a
+  // directory that does not exist printed Node's raw ENOENT text and exited 1,
+  // `--output ''` printed the JSON on stdout and exited 0, and of two values
+  // the first was written, with exit 0.
+
+  /**
+   * A state directory holding a snapshot fetched just now, so the command
+   * renders it without a request. The URL is a closed local port, so a run
+   * that did not use the cache fails at once instead of reaching the network.
+   */
+  function censusEnv() {
+    const home = tempDir('census-home');
+    writeFileSync(join(home, 'census-cache.json'), JSON.stringify({
+      fetchedAt: new Date().toISOString(),
+      source: 'test',
+      payload: {
+        totalDownloads: 100,
+        collectedAt: '2026-07-28T04:34:38.416Z',
+        npm: { weak: 0, modern: 0, pqc: 0, total: 0, topPackages: [], period: {} },
+      },
+    }));
+    return { CRYPTOSERVE_HOME: home, CRYPTOSERVE_CENSUS_URL: 'http://127.0.0.1:9/api/census' };
+  }
+
+  it('writes the file it was given, so the stops below are about the path', () => {
+    const dir = tempDir('census-output');
+    const { code, stdout, stderr } = run(['census', '--format', 'json', '--output', 'out.json'], { cwd: dir, env: censusEnv() });
+    assert.equal(code, 0, stderr);
+    assert.equal(stdout.trim(), 'Census data written to out.json');
+    assert.equal(JSON.parse(readFileSync(join(dir, 'out.json'), 'utf-8')).totalDownloads, 100);
+  });
+
+  for (const format of ['json', 'html']) {
+    it(`names the missing directory and exits 2 (--format ${format})`, () => {
+      const dir = tempDir('census-nodir');
+      const { code, stdout, stderr } = run(['census', '--format', format, '--output', `nodir/census.${format}`], { cwd: dir, env: censusEnv() });
+      assert.equal(code, 2, stderr);
+      assert.equal(stderr.trim(), `Error: Path does not exist: ${join(dir, 'nodir')}`);
+      assert.doesNotMatch(stderr, /ENOENT/);
+      assert.equal(stdout, '');
+    });
+  }
+
+  it('stops on an empty or missing value instead of printing to stdout', () => {
+    const dir = tempDir('census-empty');
+    for (const flags of [['--output', ''], ['--output']]) {
+      const { code, stdout, stderr } = run(['census', '--format', 'json', ...flags], { cwd: dir, env: censusEnv() });
+      assert.equal(code, 2, `${flags.join(' ')}: ${stderr}`);
+      assert.equal(stderr.split('\n')[0], 'Error: --output was given no value.');
+      assert.equal(stdout, '');
+    }
+  });
+
+  it('stops on --output given twice rather than writing the first', () => {
+    const dir = tempDir('census-twice');
+    const { code, stdout, stderr } = run(['census', '--format', 'json', '--output', 'a.json', '--output', 'b.json'], { cwd: dir, env: censusEnv() });
+    assert.equal(code, 2, stderr);
+    assert.equal(stderr.split('\n')[0], 'Error: --output was given more than once.');
+    assert.equal(stdout, '');
+    assert.equal(existsSync(join(dir, 'a.json')), false);
+    assert.equal(existsSync(join(dir, 'b.json')), false);
+  });
+});
+
+describe('docs/cli.md and the flags this CLI reads', () => {
+  // docs/cli.md showed `cbom --format cyclonedx -o cbom.json`,
+  // `census --format json -o out.json` and `encrypt --file secret.txt -p secret
+  // -o secret.enc`, and listed -o and -p beside --output and --password. This
+  // CLI has no short form of either and reads them as positional arguments, so
+  // the cbom example stopped with "Path does not exist: <cwd>/-o", the census
+  // example printed to stdout and wrote no file, and the encrypt example
+  // ignored -p and went to the password prompt.
+  const doc = readFileSync(join(__dirname, '..', '..', '..', 'docs', 'cli.md'), 'utf-8');
+  // The last section lists commands only the Python CLI has.
+  const nodeSection = doc.split('\n## Python CLI Only')[0].split('\n');
+
+  it('uses no short flag in an example command', () => {
+    const offenders = [];
+    let inBlock = false;
+    for (const line of nodeSection) {
+      if (line.startsWith('```')) { inBlock = !inBlock; continue; }
+      if (!inBlock || !line.startsWith('cryptoserve ')) continue;
+      const words = line.replace(/\s#.*$/, '').trim().split(/\s+/);
+      // What follows a bare `--` belongs to the command `vault run` starts.
+      const end = words.indexOf('--');
+      const own = end === -1 ? words : words.slice(0, end);
+      if (own.some((w) => /^-[A-Za-z]/.test(w) && w !== '-h')) offenders.push(line);
+    }
+    assert.deepEqual(offenders, []);
+  });
+
+  it('lists no short form beside a flag in a flag table', () => {
+    const rows = nodeSection.filter((line) => line.startsWith('| `--')
+      && /`-[A-Za-z]`/.test(line.split('|')[1]));
+    assert.deepEqual(rows, []);
   });
 });
 

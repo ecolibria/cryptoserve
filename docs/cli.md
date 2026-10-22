@@ -12,6 +12,13 @@ npm install -g cryptoserve
 pip install cryptoserve
 ```
 
+The examples on this page use long flags. The Node.js CLI has no short form of
+`--output` or `--password`: it reads `-o` and `-p` as positional arguments, so
+`cryptoserve cbom -o cbom.json` stops with `Error: Path does not exist: <cwd>/-o`.
+The Python CLI (`python -m cryptoserve`) also accepts `-o` for `--output` in
+`cbom`, `encrypt` and `decrypt`, and `-p` for `--password` in `encrypt` and
+`decrypt`.
+
 ---
 
 ## Scanning Tools
@@ -52,14 +59,14 @@ Generates a Cryptographic Bill of Materials in multiple formats.
 ```bash
 cryptoserve cbom                            # Default JSON output, current directory
 cryptoserve cbom ./services/api             # A specific directory
-cryptoserve cbom --format cyclonedx -o cbom.json  # CycloneDX format
+cryptoserve cbom --format cyclonedx --output cbom.json  # CycloneDX format
 cryptoserve cbom --format spdx              # SPDX format
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--format <fmt>` | Output format: `json` (default), `cyclonedx`, `spdx` |
-| `--output <file>` / `-o` | Write output to file |
+| `--output <file>` | Write output to file |
 
 The document goes to stdout; how much was read goes to stderr, so a piped CBOM
 stays clean while the file and component counts stay visible. A path that does
@@ -342,7 +349,7 @@ its figures match the site exactly rather than approximately.
 ```bash
 cryptoserve census                            # Render the published snapshot
 cryptoserve census --no-cache                 # Re-fetch rather than use the day-old cache
-cryptoserve census --format json -o out.json  # JSON output
+cryptoserve census --format json --output out.json  # JSON output
 ```
 
 | Flag | Description |
@@ -369,29 +376,29 @@ Password-based authenticated encryption (AES-256-GCM with PBKDF2 key derivation)
 
 ```bash
 cryptoserve encrypt "hello world" --password secret
-cryptoserve encrypt --file secret.txt -p secret -o secret.enc
+cryptoserve encrypt --file secret.txt --password secret --output secret.enc
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--password <pw>` / `-p` | Encryption password (prompted if omitted) |
+| `--password <pw>` | Encryption password (prompted if omitted) |
 | `--algorithm <alg>` | Encryption algorithm (default: AES-256-GCM) |
 | `--context <ctx>` | Encryption context for server-managed keys |
 | `--file <path>` | File to encrypt |
-| `--output <path>` / `-o` | Output file path |
+| `--output <path>` | Output file path |
 
 ### `decrypt`: Decrypt String or File
 
 ```bash
 cryptoserve decrypt "<base64>" --password secret
-cryptoserve decrypt --file secret.enc -p secret -o decrypted.txt
+cryptoserve decrypt --file secret.enc --password secret --output decrypted.txt
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--password <pw>` / `-p` | Decryption password (prompted if omitted) |
+| `--password <pw>` | Decryption password (prompted if omitted) |
 | `--file <path>` | Encrypted file to decrypt |
-| `--output <path>` / `-o` | Output file path |
+| `--output <path>` | Output file path |
 
 ### `hash-password`: Password Hashing
 
@@ -534,14 +541,18 @@ to do, so a result is never reported for something that was not measured:
 - a path that does not exist, or exists but is not a directory
   (`scan`, `pqc`, `cbom`, `gate`)
 - an `--output` file (`scan`, `cbom`, `gate`, `encrypt --file`,
-  `decrypt --file`) or a `scan --emit-findings` file that cannot be written
-  where it was named: its directory does not exist or has a file in its place,
-  the path is a directory, or the system refuses the write (permission denied,
-  operation not permitted, read-only file system)
+  `decrypt --file`, `census`) or a `scan --emit-findings` file that cannot be
+  written where it was named: its directory does not exist or has a file in its
+  place, it is a symbolic link into a directory that does not exist, the path
+  is a directory, or the system refuses the write for a reason the message
+  names (permission denied, operation not permitted, read-only file system,
+  file name too long, too many levels of symbolic links, no space left on
+  device)
 - an option value the command cannot act on: `--min-score abc`, `--min-score 500`,
   `--max-risk bogus`, `--profile helthcare`, `--algorithm BOGUS`, an unknown
   `--format`, an empty `--password`, an empty or missing `--output` value
-  (`scan`, `cbom`, `gate`, `encrypt`, `decrypt`) or `--emit-findings` value
+  (`scan`, `cbom`, `gate`, `encrypt`, `decrypt`, `census`) or `--emit-findings`
+  value
 - the same option given twice
 - a required argument that is missing: `encrypt` with no text, `vault set` with
   no value, `context show` with no name

@@ -24,7 +24,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve, dirname, join, basename } from 'node:path';
+import { resolve, dirname, join, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -73,8 +73,13 @@ function getOption(args, name, defaultValue = null) {
  * quietly became an interactive prompt.
  *
  * Returns `undefined` when absent, `null` when present with no value.
+ *
+ * `onError` reports an option given twice, so that `gate` makes that stop in
+ * the format the caller asked for, as it does for an unusable value: called
+ * straight to `usageError`, `gate --format json --output a --output b` printed
+ * plain text on stderr and nothing on stdout.
  */
-function optionValue(args, name) {
+function optionValue(args, name, { onError = usageError } = {}) {
   const idx = args.indexOf(name);
   if (idx === -1) return undefined;
   // Two occurrences are ambiguous, and `indexOf` silently picked the first --
@@ -82,7 +87,7 @@ function optionValue(args, name) {
   // caller appended, and never reported the one it ignored. Neither first-wins
   // nor last-wins is guessable; refusing is.
   if (args.indexOf(name, idx + 1) !== -1) {
-    usageError(`${name} was given more than once.`, `${name} <value>  (exactly once)`);
+    return onError(`${name} was given more than once.`, `${name} <value>  (exactly once)`);
   }
   if (idx + 1 >= args.length) return null;
   return args[idx + 1];
@@ -108,7 +113,7 @@ function usageError(message, usage) {
  * a prefix off a value the user did not mean. `Number` rejects both.
  */
 function numericOption(args, name, defaultValue, { min, max, onError = usageError }) {
-  const raw = optionValue(args, name);
+  const raw = optionValue(args, name, { onError });
   if (raw === undefined) return defaultValue;
   if (raw === null || String(raw).trim() === '') {
     return onError(`${name} expects a number, but no value followed it.`,
@@ -140,7 +145,7 @@ function numericOption(args, name, defaultValue, { min, max, onError = usageErro
  * scored -1 in the risk order so every algorithm counted as a breach.
  */
 function choiceOption(args, name, defaultValue, allowed, { onError = usageError } = {}) {
-  const raw = optionValue(args, name);
+  const raw = optionValue(args, name, { onError });
   if (raw === undefined) return defaultValue;
   if (raw === null || !allowed.includes(raw)) {
     return onError(`${name} expects one of: ${allowed.join(', ')}. Received ${raw === null ? 'no value' : `"${raw}"`}.`,
@@ -243,7 +248,7 @@ async function requireDirectory(pathArg) {
  * variable resolved empty saw a clean exit and no artifact.
  */
 function fileOption(args, name, { onError = usageError } = {}) {
-  const raw = optionValue(args, name);
+  const raw = optionValue(args, name, { onError });
   if (raw === undefined) return null;
   if (raw === null || raw === '') {
     return onError(`${name} was given no value.`, `${name} <file>`);
@@ -260,6 +265,10 @@ const UNWRITABLE = {
   EACCES: 'Permission denied',
   EPERM: 'Operation not permitted',
   EROFS: 'Read-only file system',
+  ENAMETOOLONG: 'File name too long',
+  ELOOP: 'Too many levels of symbolic links',
+  ENOENT: 'No such file or directory',
+  ENOTDIR: 'Not a directory',
 };
 
 /**
@@ -269,6 +278,13 @@ const UNWRITABLE = {
  * command that ran and reported a failure, and so did `--output somedir`
  * (EISDIR) and a path in a directory without write permission (EACCES).
  *
+ * An error the system raises for the write, one carrying a code and a syscall,
+ * stops here, named with its reason. Explaining a fixed list and rethrowing the
+ * rest let a name too long (ENAMETOOLONG) or a loop of symbolic links (ELOOP)
+ * out as Node's raw text: exit 1 from the top-level handler, exit 2 from
+ * gate's. An error that did not come from the system is a defect in this
+ * program, not a path to explain, and is rethrown.
+ *
  * `mode` is passed to writeFileSync. `onError` reports the stop, so that `gate`
  * can make it in the format the caller asked for.
  */
@@ -276,28 +292,61 @@ async function writeNamedFile(pathArg, content, { mode, onError = usageError } =
   try {
     writeFileSync(pathArg, content, mode === undefined ? undefined : { mode });
   } catch (e) {
-    const { existsSync, statSync } = await import('node:fs');
+    if (typeof e?.code !== 'string' || typeof e?.syscall !== 'string') throw e;
+    const { existsSync, statSync, lstatSync, readlinkSync } = await import('node:fs');
+    const { getSystemErrorMap } = await import('node:util');
     const { printablePath } = await import('../lib/waivers.mjs');
-    if (UNWRITABLE[e?.code]) {
-      onError(`${UNWRITABLE[e.code]}: ${printablePath(resolve(pathArg))}`);
+    const named = resolve(pathArg);
+    // ENOENT and ENOTDIR say a directory on the way to the file is missing or
+    // is not one. Linux answers EISDIR when a name to be created ends in a
+    // separator, so `newdir/` that does not exist and `app.js/` that is a file
+    // were both reported there as a directory; macOS answers ENOENT and ENOTDIR
+    // for them. Only a path that really is a directory keeps EISDIR.
+    const isDirectory = existsSync(named) && statSync(named).isDirectory();
+    if (e.code === 'ENOENT' || e.code === 'ENOTDIR' || (e.code === 'EISDIR' && !isDirectory)) {
+      // The write follows a symbolic link to where it points, so a link into a
+      // directory that does not exist fails there, and the directory beside the
+      // link, which does exist, explained nothing.
+      let target = named;
+      let link = null;
+      for (let hops = 0; hops < 40; hops++) {
+        let next;
+        try {
+          if (!lstatSync(target).isSymbolicLink()) break;
+          next = resolve(dirname(target), readlinkSync(target));
+        } catch {
+          break;
+        }
+        link ??= target;
+        target = next;
+      }
+      const via = link ? ` (${printablePath(link)} points to ${printablePath(target)})` : '';
+      // Climb to the highest missing directory, so `a/b/out.txt` with neither
+      // present names `a`. A trailing separator names a directory, and resolve()
+      // drops it: the climb for `newdir/` started at its parent, which exists,
+      // so it starts at the path itself. A file standing where a directory
+      // should be is what ENOTDIR means, and it is named as not a directory.
+      const namesDirectory = pathArg.endsWith('/') || pathArg.endsWith(sep);
+      let missing = namesDirectory ? target : dirname(target);
+      while (!existsSync(dirname(missing)) && dirname(missing) !== missing) {
+        missing = dirname(missing);
+      }
+      if (existsSync(missing) && !statSync(missing).isDirectory()) {
+        onError(`Not a directory: ${printablePath(missing)}${via}`);
+      }
+      if (existsSync(dirname(missing)) && !statSync(dirname(missing)).isDirectory()) {
+        onError(`Not a directory: ${printablePath(dirname(missing))}${via}`);
+      }
+      if (!existsSync(missing)) {
+        onError(`Path does not exist: ${printablePath(missing)}${via}`);
+      }
     }
-    if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e;
-    // Climb to the highest missing directory, so `a/b/out.txt` with neither
-    // present names `a`. A file standing where a directory should be is what
-    // ENOTDIR means, and it is named as not a directory.
-    let missing = dirname(resolve(pathArg));
-    while (!existsSync(dirname(missing)) && dirname(missing) !== missing) {
-      missing = dirname(missing);
-    }
-    if (existsSync(missing) && !statSync(missing).isDirectory()) {
-      onError(`Not a directory: ${printablePath(missing)}`);
-    }
-    if (existsSync(dirname(missing)) && !statSync(dirname(missing)).isDirectory()) {
-      onError(`Not a directory: ${printablePath(dirname(missing))}`);
-    }
-    if (!existsSync(missing)) {
-      onError(`Path does not exist: ${printablePath(missing)}`);
-    }
+    // A code without a strerror() text above is described in Node's own words
+    // for it, the text that follows the code in its message.
+    const described = getSystemErrorMap().get(e.errno)?.[1];
+    const reason = UNWRITABLE[e.code]
+      || (described ? described[0].toUpperCase() + described.slice(1) : e.code);
+    onError(`${reason}: ${printablePath(named)}`);
     throw e;
   }
 }
@@ -1315,7 +1364,7 @@ async function cmdGate(args) {
   // should be able to let that through. Refusing by name is the third option.
   const SEVERITY_CHOICES = ['none', 'low', 'medium'];
   const SEVERITY_USAGE = '--max-severity <none|low|medium>';
-  const rawMaxSeverity = optionValue(args, '--max-severity');
+  const rawMaxSeverity = optionValue(args, '--max-severity', { onError: refuse });
   let maxSeverity = 'medium';
   if (rawMaxSeverity !== undefined) {
     if (rawMaxSeverity === null) {
@@ -2045,7 +2094,11 @@ async function cmdCensus(args) {
   } = await import('../lib/cli-style.mjs');
 
   const format = choiceOption(args, '--format', 'text', ['text', 'json', 'html']);
-  const output = getOption(args, '--output', null);
+  // Read and written as scan, cbom, gate, encrypt and decrypt read and write
+  // it. Through getOption and writeFileSync, `--output ''` printed the JSON to
+  // stdout with exit 0, the first of two values was used, and a file in a
+  // directory that does not exist printed Node's raw ENOENT text with exit 1.
+  const output = fileOption(args, '--output');
   const verbose = getFlag(args, '--verbose');
   const noCache = getFlag(args, '--no-cache');
 
@@ -2085,7 +2138,7 @@ async function cmdCensus(args) {
   if (format === 'json') {
     const json = JSON.stringify(data, null, 2);
     if (output) {
-      writeFileSync(resolve(output), json);
+      await writeNamedFile(output, json);
       console.log(`Census data written to ${output}`);
     } else {
       console.log(json);
@@ -2097,7 +2150,7 @@ async function cmdCensus(args) {
     const { generateHtml } = await import('../lib/census/report-html.mjs');
     const html = generateHtml(data);
     const outFile = output || 'crypto-census.html';
-    writeFileSync(resolve(outFile), html);
+    await writeNamedFile(outFile, html);
     console.log(`HTML report written to ${outFile}`);
     return;
   }
