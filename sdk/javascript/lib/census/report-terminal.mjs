@@ -27,8 +27,7 @@ function formatDate(iso) {
  * writes it to the `--output` file.
  *
  * Each field is checked where it is read, so a snapshot that lacks one still
- * shows the figures it has, as `--format json` and `--format html` do: they
- * pass the snapshot on as it is. Read unchecked, a snapshot without the
+ * shows the figures it has. Read unchecked, a snapshot without the
  * percentages printed no report, only Node's `Cannot read properties of
  * undefined (reading 'toFixed')`, and exited 1. A field the snapshot lacks,
  * holds as null, or holds as a type other than the one its line reads is named

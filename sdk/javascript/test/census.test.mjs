@@ -17,7 +17,7 @@
  *   - The text report called toFixed on each percentage without checking it,
  *     so a snapshot without them printed no report, only `Cannot read
  *     properties of undefined (reading 'toFixed')`, and exited 1, while
- *     `--format json` and `--format html` rendered the same snapshot.
+ *     `--format json` and `--format html` exited 0 on the same snapshot.
  */
 
 import { describe, it, mock } from 'node:test';
@@ -270,7 +270,7 @@ describe('census text report', () => {
     assert.doesNotMatch(out, /undefined|NaN/);
   });
 
-  it('renders a cached snapshot that lacks most figures, on stdout and to --output, and exits 0, as json and html do', () => {
+  it('renders a cached snapshot that lacks most figures, on stdout and to --output, and exits 0', () => {
     // The payload the `census --output` tests carried until #108 gave them
     // every field the text report reads. `cryptoserve census` printed
     // `Error: Cannot read properties of undefined (reading 'toFixed')` and
