@@ -181,9 +181,10 @@ to `/dev/full` `Error: No space left on device: /dev/full`. These printed Node's
 raw `ENAMETOOLONG`, `ELOOP` and `ENOSPC` text and exited `1`, and `gate` printed
 the raw text with exit `2`. A symbolic link into a directory that does not exist
 prints `Error: Path does not exist: <directory> (<link> points to <target>)`,
-where it printed raw `ENOENT` text with exit `1`. A name ending in `/` names
-a directory: `--output newdir/` prints `Error: Path does not exist: <path>` when
-`newdir` does not exist, and `--output app.js/` prints
+where it printed raw `ENOENT` text with exit `1`, or `2` from `gate`. A name
+ending in `/` names a directory: `--output newdir/` prints
+`Error: Path does not exist: <path>` when `newdir` does not exist, and
+`--output app.js/` prints
 `Error: Not a directory: <path>` when `app.js` is a file. On `scan`, `cbom`,
 `gate`, `encrypt --file` and `decrypt --file`, macOS printed raw `ENOENT` and
 `ENOTDIR` text for these with exit `1`, or `2` from `gate`, and Linux printed
