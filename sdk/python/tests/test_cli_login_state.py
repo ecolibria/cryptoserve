@@ -354,6 +354,26 @@ def test_server_error_without_the_issued_state_does_not_end_the_login(start_logi
     login.assert_still_waiting()
 
 
+def test_callback_on_a_connection_opened_before_the_login_gave_up_is_refused(start_login, monkeypatch):
+    monkeypatch.setattr(cli, "_LOGIN_TIMEOUT_SECONDS", 2, raising=False)
+    login = start_login()
+    conn = http.client.HTTPConnection(LOOPBACK, login.callback.port, timeout=5)
+    conn.connect()
+    try:
+        # The listener accepts the connection while the login is waiting.
+        login.thread.join(0.5)
+        assert login.finished(timeout=15), "the login did not give up at its timeout"
+        assert login.outcome["code"] == 1
+
+        conn.request("GET", login.target(session=_session_value(), state=login.state))
+        status = conn.getresponse().status
+    finally:
+        conn.close()
+
+    assert status == 400
+    assert "session_cookie" not in login.stored()
+
+
 def test_login_gives_up_at_the_timeout_and_closes_the_listener(start_login, monkeypatch):
     monkeypatch.setattr(cli, "_LOGIN_TIMEOUT_SECONDS", 1, raising=False)
     login = start_login()
