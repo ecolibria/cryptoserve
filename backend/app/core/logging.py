@@ -5,6 +5,7 @@ Provides production-grade logging with:
 - Request correlation IDs (X-Request-ID / X-Correlation-ID)
 - Automatic context propagation
 - Sensitive data masking
+- Query strings recorded by parameter names, never values
 - Performance timing
 
 Usage:
@@ -27,6 +28,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Callable
 
+from starlette.datastructures import QueryParams
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -61,12 +63,19 @@ SENSITIVE_FIELDS = {
 }
 
 
+class _QueryParameterNames(list):
+    """Query parameter names for the request log, built by query_log_fields(). Names, never values."""
+
+
 def mask_sensitive(data: dict[str, Any]) -> dict[str, Any]:
     """Mask sensitive values in a dictionary."""
     masked = {}
     for key, value in data.items():
         key_lower = key.lower()
-        if any(s in key_lower for s in SENSITIVE_FIELDS):
+        if isinstance(value, _QueryParameterNames):
+            # Names hold no value; the field name "query_keys" would otherwise match "key".
+            masked[key] = list(value)
+        elif any(s in key_lower for s in SENSITIVE_FIELDS):
             if isinstance(value, str) and len(value) > 8:
                 masked[key] = f"{value[:4]}...{value[-4:]}"
             else:
@@ -76,6 +85,20 @@ def mask_sensitive(data: dict[str, Any]) -> dict[str, Any]:
         else:
             masked[key] = value
     return masked
+
+
+def query_log_fields(query_params: QueryParams) -> dict[str, Any]:
+    """Describe a query string for the request log without any of its values.
+
+    Keeps the parameter names in order, the length of each value and the count.
+    No value is written, whatever its parameter is called.
+    """
+    items = query_params.multi_items()
+    return {
+        "query_keys": _QueryParameterNames(name for name, _ in items),
+        "query_value_lengths": [len(value) for _, value in items],
+        "query_count": len(items),
+    }
 
 
 @dataclass
@@ -269,7 +292,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "Request started",
                 method=request.method,
                 path=request.url.path,
-                query=str(request.query_params) if request.query_params else None,
+                **query_log_fields(request.query_params),
                 client_ip=request.client.host if request.client else None,
             )
 

@@ -161,6 +161,8 @@ Every compose file sets container log rotation: 50 MB per file, 5 files, for eac
 
 ### Fixed
 
+The request log records the names of query parameters and not their values.
+
 `cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.
 
 The `vault delete` command that `vault list` and `vault run` print for an entry
