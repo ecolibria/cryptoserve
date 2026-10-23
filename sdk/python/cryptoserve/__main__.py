@@ -2367,26 +2367,20 @@ def _push_results_file(file_path: str, cleanup: bool = False) -> int:
     }
 
     try:
-        if token and is_configured():
-            response = requests.post(
-                f"{server_url}/api/v1/cbom",
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=30,
-            )
-        else:
-            session_cookie = _get_session_cookie()
-            cli_server_url = _get_cli_server_url()
-            if not session_cookie:
-                print(f"  {error(f'Not logged in. Run: {CLI} login')}")
-                return 1
-            server_url = cli_server_url
-            response = requests.post(
-                f"{server_url}/api/v1/cbom",
-                json=payload,
-                cookies={"access_token": session_cookie},
-                timeout=30,
-            )
+        # /api/v1/cbom takes only an SDK token. It does not read the session
+        # that login stores, so that session is never sent there.
+        if not (token and is_configured()):
+            print(f"  {error('Uploading needs an SDK token')}")
+            print(dim("    The session that login stores is not accepted for uploads"))
+            print(dim(f"    Configure with: {CLI} configure --token <token>"))
+            return 1
+
+        response = requests.post(
+            f"{server_url}/api/v1/cbom",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
 
         if response.status_code in [200, 201]:
             data = response.json() if response.text else {}
@@ -2565,15 +2559,20 @@ def cmd_cbom():
 
         # Upload to platform if not local-only
         if upload and not local_only:
+            from cryptoserve._identity import is_configured
+
             print()
             print(dim("  Uploading to CryptoServe platform..."))
             upload_result = _upload_cbom(result, scan_path=scan_path, scan_name=scan_name)
             if upload_result:
                 print(f"  {success('CBOM uploaded to platform')}")
                 print(dim("    View in dashboard: Tools > CBOM Reports"))
+            elif not is_configured():
+                print(f"  {warning('Upload skipped: uploading needs an SDK token')}")
+                print(dim("    The session that login stores is not accepted for uploads"))
+                print(dim(f"    Configure with: {CLI} configure --token <token>"))
             else:
                 print(f"  {warning('Upload skipped (not authenticated or server unavailable)')}")
-                print(dim(f"    Run '{CLI} login' to enable platform sync"))
 
         print()
         return 0
@@ -2645,11 +2644,14 @@ def _upload_cbom(cbom_result, scan_path: str = None, scan_name: str = None) -> b
     import requests
     import os
 
-    # Try SDK token first, then session cookie
+    # /api/v1/cbom takes only an SDK token. It does not read the session that
+    # login stores, so without an SDK token nothing is sent.
     from cryptoserve._identity import get_token, get_server_url, is_configured
 
     token = get_token()
     server_url = get_server_url()
+    if not token or not is_configured():
+        return False
 
     # Get git info
     git_info = _get_git_info()
@@ -2665,36 +2667,16 @@ def _upload_cbom(cbom_result, scan_path: str = None, scan_name: str = None) -> b
         **git_info,
     }
 
-    # If SDK not configured, try session-based auth
-    if not token or not is_configured():
-        session_cookie = _get_session_cookie()
-        cli_server_url = _get_cli_server_url()
-        if not session_cookie:
-            return False
-        server_url = cli_server_url
-
-        try:
-            response = requests.post(
-                f"{server_url}/api/v1/cbom",
-                json=payload,
-                cookies={"access_token": session_cookie},
-                timeout=30,
-            )
-            return response.status_code in [200, 201]
-        except Exception:
-            return False
-    else:
-        # Use SDK token
-        try:
-            response = requests.post(
-                f"{server_url}/api/v1/cbom",
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=30,
-            )
-            return response.status_code in [200, 201]
-        except Exception:
-            return False
+    try:
+        response = requests.post(
+            f"{server_url}/api/v1/cbom",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        return response.status_code in [200, 201]
+    except Exception:
+        return False
 
 
 def cmd_pqc():
