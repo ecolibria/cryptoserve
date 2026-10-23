@@ -526,7 +526,7 @@ def cmd_info():
     try:
         resp = req.get(
             f"{server_url}/api/v1/identity",
-            cookies={"session": session_cookie},
+            cookies={"access_token": session_cookie},
             timeout=10,
         )
         if resp.status_code == 401:
@@ -3437,7 +3437,7 @@ def cmd_backup():
     try:
         resp = requests.post(
             f"{server}/api/admin/backups",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             json={
                 "password": password,
                 "include_audit_logs": include_audit,
@@ -3478,7 +3478,7 @@ def cmd_backup():
             print(info(f"Downloading backup to {output_path}..."))
             download_resp = requests.get(
                 f"{server}/api/admin/backups/{data['backup_id']}/download",
-                cookies={"session": cookie},
+                cookies={"access_token": cookie},
                 stream=True,
                 timeout=300,
             )
@@ -3566,7 +3566,7 @@ def cmd_restore():
         resp = requests.get(
             f"{server}/api/admin/backups/{backup_id}",
             params={"password": password},
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             timeout=60,
         )
 
@@ -3603,7 +3603,7 @@ def cmd_restore():
 
         restore_resp = requests.post(
             f"{server}/api/admin/backups/{backup_id}/restore",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             json={
                 "backup_id": backup_id,
                 "password": password,
@@ -3664,7 +3664,7 @@ def cmd_backups():
     try:
         resp = requests.get(
             f"{server}/api/admin/backups",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             timeout=30,
         )
 
@@ -3789,7 +3789,7 @@ def _ceremony_status():
     try:
         resp = requests.get(
             f"{server}/api/admin/ceremony/status",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             timeout=30,
         )
 
@@ -3899,7 +3899,7 @@ def _ceremony_initialize():
     try:
         resp = requests.post(
             f"{server}/api/admin/ceremony/initialize",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             json={
                 "threshold": threshold,
                 "total_shares": total_shares,
@@ -3985,7 +3985,7 @@ def _ceremony_seal():
     try:
         resp = requests.post(
             f"{server}/api/admin/ceremony/seal",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             timeout=30,
         )
 
@@ -4056,7 +4056,7 @@ def _ceremony_unseal():
     try:
         resp = requests.post(
             f"{server}/api/admin/ceremony/unseal",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             json={"share": share.strip()},
             timeout=30,
         )
@@ -4144,7 +4144,7 @@ def _ceremony_verify():
     try:
         resp = requests.post(
             f"{server}/api/admin/ceremony/verify-share",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             json={"share": share.strip()},
             timeout=30,
         )
@@ -4212,7 +4212,7 @@ def _ceremony_audit():
     try:
         resp = requests.get(
             f"{server}/api/admin/ceremony/audit",
-            cookies={"session": cookie},
+            cookies={"access_token": cookie},
             params={"limit": limit},
             timeout=30,
         )
