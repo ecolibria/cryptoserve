@@ -178,6 +178,15 @@ not read, so it treated their requests as not signed in: right after a
 successful `login`, `backups` and `ceremony status` printed `Session expired.
 Please login again.` and exited 1.
 
+The Python CLI's `push`, `scan --push`, `deps --push` and `cbom` commands no
+longer send the session that `login` stored to `/api/v1/cbom`. That route
+accepts only an SDK token in an `Authorization: Bearer` header, so without one
+the upload never succeeded: right after a successful `login`, `push` printed
+`Upload failed: HTTP 401` and `cbom` printed `Run 'cryptoserve login' to enable
+platform sync`. Without an SDK token these commands now make no upload request
+and say that an upload needs one (`cryptoserve configure --token <token>`), and
+`cbom` no longer suggests `login` when an upload does not go through.
+
 The `vault delete` command that `vault list` and `vault run` print for an entry
 that is not a secret now removes it when the entry's name starts with `-`
 ([#112](https://github.com/ecolibria/cryptoserve/issues/112)). For the entry
