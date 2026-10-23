@@ -468,10 +468,19 @@ cryptoserve login --server https://crypto.company.com
 out-of-the-box flow could only time out. The CLI cannot know your server, and a
 guess that is wrong for everyone is worse than an error naming what to pass.
 
-`login` opens a browser and waits on a localhost callback, so it needs an
+`login` opens a browser and waits on a loopback callback, so it needs an
 interactive session. Without a terminal it exits `2` immediately rather than
 printing a URL and blocking for 120 seconds. If the callback port is already
 held it says so, instead of failing with a raw `EADDRINUSE` stack trace.
+
+The callback listener accepts connections on `127.0.0.1` only. The
+authorization URL, `<server>/auth/cli`, carries the callback address
+`http://127.0.0.1:9876/callback` in `redirect` and a random `state` value. The
+server returns `state` unchanged, with the session token in `token` (or
+`session`, at most 8192 characters), in a GET to `/callback`. The CLI stores a
+token only from that request. Any other request (another path or method, a
+missing or different `state`) is answered with an error and stores nothing,
+and the CLI keeps waiting for the right callback until 120 seconds pass.
 
 ### `context`: List Encryption Contexts
 
