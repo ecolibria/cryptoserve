@@ -171,6 +171,13 @@ The server's CLI login routes (`/auth/login/<provider>`, `/auth/github`,
 the redirect to the callback, so the Python CLI's browser login needs a server
 with this change; `login --cookie` works with any server.
 
+The Python CLI's `backup`, `restore`, `backups` and `ceremony` commands send the
+session that `login` stored in the `access_token` cookie, which is where the
+server reads it. They sent it in a cookie named `session`, which the server does
+not read, so it treated their requests as not signed in: right after a
+successful `login`, `backups` and `ceremony status` printed `Session expired.
+Please login again.` and exited 1.
+
 The `vault delete` command that `vault list` and `vault run` print for an entry
 that is not a secret now removes it when the entry's name starts with `-`
 ([#112](https://github.com/ecolibria/cryptoserve/issues/112)). For the entry
