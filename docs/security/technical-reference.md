@@ -910,7 +910,7 @@ All credentials are stored in `~/.cryptoserve/` with restricted permissions:
 - Directory created with mode 0700 (owner-only access)
 - Files created with mode 0600 (owner read/write only)
 - Tokens never logged or printed in full
-- Session tokens are JWT with 7-day expiry
+- Session tokens are JWT with a 1-day expiry by default (`jwt_expiration_days`)
 
 ### 13.3 Application Token Architecture
 
@@ -1166,6 +1166,7 @@ Content-Security-Policy:
 ---
 
 **Document History:**
+- v1.2 (October 2026): Corrected the session token lifetime and the dashboard cookie SameSite attribute to match the code
 - v1.1 (January 2026): Added SDK Security and Dashboard Security sections
 - v1.0 (January 2026): Initial public release
 
