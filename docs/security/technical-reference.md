@@ -1,7 +1,7 @@
 # Cryptographic Technical Reference
 
-**Version:** 1.1
-**Date:** January 2026
+**Version:** 1.2
+**Date:** October 2026
 **Classification:** Public
 **Intended Audience:** Security auditors, cryptographic assessors, compliance teams
 
@@ -1001,10 +1001,10 @@ The web dashboard provides administrative access to CryptoServe. This section do
 ```
 Cookie: access_token=<JWT>
   ├── Algorithm: HS256
-  ├── Expiry: 7 days
+  ├── Expiry: 1 day by default (jwt_expiration_days)
   ├── HttpOnly: true
   ├── Secure: true (production)
-  ├── SameSite: Lax
+  ├── SameSite: Strict
   └── Path: /
 ```
 
