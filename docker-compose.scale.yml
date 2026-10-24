@@ -24,6 +24,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # Backend API (scale with: --scale backend=N)
   backend:
@@ -77,6 +82,11 @@ services:
           memory: 512M
         reservations:
           memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # PostgreSQL Database
   postgres:
@@ -110,6 +120,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # Redis for distributed rate limiting and caching
   redis:
@@ -122,6 +137,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # Frontend (optional, can be served separately)
   frontend:
@@ -133,6 +153,11 @@ services:
       API_URL: http://nginx:80
     depends_on:
       - nginx
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   postgres_data:
