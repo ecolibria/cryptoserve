@@ -1,7 +1,13 @@
 """Tests for the certificate management engine."""
 
+import hashlib
+from pathlib import Path
+
 import pytest
 from datetime import datetime, timezone, timedelta
+
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 
 from app.core.certificate_engine import (
     CertificateEngine,
@@ -472,3 +478,259 @@ class TestEdgeCases:
                 key_type=CertificateType.EC,
                 key_size=128,  # Not supported
             )
+
+
+# ---------------------------------------------------------------------------
+# Listed keys: the eight compromised eMudhra intermediate keys and the removed
+# root, emSign ECC Root CA - G3. The fixtures are public certificates committed
+# under testdata/trust-keys; its README says where each came from. Expected
+# values are recomputed here from those certificates.
+# ---------------------------------------------------------------------------
+
+REPO = Path(__file__).resolve().parents[2]
+TRUST_FIXTURES = REPO / "testdata" / "trust-keys"
+
+LEAF_OV_G3C = "leaves/crtsh-29977124910/cert.pem"  # issued under the EM OV TLS CA - G3C key
+LEAF_EV_G3B = "leaves/crtsh-30010072947/cert.pem"  # issued under the EM EV TLS CA - G3B key
+OV_G3C = "listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.pem"
+EV_G3B = "listed/e7568fe6e12331f4fd7de61da4c7559d0f8eb192a218d4741a3ba75184333838/cert.pem"
+DV_G3C = "listed/0164d7ceae5bb909c272af151ff44b1177ae9b47d9424b94f1d9558c30934d19/cert.pem"
+ANCHORED = "anchored/crtsh-14658191778/cert.pem"  # its signature verifies under the removed root's key
+REMOVED_ROOT = "root/emsign-ecc-root-ca-g3.pem"
+CONTROL_ROOT = "control/emsign-root-ca-g1.pem"
+LISTED = sorted(p.relative_to(TRUST_FIXTURES).as_posix() for p in (TRUST_FIXTURES / "listed").glob("*/cert.pem"))
+
+TLS_FIX = (
+    "Replace the chain with one issued by a CA none of whose keys is listed, "
+    "and remove this certificate from any bundle or pin set you ship."
+)
+CODE_SIGNING_FIX = (
+    "Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; "
+    "a verifier that checks revocation rejects signatures under this key."
+)
+ROOT_FIX = (
+    "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle "
+    "you ship; Chrome removes it for all devices on 2026-10-27."
+)
+RULE_4 = (
+    "Chain anchors on emSign ECC Root CA - G3 (the last certificate's signature verifies under that "
+    "root's key), removed from Mozilla's root store and removed from Chrome on 2026-10-27. " + ROOT_FIX
+)
+ANCHOR_WARNING = (
+    "Chain anchor not checked: no issuer certificate was supplied. "
+    "Verify again with the issuer certificate or the full chain."
+)
+
+
+def rule_1(cert_name, spki, fix):
+    return (
+        f"{cert_name} uses a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449, "
+        f"SPKI SHA-256 {spki}). {fix}"
+    )
+
+
+def rule_2(cert_name, issuer_spki, fix):
+    return (
+        f"{cert_name} is signed by a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449, "
+        f"issuer SPKI SHA-256 {issuer_spki}); its issuer is revoked. {fix}"
+    )
+
+
+def rule_3(cert_name):
+    return (
+        f"{cert_name} is emSign ECC Root CA - G3, removed from Mozilla's root store and removed from Chrome "
+        f"on 2026-10-27. {ROOT_FIX}"
+    )
+
+
+def trust_pem(rel):
+    return (TRUST_FIXTURES / rel).read_bytes()
+
+
+def spki_sha256(rel):
+    cert = x509.load_pem_x509_certificate(trust_pem(rel))
+    der = cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return hashlib.sha256(der).hexdigest()
+
+
+def fix_for(rel):
+    """The Fix for a listed certificate, chosen by the use its extended key usage states."""
+    cert = x509.load_pem_x509_certificate(trust_pem(rel))
+    usages = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    return CODE_SIGNING_FIX if x509.oid.ExtendedKeyUsageOID.CODE_SIGNING in usages else TLS_FIX
+
+
+def issued_by_test_ca():
+    """An ordinary leaf and the CA that issued it, both made here with fresh keys."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.now(timezone.utc)
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    leaf_key = ec.generate_private_key(ec.SECP256R1())
+    leaf = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "leaf.test")]))
+        .issuer_name(ca_name)
+        .public_key(leaf_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=365))
+        .sign(ca_key, hashes.SHA256())
+    )
+    pem = serialization.Encoding.PEM
+    return leaf.public_bytes(pem), ca.public_bytes(pem)
+
+
+class TestListedKeys:
+    """A certificate that is, or is signed by, a listed key is not valid, on every surface that reads `errors`."""
+
+    def test_fixtures_hold_the_removed_root_the_advisory_names(self):
+        from cryptography.hazmat.primitives import hashes
+
+        cert = x509.load_pem_x509_certificate(trust_pem(REMOVED_ROOT))
+        assert cert.fingerprint(hashes.SHA256()).hex() == (
+            "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b"
+        )
+        assert spki_sha256(REMOVED_ROOT) == "8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782"
+        assert len(LISTED) == 16
+        assert len({spki_sha256(rel) for rel in LISTED}) == 8
+
+    @pytest.mark.parametrize("listed", LISTED)
+    def test_chain_holding_a_listed_intermediate_is_invalid_with_the_rule_1_error(self, fresh_engine, listed):
+        result = fresh_engine.verify_chain([trust_pem(listed)], check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [rule_1("Leaf certificate", spki_sha256(listed), fix_for(listed))]
+
+    def test_leaf_and_its_listed_intermediate_report_both_certificates(self, fresh_engine):
+        result = fresh_engine.verify_chain([trust_pem(LEAF_OV_G3C), trust_pem(OV_G3C)], check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [
+            rule_2("Leaf certificate", spki_sha256(OV_G3C), TLS_FIX),
+            rule_1("Certificate 1", spki_sha256(OV_G3C), TLS_FIX),
+        ]
+
+    @pytest.mark.parametrize("leaf,issuer", [(LEAF_OV_G3C, OV_G3C), (LEAF_EV_G3B, EV_G3B)])
+    def test_leaf_issued_under_a_tls_intermediate_returns_the_rule_2_error(self, fresh_engine, leaf, issuer):
+        result = fresh_engine.verify_certificate(trust_pem(leaf), check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [rule_2("Leaf certificate", spki_sha256(issuer), TLS_FIX)]
+        assert result.warnings == [ANCHOR_WARNING]
+
+    def test_leaf_verified_with_its_listed_issuer_reports_both(self, fresh_engine):
+        result = fresh_engine.verify_certificate(
+            trust_pem(LEAF_OV_G3C), issuer_cert_data=trust_pem(OV_G3C), check_expiry=False
+        )
+
+        assert result.valid is False
+        assert result.errors == [
+            rule_2("Leaf certificate", spki_sha256(OV_G3C), TLS_FIX),
+            rule_1("Certificate 1", spki_sha256(OV_G3C), TLS_FIX),
+        ]
+        assert ANCHOR_WARNING not in result.warnings
+
+    def test_chain_ending_at_the_removed_root_returns_the_rule_3_error(self, fresh_engine):
+        chain = [trust_pem(DV_G3C), trust_pem(ANCHORED), trust_pem(REMOVED_ROOT)]
+        result = fresh_engine.verify_chain(chain, check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [
+            rule_1("Leaf certificate", spki_sha256(DV_G3C), TLS_FIX),
+            rule_3("Certificate 2"),
+        ]
+
+    def test_same_chain_without_the_root_returns_the_rule_4_error(self, fresh_engine):
+        chain = [trust_pem(DV_G3C), trust_pem(ANCHORED)]
+        result = fresh_engine.verify_chain(chain, check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [
+            rule_1("Leaf certificate", spki_sha256(DV_G3C), TLS_FIX),
+            RULE_4,
+        ]
+
+    def test_removed_root_alone_is_reported_once(self, fresh_engine):
+        result = fresh_engine.verify_certificate(trust_pem(REMOVED_ROOT), check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [rule_3("Leaf certificate")]
+        assert ANCHOR_WARNING not in result.warnings
+
+    def test_issuer_anchored_on_the_removed_root_returns_the_rule_4_error(self, fresh_engine):
+        result = fresh_engine.verify_certificate(
+            trust_pem(DV_G3C), issuer_cert_data=trust_pem(ANCHORED), check_expiry=False
+        )
+
+        assert result.valid is False
+        assert result.errors == [
+            rule_1("Leaf certificate", spki_sha256(DV_G3C), TLS_FIX),
+            RULE_4,
+        ]
+
+    def test_leaf_verified_without_its_issuer_returns_the_anchor_warning(self, fresh_engine):
+        leaf_pem, ca_pem = issued_by_test_ca()
+
+        alone = fresh_engine.verify_certificate(leaf_pem)
+        assert alone.valid is True
+        assert alone.errors == []
+        assert alone.warnings == [ANCHOR_WARNING]
+
+        with_issuer = fresh_engine.verify_certificate(leaf_pem, issuer_cert_data=ca_pem)
+        assert with_issuer.valid is True
+        assert ANCHOR_WARNING not in with_issuer.warnings
+
+    def test_another_root_of_the_same_ca_is_not_flagged(self, fresh_engine):
+        result = fresh_engine.verify_certificate(trust_pem(CONTROL_ROOT), check_expiry=False)
+
+        assert result.valid is True
+        assert result.errors == []
+        assert result.warnings == []
+
+    def test_a_name_alone_raises_nothing(self, fresh_engine):
+        """A fresh key under the removed root's exact subject name is not the removed root."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        name = x509.load_pem_x509_certificate(trust_pem(REMOVED_ROOT)).subject
+        key = ec.generate_private_key(ec.SECP384R1())
+        now = datetime.now(timezone.utc)
+        lookalike = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + timedelta(days=365))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(key, hashes.SHA384())
+        )
+
+        result = fresh_engine.verify_chain([lookalike.public_bytes(serialization.Encoding.PEM)])
+
+        assert result.valid is True
+        assert result.errors == []
+
+    def test_engine_and_cli_carry_byte_equal_key_tables(self):
+        engine_copy = REPO / "backend" / "app" / "core" / "trust_keys.json"
+        cli_copy = REPO / "sdk" / "javascript" / "lib" / "trust-keys.json"
+
+        assert engine_copy.read_bytes() == cli_copy.read_bytes()
