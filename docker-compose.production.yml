@@ -29,6 +29,11 @@ services:
         limits:
           memory: 512M
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   backend:
     image: ghcr.io/ecolibria/crypto-serve-backend:latest
@@ -62,6 +67,11 @@ services:
         limits:
           memory: 512M
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   frontend:
     image: ghcr.io/ecolibria/crypto-serve-frontend:latest
@@ -77,6 +87,11 @@ services:
         limits:
           memory: 256M
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   postgres_data:

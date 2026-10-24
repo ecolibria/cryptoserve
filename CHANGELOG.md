@@ -155,6 +155,10 @@ ordinary JSX and minified bundles badly enough to LOSE real findings, including
 scanner, a false negative on a third-party file is worse than the false positive
 it was meant to fix.
 
+### Changed
+
+Every compose file sets container log rotation: 50 MB per file, 5 files, for each service.
+
 ### Fixed
 
 `cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.

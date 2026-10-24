@@ -136,6 +136,7 @@ Additional monitoring to configure:
 - Prometheus metrics at `/api/admin/metrics`
 - Alert on error rate > 1%, p99 latency > 100ms, connection pool > 80%
 - Set up log aggregation (ELK, Loki, CloudWatch) for audit trail
+- Container logs rotate at 50 MB per file and keep the newest 5 files (250 MB per container); to keep more, raise `max-size` or `max-file` in each service's `logging` block of the compose file
 
 ## 8. Security Checklist
 

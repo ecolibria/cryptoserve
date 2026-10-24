@@ -358,7 +358,7 @@ scanned directory. See [docs/cli.md](docs/cli.md).
 The CLI and SDKs work fully offline. The self-hosted server adds centralized key management, policy enforcement, audit logging, and a dashboard.
 
 ```bash
-docker run -d -p 8003:8003 -p 3000:3000 -v cryptoserve-data:/data ghcr.io/ecolibria/crypto-serve
+docker run -d -p 8003:8003 -p 3000:3000 -v cryptoserve-data:/data --log-opt max-size=50m --log-opt max-file=5 ghcr.io/ecolibria/crypto-serve
 ```
 
 API on `:8003`, dashboard on `:3000`. For production (Postgres + frontend + backend, generated secrets), see [docs/guides/production-deployment.md](docs/guides/production-deployment.md). Don't pipe `curl | sh`; download `scripts/quickstart.sh`, compare `shasum` against release notes, then execute.
