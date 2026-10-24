@@ -100,7 +100,6 @@ These are the specific controls protecting the platform itself.
 - HttpOnly, Secure, SameSite=Strict cookies
 - Cache-Control: no-store on all responses
 - Content-Security-Policy, X-Content-Type-Options, X-Frame-Options headers
-- No sensitive data in URL parameters
 
 ### Input Validation
 
