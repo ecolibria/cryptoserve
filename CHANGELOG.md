@@ -155,6 +155,8 @@ ordinary JSX and minified bundles badly enough to LOSE real findings, including
 scanner, a false negative on a third-party file is worse than the false positive
 it was meant to fix.
 
+Certificate verification (`/api/v1/certificates/verify`, `/verify-chain`, `cryptoserve certs verify`) and `cryptoserve scan` and `gate` report a certificate whose key is a publicly compromised CA key, a certificate signed by such a key, and a chain anchored on a root removed from browser trust stores, each with the fix for the key's use; a `scan` finding also prints one offline `openssl` command that recomputes the value it shows, and `gate` exits 1 on either kind. The listed keys are in `docs/findings/trust-compromised-key.md` and `docs/findings/trust-distrusted-root.md`.
+
 ### Changed
 
 Every compose file sets container log rotation: 50 MB per file, 5 files, for each service.

@@ -13,9 +13,13 @@ Security model:
 - Expiration and revocation checking
 """
 
+import base64
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from cryptography import x509
@@ -130,6 +134,157 @@ class ValidationError(CertificateError):
     """Validation failed."""
 
     pass
+
+
+# ---------------------------------------------------------------------------
+# Listed keys
+#
+# Public keys a certificate is checked against: the eight eMudhra intermediate
+# CA keys whose private keys are publicly compromised (Mozilla Bug 2083449), and
+# the key of emSign ECC Root CA - G3, which browsers removed. The table is
+# generated from the certificates in testdata/trust-keys by
+# scripts/trust-keys/generate.mjs, and `cryptoserve scan` reads a byte-equal
+# copy. A match is by key, never by name.
+# ---------------------------------------------------------------------------
+
+_TRUST_KEYS_PATH = Path(__file__).with_name("trust_keys.json")
+
+# One Fix per key use. The CLI and the finding pages use the same words.
+_TRUST_FIX = {
+    "tls": (
+        "Replace the chain with one issued by a CA none of whose keys is listed, "
+        "and remove this certificate from any bundle or pin set you ship."
+    ),
+    "codeSigning": (
+        "Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; "
+        "a verifier that checks revocation rejects signatures under this key."
+    ),
+    "root": (
+        "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle "
+        "you ship; Chrome removes it for all devices on 2026-10-27."
+    ),
+}
+
+_ANCHOR_NOT_CHECKED = (
+    "Chain anchor not checked: no issuer certificate was supplied. "
+    "Verify again with the issuer certificate or the full chain."
+)
+
+
+@dataclass(frozen=True)
+class _ListedKey:
+    spki_sha256: str
+    use: str  # "tls", "codeSigning" or "root"
+    public_key: Any
+
+
+def _load_listed_keys() -> tuple[_ListedKey, ...]:
+    table = json.loads(_TRUST_KEYS_PATH.read_text(encoding="utf-8"))
+    keys = []
+    for row in table["keys"]:
+        der = base64.b64decode(row["spkiDer"])
+        # A row whose key does not hash to its own SPKI SHA-256 would match
+        # nothing, in silence.
+        if hashlib.sha256(der).hexdigest() != row["spkiSha256"]:
+            raise CertificateError(f"Key table row {row['spkiSha256']} does not match its own key")
+        keys.append(_ListedKey(row["spkiSha256"], row["use"], serialization.load_der_public_key(der)))
+    return tuple(keys)
+
+
+_LISTED_KEYS = _load_listed_keys()
+_LISTED_BY_SPKI = {k.spki_sha256: k for k in _LISTED_KEYS}
+
+
+def _chain_cert_name(index: int) -> str:
+    return f"Certificate {index}" if index > 0 else "Leaf certificate"
+
+
+def _spki_sha256(cert: x509.Certificate) -> str | None:
+    try:
+        der = cert.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    except Exception:
+        # A key type the library cannot load is not one of the listed keys.
+        return None
+    return hashlib.sha256(der).hexdigest()
+
+
+def _signed_by(cert: x509.Certificate, public_key: Any) -> bool:
+    """Whether the certificate's signature verifies under the public key."""
+    try:
+        if isinstance(public_key, ec.EllipticCurvePublicKey):
+            public_key.verify(cert.signature, cert.tbs_certificate_bytes, ec.ECDSA(cert.signature_hash_algorithm))
+        elif isinstance(public_key, rsa.RSAPublicKey):
+            public_key.verify(
+                cert.signature,
+                cert.tbs_certificate_bytes,
+                cert.signature_algorithm_parameters,
+                cert.signature_hash_algorithm,
+            )
+        elif isinstance(public_key, ed25519.Ed25519PublicKey):
+            public_key.verify(cert.signature, cert.tbs_certificate_bytes)
+        else:
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def _is_self_signed(cert: x509.Certificate) -> bool:
+    try:
+        own_key = cert.public_key()
+    except Exception:
+        return False
+    return cert.subject == cert.issuer and _signed_by(cert, own_key)
+
+
+def listed_key_errors(certs: list[x509.Certificate], names: list[str]) -> list[str]:
+    """Errors for certificates that are, or are signed by, a listed key.
+
+    `certs` is a chain, leaf first; `names` are the names the errors use for
+    them. Rules 1 to 3 apply to every certificate: (1) its key is one of the
+    eight compromised intermediate keys, (2) its signature verifies under one
+    of them, (3) it is the removed root. Rule 4 applies to the last
+    certificate, the chain's anchor, when the root itself was not supplied: its
+    signature verifies under the removed root's key.
+    """
+    errors = []
+    root_supplied = False
+    for cert, name in zip(certs, names):
+        spki = _spki_sha256(cert)
+        own = _LISTED_BY_SPKI.get(spki) if spki else None
+        if own is not None and own.use == "root":
+            root_supplied = True
+            errors.append(
+                f"{name} is emSign ECC Root CA - G3, removed from Mozilla's root store and removed from Chrome "
+                f"on 2026-10-27. {_TRUST_FIX['root']}"
+            )
+        elif own is not None:
+            errors.append(
+                f"{name} uses a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449, "
+                f"SPKI SHA-256 {spki}). {_TRUST_FIX[own.use]}"
+            )
+        else:
+            signer = next(
+                (k for k in _LISTED_KEYS if k.use != "root" and _signed_by(cert, k.public_key)),
+                None,
+            )
+            if signer is not None:
+                errors.append(
+                    f"{name} is signed by a publicly compromised CA key (eMudhra intermediate, Mozilla Bug "
+                    f"2083449, issuer SPKI SHA-256 {signer.spki_sha256}); its issuer is revoked. "
+                    f"{_TRUST_FIX[signer.use]}"
+                )
+    if certs and not root_supplied:
+        anchor = certs[-1]
+        if any(_signed_by(anchor, k.public_key) for k in _LISTED_KEYS if k.use == "root"):
+            errors.append(
+                "Chain anchors on emSign ECC Root CA - G3 (the last certificate's signature verifies under "
+                "that root's key), removed from Mozilla's root store and removed from Chrome on 2026-10-27. "
+                + _TRUST_FIX["root"]
+            )
+    return errors
 
 
 class CertificateEngine:
@@ -465,7 +620,19 @@ class CertificateEngine:
         warnings = []
 
         cert = self._load_certificate(cert_data)
+        issuer_cert = self._load_certificate(issuer_cert_data) if issuer_cert_data else None
         now = datetime.now(timezone.utc)
+
+        # Listed keys first, so a compromised or removed key is the first error a
+        # reader sees. The certificate and its issuer are checked as the
+        # two-certificate chain verify_chain would check, under the same names.
+        checked = [cert] if issuer_cert is None else [cert, issuer_cert]
+        errors.extend(listed_key_errors(checked, [_chain_cert_name(i) for i in range(len(checked))]))
+        # Without its issuer, the key that signed the certificate was compared
+        # with the listed keys and nothing else, so the result must not read as
+        # a verdict on the chain.
+        if issuer_cert is None and not _is_self_signed(cert):
+            warnings.append(_ANCHOR_NOT_CHECKED)
 
         # Check expiry
         if check_expiry:
@@ -477,9 +644,7 @@ class CertificateEngine:
                 warnings.append(f"Certificate expires soon ({cert.not_valid_after_utc})")
 
         # Verify signature if issuer provided
-        if issuer_cert_data:
-            issuer_cert = self._load_certificate(issuer_cert_data)
-
+        if issuer_cert is not None:
             try:
                 issuer_public_key = issuer_cert.public_key()
 
@@ -547,10 +712,14 @@ class CertificateEngine:
         warnings = []
         certs = [self._load_certificate(c) for c in certificates]
 
+        # Listed keys first, so a compromised or removed key is the first error a
+        # reader sees.
+        errors.extend(listed_key_errors(certs, [_chain_cert_name(i) for i in range(len(certs))]))
+
         now = datetime.now(timezone.utc)
 
         for i, cert in enumerate(certs):
-            cert_name = f"Certificate {i}" if i > 0 else "Leaf certificate"
+            cert_name = _chain_cert_name(i)
 
             # Check expiry
             if check_expiry:

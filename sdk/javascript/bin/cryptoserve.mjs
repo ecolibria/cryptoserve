@@ -363,9 +363,11 @@ function scannedSummary(scanResults) {
   const files = scanResults.filesScanned ?? 0;
   const manifests = scanResults.manifestsFound?.length ?? 0;
   const configs = scanResults.configFilesScanned ?? 0;
+  const certificates = scanResults.certificatesChecked ?? 0;
   const parts = [`${files} source ${files === 1 ? 'file' : 'files'}`];
   if (manifests > 0) parts.push(`${manifests} ${manifests === 1 ? 'manifest' : 'manifests'}`);
   if (configs > 0) parts.push(`${configs} config ${configs === 1 ? 'file' : 'files'}`);
+  if (certificates > 0) parts.push(`${certificates} ${certificates === 1 ? 'certificate' : 'certificates'}`);
   return parts.join(', ');
 }
 
@@ -832,11 +834,31 @@ async function cmdScan(args) {
     }
   }
 
-  // Cert files
+  // Cert files, each with the trust findings for its certificates beneath it:
+  // the key and its value first, then the command that prints that value from
+  // the file, then the Fix for the key's use. Nothing is printed for a file
+  // whose certificates matched no listed key.
   if (results.certFiles.length > 0) {
     print(section('Certificate/Key Files'));
+    const { VALUE_LABEL, KEY_LABEL } = await import('../lib/trust-check.mjs');
+    const trustByFile = new Map();
+    for (const t of results.trustFindings || []) {
+      if (!trustByFile.has(t.file)) trustByFile.set(t.file, []);
+      trustByFile.get(t.file).push(t);
+    }
     for (const f of results.certFiles) {
       print(`  ${info(f)}`);
+      for (const t of trustByFile.get(f) || []) {
+        const headline = `[${t.severity.toUpperCase()} TRUST] ${t.issue}`;
+        print(`    ${t.severity === 'critical' ? error(headline) : warning(headline)}`);
+        const match = t.issuerSpkiSha256
+          ? `signed by ${KEY_LABEL[t.keyUse]}, SPKI SHA-256 ${t.issuerSpkiSha256}`
+          : KEY_LABEL[t.keyUse];
+        print(`      ${dim(`${location(t)}  ${VALUE_LABEL[t.valueType]} ${t.matchedValue}: ${match}`)}`);
+        print(`      ${dim(`Verify: ${t.verify}`)}`);
+        print(`      ${info(`Fix: ${t.fix}`)}`);
+        print(`      ${dim(`See: ${t.references[0]}`)}`);
+      }
     }
   }
 
@@ -866,6 +888,11 @@ async function cmdScan(args) {
   }
   if (results.tlsFindings?.length > 0) {
     print(labelValue('TLS issues', warning(String(results.tlsFindings.length))));
+  }
+  // Counted when there is something to count, like the TLS line above: a zero
+  // here would read as a verdict on the certificates, which it is not.
+  if (results.trustFindings?.length > 0) {
+    print(labelValue('Trust findings', error(String(results.trustFindings.length))));
   }
   print(labelValue('Cert/key files', String(results.certFiles.length)));
   print();
@@ -1713,6 +1740,38 @@ async function cmdGate(args) {
       });
     }
 
+    // A certificate whose key is a publicly compromised CA key, or that is or
+    // chains to a root browsers removed. Bounded by --max-severity exactly as
+    // a weak pattern is, which means never waived by it: these are critical
+    // and high, and the flag only accepts none, low or medium. Not a credential,
+    // so --allow-secrets does not reach them either.
+    for (const t of scanResults.trustFindings || []) {
+      if (!exceedsSeverity(t.severity, maxSeverity)) continue;
+      violations.push({
+        type: 'trust',
+        id: t.id,
+        algorithm: t.issue,
+        risk: null,
+        severity: t.severity,
+        severityBreach: true,
+        source: t.file,
+        file: t.file,
+        line: t.line,
+        reason: t.fix,
+        issue: t.issue,
+        matchedValue: t.matchedValue,
+        valueType: t.valueType,
+        issuerSpkiSha256: t.issuerSpkiSha256,
+        keyUse: t.keyUse,
+        // Not `rule`: on a violation that is the id a waiver pragma names, and
+        // no pragma waives this finding.
+        trustRule: t.rule,
+        verify: t.verify,
+        fix: t.fix,
+        references: t.references,
+      });
+    }
+
     // --allow-secrets waives CREDENTIALS. It deliberately does not reach the
     // misuse findings above: a flag that quietly switches off
     // TLS-verification-bypass detection is an enforcement kill switch, which is
@@ -1760,9 +1819,12 @@ async function cmdGate(args) {
     // A gate that read nothing cannot certify anything. An empty tree scored
     // 100/100 PASS, which is a verdict about something never measured -- the
     // same shape as certifying a path that does not exist.
+    // A decoded certificate counts: the trust check measured it, so a
+    // directory of certificates is a tree the gate read.
     const readSomething = (scanResults.filesScanned ?? 0) > 0
       || (scanResults.configFilesScanned ?? 0) > 0
-      || (scanResults.manifestsFound?.length ?? 0) > 0;
+      || (scanResults.manifestsFound?.length ?? 0) > 0
+      || (scanResults.certificatesChecked ?? 0) > 0;
     if (!readSomething) {
       refuse(`Found no files to scan under ${printablePath(scanDir)}. A gate cannot pass a tree it did not read.`);
     }
@@ -1806,6 +1868,7 @@ async function cmdGate(args) {
       severityBreaches: violations.filter(v => v.severityBreach).length,
       misuse: violations.filter(v => v.type === 'misuse').length,
       tls: violations.filter(v => v.type === 'tls').length,
+      trust: violations.filter(v => v.type === 'trust').length,
       weak: violations.filter(v => v.weak).length,
       secrets: secretFindings.length,
       privateKeys: privateKeys.length,
@@ -1929,7 +1992,7 @@ async function cmdGate(args) {
           // TLS finding was the more severe of the two. Severity comes first so
           // the list reads in one scale; `QUANTUM` names the other axis
           // explicitly wherever it is the reason a line is here.
-          const CATEGORY = { misuse: 'MISUSE', 'private-key': 'KEY', secret: 'SECRET', tls: 'TLS' };
+          const CATEGORY = { misuse: 'MISUSE', 'private-key': 'KEY', secret: 'SECRET', tls: 'TLS', trust: 'TRUST' };
           const category = CATEGORY[v.type];
           const tag = v.severity
             ? `[${v.severity.toUpperCase()}${category ? ` ${category}` : ''}]`
@@ -1947,6 +2010,12 @@ async function cmdGate(args) {
           // misuse that step is the pragma. Printing the rule id is what makes
           // it reachable without reading the source of the scanner.
           if (v.rule) print(`      ${dim(`waive with: cryptoserve-ignore ${v.rule} -- <why> on its own line above`)}`);
+          // The value the finding rests on, and the command that prints it
+          // from the file, so the verdict can be checked without this tool.
+          if (v.type === 'trust') {
+            const label = v.valueType === 'spkiSha256' ? 'SPKI SHA-256' : 'certificate SHA-256';
+            print(`      ${dim(`${label} ${v.matchedValue}; verify: ${v.verify}`)}`);
+          }
         }
       }
 

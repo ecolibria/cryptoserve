@@ -47,6 +47,9 @@ function ruleIdFor(finding) {
   // ruleId, and the group took its description from whichever finding arrived
   // first.
   if (finding.kind === 'private-key') return 'cryptoserve/private-key';
+  // One rule per kind (`trust/compromised-ca-key`, `trust/distrusted-root`),
+  // whichever of its rules matched.
+  if (finding.kind === 'trust') return `cryptoserve/${finding.trustId}`;
   if (finding.kind === 'quantum-risk') return `cryptoserve/quantum-risk/${algorithm}`;
   if (finding.kind === 'score') return 'cryptoserve/quantum-readiness-score';
   return 'cryptoserve/finding';
@@ -151,6 +154,8 @@ export function collectFindings(scanResults) {
     });
   }
 
+  for (const t of scanResults.trustFindings || []) findings.push(trustToFinding(t));
+
   // Appended one at a time rather than spread, for the reason the waiver-warning
   // site in `scanner.mjs` already gives: `push(...arr)` passes every element as
   // a separate argument and throws RangeError past the argument limit. That was
@@ -162,6 +167,27 @@ export function collectFindings(scanResults) {
   for (const w of waivedToFindings(scanResults.waivedFindings)) findings.push(w);
 
   return findings;
+}
+
+/**
+ * A trust finding (from `scan`) or trust violation (from `gate`) as a SARIF
+ * finding. The message carries the matched value and the command that prints
+ * it, so an alert can be confirmed from the code-scanning page alone.
+ */
+function trustToFinding(t, extra = {}) {
+  return {
+    kind: 'trust',
+    trustId: t.id,
+    title: t.issue,
+    message: `${t.issue}: ${t.valueType === 'spkiSha256' ? 'SPKI SHA-256' : 'certificate SHA-256'} `
+      + `${t.matchedValue}, which \`${t.verify}\` prints`,
+    severity: t.severity,
+    file: t.file,
+    line: t.line,
+    fix: t.fix,
+    helpUri: t.references?.[0],
+    ...extra,
+  };
 }
 
 /**
@@ -213,6 +239,8 @@ export function violationsToFindings(violations, thresholds = {}) {
   const { maxRisk, maxSeverity } = thresholds;
 
   return (violations || []).map((v) => {
+    // Critical and high always fail the gate, so no threshold sentence applies.
+    if (v.type === 'trust') return trustToFinding(v, { level: toLevel(v.severity) });
     const kind = v.type === 'secret' ? 'secret'
       : v.type === 'private-key' ? 'private-key'
       : v.type === 'tls' ? 'tls'
@@ -287,6 +315,7 @@ export function toSarif(findings) {
         fullDescription: { text: help || title },
         defaultConfiguration: { level },
         ...(help ? { help: { text: help } } : {}),
+        ...(finding.helpUri ? { helpUri: finding.helpUri } : {}),
         ...(finding.cwe ? { properties: { tags: ['security', 'cryptography', finding.cwe] } } : {
           properties: { tags: ['security', 'cryptography'] },
         }),

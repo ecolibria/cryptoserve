@@ -23,6 +23,7 @@ import { lookupNpmPackage } from './crypto-registry.mjs';
 import { walkProject } from './walker.mjs';
 import { loadScannerConfig } from './config.mjs';
 import { parseWaiverPragmas, findWaiver, waiverWarnings, stripTerminalUnsafe, printablePath } from './waivers.mjs';
+import { checkCertificateText } from './trust-check.mjs';
 
 // ---------------------------------------------------------------------------
 // API misuse patterns
@@ -400,6 +401,11 @@ export function scanProject(projectDir, options = {}) {
     filesScanned: 0,   // source files matched to a language and analyzed
     configFilesScanned: 0, // config/dotenv files read for secrets
     privateKeyFiles: [], // cert files whose contents are a PRIVATE key
+    // Certificates whose key is a publicly compromised CA key, or that are or
+    // chain to a root browsers removed. One entry per certificate block and
+    // kind; see trust-check.mjs.
+    trustFindings: [],
+    certificatesChecked: 0, // PEM certificate blocks decoded from cert files
     filesWalked: 0,    // every file the walker examined, analyzed or not
     // New in v0.2.0
     sourceAlgorithms: [],
@@ -503,14 +509,21 @@ export function scanProject(projectDir, options = {}) {
   // `server.key` looked exactly like a published `server.crt`. Publishing a
   // certificate is routine; publishing its key is the incident.
   for (const certPath of walked.certFiles) {
-    const rel = printablePath(relative(projectDir, certPath));
+    const relPath = relative(projectDir, certPath);
+    const rel = printablePath(relPath);
     results.certFiles.push(rel);
-    let head = '';
-    try { head = readFileSync(certPath, 'utf-8').slice(0, 4096); }
+    let content = '';
+    try { content = readFileSync(certPath, 'utf-8'); }
     catch { continue; }
-    if (/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/.test(head)) {
+    if (/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/.test(content.slice(0, 4096))) {
       results.privateKeyFiles.push(rel);
     }
+    // The same read, all of it: a CA bundle holds a hundred certificates, and
+    // the one that matters can be the last. The Verify command opens the file
+    // by its real name, which the printable one is not when it was encoded.
+    const trust = checkCertificateText(content, { file: rel, path: relPath });
+    results.certificatesChecked += trust.checked;
+    for (const finding of trust.findings) results.trustFindings.push(finding);
   }
 
   for (const filePath of walked.sourceFiles) {

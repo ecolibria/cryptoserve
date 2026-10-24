@@ -160,6 +160,11 @@ describe('report fields built from the scanned tree', () => {
     writeFileSync(at(`tls${IN_NAME}.js`), "module.exports = { minVersion: 'TLSv1' };\n");
     writeFileSync(at(`config${IN_NAME}.yaml`), `AWS_SECRET_ACCESS_KEY: ${'Ab1/'.repeat(10)}\n`);
     writeFileSync(at(`server${IN_NAME}.pem`), `-----BEGIN ${'PRIVATE KEY'}-----\nMIIfixture\n`);
+    // A certificate the trust check reports, whose finding carries a Verify
+    // command built from the file's name: the removed root, from the committed
+    // fixtures.
+    writeFileSync(at(`ca${IN_NAME}.pem`),
+      readFileSync(join(__dirname, '..', '..', '..', 'testdata', 'trust-keys', 'root', 'emsign-ecc-root-ca-g3.pem')));
     writeFileSync(at(`native${IN_NAME}.so`), Buffer.concat([Buffer.alloc(64), BINARY_SIGNATURES[0].bytes, Buffer.alloc(64)]));
 
     // git metadata reaches the CBOM. Best effort: without git the CBOM checks
