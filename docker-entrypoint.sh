@@ -5,7 +5,8 @@ set -e
 mkdir -p /data
 
 # Set DATABASE_URL to use the persistent volume if not already set
-export DATABASE_URL="${DATABASE_URL:-sqlite+aiosqlite:///data/cryptoserve.db}"
+# (four slashes make an absolute path, so the database is written to /data)
+export DATABASE_URL="${DATABASE_URL:-sqlite+aiosqlite:////data/cryptoserve.db}"
 
 echo "============================================"
 echo "  CryptoServe All-in-One"
