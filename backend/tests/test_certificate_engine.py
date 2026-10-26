@@ -506,15 +506,15 @@ TLS_FIX = (
 )
 CODE_SIGNING_FIX = (
     "Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; "
-    "a verifier that checks revocation rejects signatures under this key."
+    "a verifier that checks revocation can reject signatures under this key."
 )
 ROOT_FIX = (
     "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle "
-    "you ship; Chrome removes it for all devices on 2026-10-27."
+    "you ship; Chrome's removal date for all devices is 2026-10-27."
 )
 RULE_4 = (
     "Chain anchors on emSign ECC Root CA - G3 (the last certificate's signature verifies under that "
-    "root's key), removed from Mozilla's root store and removed from Chrome on 2026-10-27. " + ROOT_FIX
+    "root's key), which Mozilla removed from its root store on 2026-10-20. " + ROOT_FIX
 )
 ANCHOR_WARNING = (
     "Chain anchor not checked: no issuer certificate was supplied. "
@@ -538,8 +538,8 @@ def rule_2(cert_name, issuer_spki, fix):
 
 def rule_3(cert_name):
     return (
-        f"{cert_name} is emSign ECC Root CA - G3, removed from Mozilla's root store and removed from Chrome "
-        f"on 2026-10-27. {ROOT_FIX}"
+        f"{cert_name} is emSign ECC Root CA - G3, which Mozilla removed from its root store on 2026-10-20. "
+        f"{ROOT_FIX}"
     )
 
 

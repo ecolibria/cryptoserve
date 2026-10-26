@@ -34,15 +34,15 @@ const BY_SPKI = new Map(KEYS.map((k) => [k.spkiSha256, k]));
 // same words.
 export const TRUST_FIX = {
   tls: 'Replace the chain with one issued by a CA none of whose keys is listed, and remove this certificate from any bundle or pin set you ship.',
-  codeSigning: 'Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; a verifier that checks revocation rejects signatures under this key.',
-  root: 'Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle you ship; Chrome removes it for all devices on 2026-10-27.',
+  codeSigning: 'Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; a verifier that checks revocation can reject signatures under this key.',
+  root: "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle you ship; Chrome's removal date for all devices is 2026-10-27.",
 };
 
 const ISSUE = {
   1: 'Certificate uses a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449)',
   2: 'Certificate is signed by a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449)',
-  3: "Certificate is emSign ECC Root CA - G3, removed from Mozilla's root store and removed from Chrome on 2026-10-27",
-  4: "Chain anchors on emSign ECC Root CA - G3, removed from Mozilla's root store and removed from Chrome on 2026-10-27",
+  3: "Certificate is emSign ECC Root CA - G3, removed from Mozilla's root store on 2026-10-20",
+  4: "Chain anchors on emSign ECC Root CA - G3, removed from Mozilla's root store on 2026-10-20",
 };
 
 const KIND = {

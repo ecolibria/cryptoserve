@@ -157,11 +157,11 @@ _TRUST_FIX = {
     ),
     "codeSigning": (
         "Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; "
-        "a verifier that checks revocation rejects signatures under this key."
+        "a verifier that checks revocation can reject signatures under this key."
     ),
     "root": (
         "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle "
-        "you ship; Chrome removes it for all devices on 2026-10-27."
+        "you ship; Chrome's removal date for all devices is 2026-10-27."
     ),
 }
 
@@ -257,8 +257,8 @@ def listed_key_errors(certs: list[x509.Certificate], names: list[str]) -> list[s
         if own is not None and own.use == "root":
             root_supplied = True
             errors.append(
-                f"{name} is emSign ECC Root CA - G3, removed from Mozilla's root store and removed from Chrome "
-                f"on 2026-10-27. {_TRUST_FIX['root']}"
+                f"{name} is emSign ECC Root CA - G3, which Mozilla removed from its root store on 2026-10-20. "
+                f"{_TRUST_FIX['root']}"
             )
         elif own is not None:
             errors.append(
@@ -281,8 +281,7 @@ def listed_key_errors(certs: list[x509.Certificate], names: list[str]) -> list[s
         if any(_signed_by(anchor, k.public_key) for k in _LISTED_KEYS if k.use == "root"):
             errors.append(
                 "Chain anchors on emSign ECC Root CA - G3 (the last certificate's signature verifies under "
-                "that root's key), removed from Mozilla's root store and removed from Chrome on 2026-10-27. "
-                + _TRUST_FIX["root"]
+                "that root's key), which Mozilla removed from its root store on 2026-10-20. " + _TRUST_FIX["root"]
             )
     return errors
 

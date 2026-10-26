@@ -10,8 +10,9 @@ and the Verify tab of the web dashboard.
 
 ## What was found
 
-Mozilla announced the emergency removal of trust in emSign ECC Root CA - G3 on 2026-10-20, and the Chrome
-Root Program removes it from the Chrome Root Store for all devices on 2026-10-27.
+After the eMudhra intermediate key compromise (Mozilla Bug 2083449), Mozilla removed this root
+from its root store on 2026-10-20, and Chrome's removal date for all devices is 2026-10-27. A client stops
+trusting chains that end at this root once its copy of Mozilla's or Chrome's root store drops the root.
 
 Two rules raise this finding, and both match on the key, never on a name:
 
@@ -57,7 +58,7 @@ prints `cert.pem: OK`. This needs an openssl that accepts `-partial_chain` and `
 
 ## Fix
 
-> Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle you ship; Chrome removes it for all devices on 2026-10-27.
+> Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle you ship; Chrome's removal date for all devices is 2026-10-27.
 
 ## Listed key
 
@@ -73,9 +74,10 @@ engine and the CLI read.
 
 ## Sources
 
-- The Chrome Root Program's post of 2026-10-20, which gives the removal date for all devices:
+- Google's post of 2026-10-20 on Chrome and Android, which gives the removal date for all devices:
   https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/
 - Mozilla Bug 2083449, comment 18 of 2026-10-20, on the emergency removal of trust in emSign ECC Root CA - G3:
   https://bugzilla.mozilla.org/show_bug.cgi?id=2083449
+- Mozilla Bug 2084101, the removal of emSign ECC Root CA - G3 from Mozilla's root store: https://bugzilla.mozilla.org/show_bug.cgi?id=2084101
 
 The finding for the eight compromised intermediate keys is [trust/compromised-ca-key](trust-compromised-key.md).
