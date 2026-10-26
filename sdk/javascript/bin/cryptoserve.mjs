@@ -1750,6 +1750,7 @@ async function cmdGate(args) {
       violations.push({
         type: 'trust',
         id: t.id,
+        kind: t.kind,
         algorithm: t.issue,
         risk: null,
         severity: t.severity,
@@ -1765,7 +1766,8 @@ async function cmdGate(args) {
         keyUse: t.keyUse,
         // Not `rule`: on a violation that is the id a waiver pragma names, and
         // no pragma waives this finding.
-        trustRule: t.rule,
+        trustRule: t.trustRule,
+        distrustDate: t.distrustDate,
         verify: t.verify,
         fix: t.fix,
         references: t.references,

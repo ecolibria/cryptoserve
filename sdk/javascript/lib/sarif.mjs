@@ -169,10 +169,18 @@ export function collectFindings(scanResults) {
   return findings;
 }
 
+// The data a trust finding carries, under the names `--format json` gives
+// them, in the order a SARIF result's `properties` lists them.
+const TRUST_PROPERTIES = [
+  'kind', 'matchedValue', 'valueType', 'issuerSpkiSha256', 'keyUse', 'trustRule', 'distrustDate',
+];
+
 /**
  * A trust finding (from `scan`) or trust violation (from `gate`) as a SARIF
  * finding. The message carries the matched value and the command that prints
- * it, so an alert can be confirmed from the code-scanning page alone.
+ * it, so an alert can be confirmed from the code-scanning page alone. The
+ * finding's data goes in `properties` the same way from both commands, a null
+ * value left out.
  */
 function trustToFinding(t, extra = {}) {
   return {
@@ -186,6 +194,7 @@ function trustToFinding(t, extra = {}) {
     line: t.line,
     fix: t.fix,
     helpUri: t.references?.[0],
+    properties: Object.fromEntries(TRUST_PROPERTIES.filter((k) => t[k] != null).map((k) => [k, t[k]])),
     ...extra,
   };
 }
@@ -332,6 +341,8 @@ export function toSarif(findings) {
       ...(finding.suppressed
         ? { suppressions: [{ kind: 'inSource', justification: finding.justification || 'waived in source' }] }
         : {}),
+      // Data of this one result, under the names `--format json` gives it.
+      ...(finding.properties ? { properties: finding.properties } : {}),
     };
   });
 
