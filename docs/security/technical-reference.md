@@ -464,7 +464,6 @@ Supported identity providers:
 - Generic OIDC
 
 All OAuth flows use:
-- PKCE (Proof Key for Code Exchange) where supported
 - State parameter for CSRF protection
 - Secure token storage
 
@@ -987,7 +986,6 @@ The web dashboard provides administrative access to CryptoServe. This section do
 ### 14.1 Authentication
 
 **Primary:** GitHub OAuth 2.0
-- PKCE enabled for authorization code flow
 - State parameter for CSRF protection
 - Tokens stored in HTTP-only, Secure cookies
 
