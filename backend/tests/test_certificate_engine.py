@@ -549,9 +549,7 @@ def trust_pem(rel):
 
 def spki_sha256(rel):
     cert = x509.load_pem_x509_certificate(trust_pem(rel))
-    der = cert.public_key().public_bytes(
-        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
-    )
+    der = cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     return hashlib.sha256(der).hexdigest()
 
 
