@@ -11,9 +11,11 @@ and the Verify tab of the web dashboard.
 
 The certificate's public key, or the key that signed it, is one of the eight eMudhra intermediate CA keys
 listed below: six for TLS (EM DV, OV and EV TLS CA - G3B and - G3C) and two for code signing (EM OV CS CA - G3B
-and - G3C). Their private keys were recovered by parties other than the CA, Mozilla among them, and eMudhra
-revoked the eight certificates on 2026-10-18. The browser root programs block them. The keys are compromised
-now, without a quantum computer: a holder of a listed private key can issue certificates under it.
+and - G3C). Their private keys were recovered independently by several parties, Mozilla among them, after a
+report to the root programs and to eMudhra on 2026-10-17 (Mozilla Bug 2083449, comments 0 and 18). eMudhra
+revoked its eight certificates on 2026-10-18, the cross-signed copies were revoked on 2026-10-19, and
+Chrome and Firefox block the six TLS keys. The keys are compromised now, without a quantum computer: a holder of
+a listed private key can issue certificates under it.
 
 Two rules raise this finding, and both match on the key, never on a name:
 
@@ -65,7 +67,7 @@ TLS key:
 
 Code-signing key:
 
-> Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; a verifier that checks revocation rejects signatures under this key.
+> Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; a verifier that checks revocation can reject signatures under this key.
 
 ## Listed keys
 
@@ -91,7 +93,7 @@ keys' SPKI SHA-256 values, base64-encoded, are the `pubKeyHash` values of their 
 - Mozilla Bug 2083449, "eMudhra: Private key compromise of Intermediate Certificates", opened 2026-10-18:
   https://bugzilla.mozilla.org/show_bug.cgi?id=2083449. Comment 0 lists the eight certificates; comment 2
   lists the cross-signed copies; the OneCRL entries are tracked in Mozilla Bug 2083382.
-- The Chrome Root Program's post of 2026-10-20:
+- Google's post of 2026-10-20 on Chrome and Android:
   https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/
 
 The finding for the root that browsers removed is [trust/distrusted-root](trust-distrusted-root.md).
