@@ -7,12 +7,13 @@
  * writes from the certificates in testdata/trust-keys; the certificate engine
  * in the backend reads a byte-equal copy. A match is by key, never by name.
  * Each PEM certificate block of a file is checked on its own:
- *   1. its SPKI SHA-256 is a listed intermediate key            (kind A)
- *   2. its signature verifies under a listed intermediate key   (kind A)
- *   3. its SPKI SHA-256 is the removed root's key               (kind B)
- *   4. its signature verifies under the removed root's key      (kind B)
+ *   1. its SPKI SHA-256 is a listed intermediate key            (compromisedCaKey)
+ *   2. its signature verifies under a listed intermediate key   (compromisedCaKey)
+ *   3. its SPKI SHA-256 is the removed root's key               (distrustedRoot)
+ *   4. its signature verifies under the removed root's key      (distrustedRoot)
  * Rule 2 is skipped for a block rule 1 matched and rule 4 for a block rule 3
- * matched, so one block yields at most one finding of each kind.
+ * matched, so one block yields at most one finding of each kind. A finding
+ * names its kind in `kind` and the rule that matched in `trustRule`.
  *
  * Zero dependencies: node:crypto's X509Certificate.
  */
@@ -26,6 +27,8 @@ const TABLE = JSON.parse(readFileSync(new URL('./trust-keys.json', import.meta.u
 const KEYS = TABLE.keys.map((k) => ({
   spkiSha256: k.spkiSha256,
   use: k.use,
+  // A removed root's distrustDate, when its row carries one.
+  distrustDate: k.distrustDate ?? null,
   publicKey: createPublicKey({ key: Buffer.from(k.spkiDer, 'base64'), format: 'der', type: 'spki' }),
 }));
 const BY_SPKI = new Map(KEYS.map((k) => [k.spkiSha256, k]));
@@ -46,12 +49,12 @@ const ISSUE = {
 };
 
 const KIND = {
-  A: {
+  compromisedCaKey: {
     id: 'trust/compromised-ca-key',
     severity: 'critical',
     references: ['https://github.com/ecolibria/cryptoserve/blob/main/docs/findings/trust-compromised-key.md'],
   },
-  B: {
+  distrustedRoot: {
     id: 'trust/distrusted-root',
     severity: 'high',
     references: ['https://github.com/ecolibria/cryptoserve/blob/main/docs/findings/trust-distrusted-root.md'],
@@ -155,12 +158,15 @@ export function checkCertificateText(text, { file, path }) {
       // A key type this runtime cannot export is not one of the listed keys.
     }
 
-    const finding = (kind, rule, matchedValue, valueType, issuerSpkiSha256, keyUse) => {
+    // Every key is present, in this order. A value that does not apply is
+    // null: `issuerSpkiSha256` on rules 1 and 3, and `distrustDate` on a
+    // compromisedCaKey finding or when the root's row gives no date.
+    const finding = (kind, trustRule, matchedValue, valueType, issuerSpkiSha256, keyUse, distrustDate) => {
       const { id, severity, references } = KIND[kind];
       findings.push({
         id,
         kind,
-        issue: ISSUE[rule],
+        issue: ISSUE[trustRule],
         severity,
         file,
         line,
@@ -168,7 +174,8 @@ export function checkCertificateText(text, { file, path }) {
         valueType,
         issuerSpkiSha256,
         keyUse,
-        rule,
+        trustRule,
+        distrustDate,
         verify: verifyCommand(valueType, path, line, firstHeaderLine),
         fix: TRUST_FIX[keyUse],
         references,
@@ -177,17 +184,17 @@ export function checkCertificateText(text, { file, path }) {
 
     const own = spkiSha256 ? BY_SPKI.get(spkiSha256) : undefined;
     if (own && own.use === 'root') {
-      finding('B', 3, spkiSha256, 'spkiSha256', null, 'root');
+      finding('distrustedRoot', 3, spkiSha256, 'spkiSha256', null, 'root', own.distrustDate);
       continue;
     }
     if (own) {
-      finding('A', 1, spkiSha256, 'spkiSha256', null, own.use);
+      finding('compromisedCaKey', 1, spkiSha256, 'spkiSha256', null, own.use, null);
     } else {
       const signer = KEYS.find((k) => k.use !== 'root' && signedBy(x509, k.publicKey));
-      if (signer) finding('A', 2, certSha256, 'certSha256', signer.spkiSha256, signer.use);
+      if (signer) finding('compromisedCaKey', 2, certSha256, 'certSha256', signer.spkiSha256, signer.use, null);
     }
     const root = KEYS.find((k) => k.use === 'root' && signedBy(x509, k.publicKey));
-    if (root) finding('B', 4, certSha256, 'certSha256', root.spkiSha256, 'root');
+    if (root) finding('distrustedRoot', 4, certSha256, 'certSha256', root.spkiSha256, 'root', root.distrustDate);
   }
   return { checked, findings };
 }

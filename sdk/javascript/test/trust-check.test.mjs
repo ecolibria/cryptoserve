@@ -13,10 +13,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { X509Certificate, createHash } from 'node:crypto';
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, copyFileSync, cpSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cryptoserve.mjs');
@@ -61,6 +61,19 @@ const PAGE = {
 const SPKI_CMD = "openssl x509 -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'";
 const CERT_CMD = "openssl x509 -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'";
 
+// The keys of a trustFindings entry, in the order `scan --format json` writes
+// them; a key that does not apply is null, never absent.
+const ENTRY_KEYS = ['id', 'kind', 'issue', 'severity', 'file', 'line', 'matchedValue', 'valueType',
+  'issuerSpkiSha256', 'keyUse', 'trustRule', 'distrustDate', 'verify', 'fix', 'references'];
+// The data a SARIF trust result carries in `properties`, under the same names.
+const PROPERTY_KEYS = ['kind', 'matchedValue', 'valueType', 'issuerSpkiSha256', 'keyUse', 'trustRule', 'distrustDate'];
+
+// A distrustedRoot finding carries the distrustDate of the removed root's row
+// in the key table, and null when the row has none.
+const LIB = join(__dirname, '..', 'lib');
+const ROOT_ROW = JSON.parse(readFileSync(join(LIB, 'trust-keys.json'), 'utf8')).keys.find((k) => k.use === 'root');
+const ROOT_DATE = ROOT_ROW.distrustDate ?? null;
+
 // The certificates the scan fixture is built from.
 const LEAF = cert('leaves/crtsh-29977124910/cert.pem');
 const OV_G3C = cert('listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.pem');
@@ -72,31 +85,36 @@ function expectedScanFindings() {
   const [, rootLine] = headerLines(join(SCAN_FIXTURE, 'ca-bundle.pem'));
   return [
     {
-      id: 'trust/distrusted-root', kind: 'B', issue: ISSUE[3], severity: 'high', file: 'ca-bundle.pem', line: rootLine,
-      matchedValue: spkiSha(ROOT), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'root', rule: 3,
+      id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[3], severity: 'high', file: 'ca-bundle.pem', line: rootLine,
+      matchedValue: spkiSha(ROOT), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'root', trustRule: 3, distrustDate: ROOT_DATE,
       verify: `awk 'NR>=${rootLine}' ca-bundle.pem | ${SPKI_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
     },
     {
-      id: 'trust/compromised-ca-key', kind: 'A', issue: ISSUE[2], severity: 'critical', file: 'cert.pem', line: 1,
-      matchedValue: certSha(LEAF), valueType: 'certSha256', issuerSpkiSha256: spkiSha(OV_G3C), keyUse: 'tls', rule: 2,
+      id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[2], severity: 'critical', file: 'cert.pem', line: 1,
+      matchedValue: certSha(LEAF), valueType: 'certSha256', issuerSpkiSha256: spkiSha(OV_G3C), keyUse: 'tls', trustRule: 2, distrustDate: null,
       verify: `openssl x509 -in cert.pem -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'`,
       fix: FIX.tls, references: [PAGE['trust/compromised-ca-key']],
     },
     {
-      id: 'trust/compromised-ca-key', kind: 'A', issue: ISSUE[1], severity: 'critical', file: 'chain.pem', line: 1,
-      matchedValue: spkiSha(OV_G3C), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'tls', rule: 1,
+      id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[1], severity: 'critical', file: 'chain.pem', line: 1,
+      matchedValue: spkiSha(OV_G3C), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'tls', trustRule: 1, distrustDate: null,
       verify: `openssl x509 -in chain.pem -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'`,
       fix: FIX.tls, references: [PAGE['trust/compromised-ca-key']],
     },
     {
-      id: 'trust/distrusted-root', kind: 'B', issue: ISSUE[4], severity: 'high', file: 'chain.pem', line: anchoredLine,
-      matchedValue: certSha(ANCHORED), valueType: 'certSha256', issuerSpkiSha256: spkiSha(ROOT), keyUse: 'root', rule: 4,
+      id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[4], severity: 'high', file: 'chain.pem', line: anchoredLine,
+      matchedValue: certSha(ANCHORED), valueType: 'certSha256', issuerSpkiSha256: spkiSha(ROOT), keyUse: 'root', trustRule: 4, distrustDate: ROOT_DATE,
       verify: `awk 'NR>=${anchoredLine}' chain.pem | ${CERT_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
     },
   ];
 }
 
 const byPlace = (a, b) => a.file.localeCompare(b.file) || a.line - b.line;
+const byValue = (a, b) => a.matchedValue.localeCompare(b.matchedValue);
+
+/** What a SARIF trust result carries in `properties`: the finding's data, a null value left out. */
+const sarifProperties = (findings) => findings.map((f) =>
+  Object.fromEntries(PROPERTY_KEYS.filter((k) => f[k] !== null).map((k) => [k, f[k]])));
 
 function scanJson(dir) {
   const r = run(['scan', dir, '--format', 'json']);
@@ -137,6 +155,65 @@ describe('scan reports the trust findings', () => {
     );
   });
 
+  it('writes every entry with the same keys in the same order, a key that does not apply set to null', () => {
+    for (const dir of [SCAN_FIXTURE, LISTED]) {
+      for (const f of scanJson(dir).trustFindings) {
+        assert.deepEqual(Object.keys(f), ENTRY_KEYS, `${f.file}:${f.line}`);
+      }
+    }
+  });
+
+  it('pairs each rule id with one kind, and each kind with one rule id', () => {
+    const findings = [...scanJson(SCAN_FIXTURE).trustFindings, ...scanJson(LISTED).trustFindings];
+    assert.deepEqual(
+      [...new Set(findings.map((f) => `${f.id} ${f.kind}`))].sort(),
+      ['trust/compromised-ca-key compromisedCaKey', 'trust/distrusted-root distrustedRoot'],
+    );
+  });
+
+  it('carries the removed root row\'s distrustDate on each distrustedRoot finding, and null on each compromisedCaKey finding', async () => {
+    // A copy of the library whose key table gives the root's row a date, so a
+    // date read back can only have come from the row. Any date does.
+    const date = '2000-01-01';
+    const base = mkdtempSync(join(tmpdir(), 'trust-date-'));
+    try {
+      const lib = join(base, 'lib');
+      cpSync(LIB, lib, { recursive: true });
+      const table = JSON.parse(readFileSync(join(lib, 'trust-keys.json'), 'utf8'));
+      table.keys.find((k) => k.use === 'root').distrustDate = date;
+      writeFileSync(join(lib, 'trust-keys.json'), JSON.stringify(table));
+      const { checkCertificateText } = await import(pathToFileURL(join(lib, 'trust-check.mjs')).href);
+      const findings = ['ca-bundle.pem', 'cert.pem', 'chain.pem'].flatMap((name) =>
+        checkCertificateText(readFileSync(join(SCAN_FIXTURE, name), 'utf8'), { file: name, path: name }).findings);
+      assert.deepEqual(findings.map((f) => [f.kind, f.trustRule, f.distrustDate]).sort(), [
+        ['compromisedCaKey', 1, null], ['compromisedCaKey', 2, null],
+        ['distrustedRoot', 3, date], ['distrustedRoot', 4, date],
+      ]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves `rule` one type beside a misuse finding: the string id a waiver pragma names', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'trust-mixed-'));
+    writeFileSync(join(dir, 'client.js'), 'const agent = { rejectUnauthorized: false };\n');
+    copyFileSync(join(SCAN_FIXTURE, 'cert.pem'), join(dir, 'cert.pem'));
+    const results = scanJson(dir);
+    assert.equal(results.weakPatterns.length, 1, JSON.stringify(results.weakPatterns));
+    assert.equal(results.trustFindings.length, 1);
+    const types = new Set();
+    const walk = (v) => {
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (v !== null && typeof v === 'object') {
+        if (Object.hasOwn(v, 'rule')) types.add(typeof v.rule);
+        Object.values(v).forEach(walk);
+      }
+    };
+    walk(results);
+    assert.deepEqual([...types], ['string']);
+    assert.equal(results.trustFindings[0].trustRule, 2);
+  });
+
   it('matches every listed certificate by its key (rule 1), with the Fix chosen by the key\'s use', () => {
     const results = scanJson(LISTED);
     const findings = results.trustFindings || [];
@@ -144,8 +221,10 @@ describe('scan reports the trust findings', () => {
     for (const f of findings) {
       const x = new X509Certificate(readFileSync(join(LISTED, f.file)));
       const use = (x.keyUsage || []).includes('1.3.6.1.5.5.7.3.3') ? 'codeSigning' : 'tls';
-      assert.equal(f.rule, 1);
+      assert.equal(f.trustRule, 1);
       assert.equal(f.id, 'trust/compromised-ca-key');
+      assert.equal(f.kind, 'compromisedCaKey');
+      assert.equal(f.distrustDate, null);
       assert.equal(f.matchedValue, spkiSha(x));
       assert.equal(f.keyUse, use);
       assert.equal(f.fix, FIX[use]);
@@ -232,7 +311,7 @@ describe('scan reports the trust findings', () => {
       + readFileSync(join(FIXTURES, 'root', 'emsign-ecc-root-ca-g3.pem'), 'utf8');
     writeFileSync(join(dir, 'cert.pem'), text);
     const [f] = scanJson(dir).trustFindings;
-    assert.equal(f.rule, 3);
+    assert.equal(f.trustRule, 3);
     assert.equal(f.line, headerLines(join(dir, 'cert.pem'))[1]);
     const out = spawnSync('sh', ['-c', f.verify], { cwd: dir, encoding: 'utf-8' });
     assert.equal(out.stdout, spkiSha(ROOT));
@@ -248,6 +327,16 @@ describe('scan reports the trust findings', () => {
         'cryptoserve/trust/distrusted-root', 'cryptoserve/trust/distrusted-root'],
     );
     for (const x of trust) assert.equal(x.level, 'error');
+  });
+
+  it('carries each finding\'s data in its SARIF result\'s properties, under the JSON names, a null value left out', () => {
+    const r = run(['scan', SCAN_FIXTURE, '--format', 'sarif']);
+    const trust = JSON.parse(r.stdout).runs[0].results.filter((x) => x.ruleId.startsWith('cryptoserve/trust/'));
+    const properties = trust.map((x) => x.properties ?? null);
+    assert.ok(properties.every(Boolean), 'a SARIF trust result has no properties');
+    assert.deepEqual([...properties].sort(byValue), sarifProperties(expectedScanFindings()).sort(byValue));
+    for (const p of properties) assert.deepEqual(Object.keys(p), PROPERTY_KEYS.filter((k) => k in p));
+    assert.deepEqual([...new Set(properties.map((p) => p.kind))].sort(), ['compromisedCaKey', 'distrustedRoot']);
   });
 });
 
@@ -265,6 +354,21 @@ describe('gate fails on the trust findings', () => {
     assert.equal(text.code, 1);
     assert.match(text.stdout, /\[CRITICAL TRUST\]/);
     assert.match(text.stdout, /\[HIGH TRUST\]/);
+  });
+
+  it('carries kind, trustRule and distrustDate on each trust violation, and no rule, with the scan entry\'s values', () => {
+    const g = JSON.parse(run(['gate', SCAN_FIXTURE, '--format', 'json']).stdout);
+    const trust = g.violations.filter((v) => v.type === 'trust').sort(byPlace);
+    const expected = expectedScanFindings();
+    assert.equal(trust.length, expected.length);
+    trust.forEach((v, i) => {
+      const at = `${v.file}:${v.line}`;
+      assert.equal(Object.hasOwn(v, 'rule'), false, `${at} carries rule, the key a waiver pragma names`);
+      for (const k of PROPERTY_KEYS) {
+        assert.ok(Object.hasOwn(v, k), `${at} has no ${k}`);
+        assert.equal(v[k], expected[i][k], `${at} ${k}`);
+      }
+    });
   });
 
   it('cannot be waived by --max-severity or --allow-secrets', () => {
@@ -287,6 +391,15 @@ describe('gate fails on the trust findings', () => {
     const ids = JSON.parse(r.stdout).runs[0].results.map((x) => x.ruleId);
     assert.ok(ids.includes('cryptoserve/trust/compromised-ca-key'));
     assert.ok(ids.includes('cryptoserve/trust/distrusted-root'));
+  });
+
+  it('carries each violation\'s data in its gate SARIF result\'s properties, as scan does', () => {
+    const r = run(['gate', SCAN_FIXTURE, '--format', 'sarif']);
+    assert.equal(r.code, 1);
+    const trust = JSON.parse(r.stdout).runs[0].results.filter((x) => x.ruleId.startsWith('cryptoserve/trust/'));
+    const properties = trust.map((x) => x.properties ?? null);
+    assert.ok(properties.every(Boolean), 'a gate SARIF trust result has no properties');
+    assert.deepEqual([...properties].sort(byValue), sarifProperties(expectedScanFindings()).sort(byValue));
   });
 });
 
