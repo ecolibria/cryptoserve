@@ -2,7 +2,7 @@
 
 Provides production-grade logging with:
 - JSON structured output for log aggregation
-- Request correlation IDs (X-Request-ID / X-Correlation-ID)
+- Request and correlation IDs (X-Request-ID / X-Correlation-ID), accepted within a fixed length and character set
 - Automatic context propagation
 - Sensitive data masking
 - Query strings recorded by parameter names, never values
@@ -19,6 +19,7 @@ Usage:
 
 import json
 import logging
+import re
 import sys
 import time
 import uuid
@@ -269,15 +270,28 @@ def setup_logging(json_output: bool = False, level: str = "INFO"):
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
+# Forms an incoming request or correlation ID must match in full to be kept
+REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,128}")
+CORRELATION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+def _accepted_id(request: Request, header: str, pattern: re.Pattern[str]) -> str | None:
+    """The header's value when the request carries exactly one such line and all of it matches the pattern."""
+    values = request.headers.getlist(header)
+    if len(values) == 1 and pattern.fullmatch(values[0]):
+        return values[0]
+    return None
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware for request logging and correlation ID propagation."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Generate or extract request ID
-        request_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+        # Keep an incoming request ID within its bound, otherwise generate one
+        request_id = _accepted_id(request, "X-Request-ID", REQUEST_ID_PATTERN) or str(uuid.uuid4())
 
-        # Extract correlation ID (for distributed tracing)
-        correlation_id = request.headers.get("X-Correlation-ID") or request_id
+        # Extract correlation ID (for distributed tracing) within its bound, otherwise use the request ID
+        correlation_id = _accepted_id(request, "X-Correlation-ID", CORRELATION_ID_PATTERN) or request_id
 
         # Set context variables
         request_id_token = request_id_var.set(request_id)
