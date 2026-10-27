@@ -159,6 +159,8 @@ it was meant to fix.
 
 Every compose file sets container log rotation: 50 MB per file, 5 files, for each service.
 
+The backend accepts an incoming `X-Request-ID` only as one header of 16 to 128 letters, digits, `_` or `-`, and otherwise assigns its own ID; it accepts `X-Correlation-ID` under the same rule at 1 to 128 characters and no longer uses it as the request ID.
+
 ### Fixed
 
 The request log records the names of query parameters and not their values.
