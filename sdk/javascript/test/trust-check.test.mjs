@@ -292,12 +292,12 @@ describe('scan reports the trust findings', () => {
 
   it('quotes a hostile file name in the Verify command so the shell runs nothing from it', { skip: NO_OPENSSL }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'trust-hostile-'));
-    const names = ["it's $(touch PWNED).pem", '-leaf.pem', 'a‮b.pem', 'line\nbreak.pem'];
+    const names = ["it's $(touch PWNED).pem", '-leaf.pem', 'a\u{202e}b.pem', 'line\nbreak.pem'];
     for (const name of names) copyFileSync(join(SCAN_FIXTURE, 'cert.pem'), join(dir, name));
     const findings = scanJson(dir).trustFindings;
     assert.equal(findings.length, names.length);
     for (const f of findings) {
-      assert.doesNotMatch(f.verify, /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/u);
+      assert.doesNotMatch(f.verify, /[\u0000-\u001f\u007f-\u009f\u{202a}-\u{202e}\u{2066}-\u{2069}]/u);
       const out = spawnSync('sh', ['-c', f.verify], { cwd: dir, encoding: 'utf-8' });
       assert.equal(out.stdout, certSha(LEAF), `${JSON.stringify(f.verify)}: ${out.stderr}`);
     }

@@ -84,7 +84,7 @@ const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----[\r\n][A-Za-z0-9+/=\s]+?---
 const PEM_HEADER = /^-----BEGIN [^\r\n]*-----/m;
 
 // The characters `printablePath` percent-encodes for the terminal, less `%`.
-const TERMINAL_UNSAFE = /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/u;
+const TERMINAL_UNSAFE = /[\u0000-\u001f\u007f-\u009f\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
