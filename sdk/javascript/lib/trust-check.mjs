@@ -77,8 +77,10 @@ const TO_VALUE = {
 };
 
 // At the start of a line, as openssl reads them: a header anywhere else is not
-// one the printed Verify command would find.
-const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----[\r\n]+[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----/gm;
+// one the printed Verify command would find. One line break after the header:
+// the body's class takes any more, and repeating it here as well would try
+// every split of a long run of line breaks, in time quadratic in the run.
+const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----[\r\n][A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----/gm;
 const PEM_HEADER = /^-----BEGIN [^\r\n]*-----/m;
 
 // The characters `printablePath` percent-encodes for the terminal, less `%`.
