@@ -11,7 +11,7 @@
  *   - backend/app/core/trust_keys.json and sdk/javascript/lib/trust-keys.json,
  *     byte-equal. Two copies because the backend image and the npm package
  *     each ship only their own directory.
- *   - testdata/trust-keys/scan/*.pem, the layouts a repository commits
+ *   - testdata/trust-keys/scan/*.crt, the layouts a repository commits
  *     (a leaf alone, a chain file, a CA bundle), built from the certificates
  *     above so the scan fixture cannot drift from them.
  *   - The key table on docs/findings/trust-compromised-key.md and
@@ -49,16 +49,16 @@ const EKU_CODE_SIGNING = '1.3.6.1.5.5.7.3.3';
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
-/** Every .pem file under `dir`, one level of subdirectories deep. */
+/** Every .crt file under `dir`, one level of subdirectories deep. */
 function pemFiles(dir) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
       for (const inner of readdirSync(path)) {
-        if (inner.endsWith('.pem')) out.push(join(path, inner));
+        if (inner.endsWith('.crt')) out.push(join(path, inner));
       }
-    } else if (entry.name.endsWith('.pem')) {
+    } else if (entry.name.endsWith('.crt')) {
       out.push(path);
     }
   }
@@ -122,10 +122,10 @@ const read = (rel) => readFileSync(join(FIXTURES, rel), 'utf8');
 // certificate is the removed root.
 function scanFixtures() {
   return {
-    'scan/cert.pem': read('leaves/crtsh-29977124910/cert.pem'),
-    'scan/chain.pem': read('listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.pem')
-      + read('anchored/crtsh-14658191778/cert.pem'),
-    'scan/ca-bundle.pem': read('control/emsign-root-ca-g1.pem') + read('root/emsign-ecc-root-ca-g3.pem'),
+    'scan/cert.crt': read('leaves/crtsh-29977124910/cert.crt'),
+    'scan/chain.crt': read('listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.crt')
+      + read('anchored/crtsh-14658191778/cert.crt'),
+    'scan/ca-bundle.crt': read('control/emsign-root-ca-g1.crt') + read('root/emsign-ecc-root-ca-g3.crt'),
   };
 }
 

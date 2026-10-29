@@ -54,7 +54,7 @@ Checked under OpenSSL 4.0.3 and LibreSSL 3.3.6, they print the same bytes.
 
 To confirm a rule 2 signature, copy the certificate to its own file (`cert.pem`) and take the listed
 certificate for the key in `issuerSpkiSha256` from this repository: `testdata/trust-keys/listed/<certificate
-SHA-256>/cert.pem`, for any certificate SHA-256 of that key in the table below. Then:
+SHA-256>/cert.crt`, for any certificate SHA-256 of that key in the table below. Then:
 
 ```sh
 openssl verify -no_check_time -partial_chain -trusted listed.pem cert.pem

@@ -490,15 +490,15 @@ class TestEdgeCases:
 REPO = Path(__file__).resolve().parents[2]
 TRUST_FIXTURES = REPO / "testdata" / "trust-keys"
 
-LEAF_OV_G3C = "leaves/crtsh-29977124910/cert.pem"  # issued under the EM OV TLS CA - G3C key
-LEAF_EV_G3B = "leaves/crtsh-30010072947/cert.pem"  # issued under the EM EV TLS CA - G3B key
-OV_G3C = "listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.pem"
-EV_G3B = "listed/e7568fe6e12331f4fd7de61da4c7559d0f8eb192a218d4741a3ba75184333838/cert.pem"
-DV_G3C = "listed/0164d7ceae5bb909c272af151ff44b1177ae9b47d9424b94f1d9558c30934d19/cert.pem"
-ANCHORED = "anchored/crtsh-14658191778/cert.pem"  # its signature verifies under the removed root's key
-REMOVED_ROOT = "root/emsign-ecc-root-ca-g3.pem"
-CONTROL_ROOT = "control/emsign-root-ca-g1.pem"
-LISTED = sorted(p.relative_to(TRUST_FIXTURES).as_posix() for p in (TRUST_FIXTURES / "listed").glob("*/cert.pem"))
+LEAF_OV_G3C = "leaves/crtsh-29977124910/cert.crt"  # issued under the EM OV TLS CA - G3C key
+LEAF_EV_G3B = "leaves/crtsh-30010072947/cert.crt"  # issued under the EM EV TLS CA - G3B key
+OV_G3C = "listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.crt"
+EV_G3B = "listed/e7568fe6e12331f4fd7de61da4c7559d0f8eb192a218d4741a3ba75184333838/cert.crt"
+DV_G3C = "listed/0164d7ceae5bb909c272af151ff44b1177ae9b47d9424b94f1d9558c30934d19/cert.crt"
+ANCHORED = "anchored/crtsh-14658191778/cert.crt"  # its signature verifies under the removed root's key
+REMOVED_ROOT = "root/emsign-ecc-root-ca-g3.crt"
+CONTROL_ROOT = "control/emsign-root-ca-g1.crt"
+LISTED = sorted(p.relative_to(TRUST_FIXTURES).as_posix() for p in (TRUST_FIXTURES / "listed").glob("*/cert.crt"))
 
 TLS_FIX = (
     "Replace the chain with one issued by a CA none of whose keys is listed, "
