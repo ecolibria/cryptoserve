@@ -17,6 +17,7 @@ import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, copy
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { checkCertificateText } from '../lib/trust-check.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cryptoserve.mjs');
@@ -315,6 +316,19 @@ describe('scan reports the trust findings', () => {
     assert.equal(f.line, headerLines(join(dir, 'cert.pem'))[1]);
     const out = spawnSync('sh', ['-c', f.verify], { cwd: dir, encoding: 'utf-8' });
     assert.equal(out.stdout, spkiSha(ROOT));
+  });
+
+  it('reads a header followed by a long run of line breaks and no END line in linear time', () => {
+    // Every certificate-extension file is read whole, and its contents are
+    // chosen by whoever committed it.
+    for (const lineBreak of ['\n', '\r\n', '\r']) {
+      const text = `-----BEGIN CERTIFICATE-----${lineBreak.repeat(131072 / lineBreak.length)}`;
+      const started = process.hrtime.bigint();
+      const result = checkCertificateText(text, { file: 'cert.pem', path: 'cert.pem' });
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      assert.deepEqual(result, { checked: 0, findings: [] });
+      assert.ok(ms < 1000, `${JSON.stringify(lineBreak)}: ${ms.toFixed(0)} ms for ${text.length} characters`);
+    }
   });
 
   it('carries the findings into SARIF under one rule id per kind', () => {
