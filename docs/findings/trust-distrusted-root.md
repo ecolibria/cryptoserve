@@ -49,10 +49,10 @@ The commands use only openssl and POSIX tools and read nothing from the network.
 Checked under OpenSSL 4.0.3 and LibreSSL 3.3.6, they print the same bytes.
 
 To confirm a rule 4 signature, copy the certificate to its own file (`cert.pem`) and take the root from this
-repository, `testdata/trust-keys/root/emsign-ecc-root-ca-g3.pem`. Then:
+repository, `testdata/trust-keys/root/emsign-ecc-root-ca-g3.crt`. Then:
 
 ```sh
-openssl verify -no_check_time -partial_chain -trusted emsign-ecc-root-ca-g3.pem cert.pem
+openssl verify -no_check_time -partial_chain -trusted emsign-ecc-root-ca-g3.crt cert.pem
 ```
 
 prints `cert.pem: OK`. This needs an openssl that accepts `-partial_chain` and `-no_check_time`: OpenSSL
@@ -69,7 +69,7 @@ A file that lists distrusted certificates on purpose needs no change.
 
 ## Listed key
 
-The row's values are recomputed from `testdata/trust-keys/root/emsign-ecc-root-ca-g3.pem`, a copy of the
+The row's values are recomputed from `testdata/trust-keys/root/emsign-ecc-root-ca-g3.crt`, a copy of the
 root as a system CA bundle carries it, by `scripts/trust-keys/generate.mjs`, which also writes the copy the
 engine and the CLI read. In the table, Source is the public record that lists the key, and
 Reported is the date of the earliest such record.

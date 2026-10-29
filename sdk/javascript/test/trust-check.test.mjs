@@ -76,36 +76,36 @@ const ROOT_ROW = JSON.parse(readFileSync(join(LIB, 'trust-keys.json'), 'utf8')).
 const ROOT_DATE = ROOT_ROW.distrustDate ?? null;
 
 // The certificates the scan fixture is built from.
-const LEAF = cert('leaves/crtsh-29977124910/cert.pem');
-const OV_G3C = cert('listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.pem');
-const ANCHORED = cert('anchored/crtsh-14658191778/cert.pem');
-const ROOT = cert('root/emsign-ecc-root-ca-g3.pem');
+const LEAF = cert('leaves/crtsh-29977124910/cert.crt');
+const OV_G3C = cert('listed/cb6e15165ac802e9b3f993f16c25d41f4e81c21ebde71ae1b012ac00bf9c7c3f/cert.crt');
+const ANCHORED = cert('anchored/crtsh-14658191778/cert.crt');
+const ROOT = cert('root/emsign-ecc-root-ca-g3.crt');
 
 function expectedScanFindings() {
-  const [, anchoredLine] = headerLines(join(SCAN_FIXTURE, 'chain.pem'));
-  const [, rootLine] = headerLines(join(SCAN_FIXTURE, 'ca-bundle.pem'));
+  const [, anchoredLine] = headerLines(join(SCAN_FIXTURE, 'chain.crt'));
+  const [, rootLine] = headerLines(join(SCAN_FIXTURE, 'ca-bundle.crt'));
   return [
     {
-      id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[3], severity: 'high', file: 'ca-bundle.pem', line: rootLine,
+      id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[3], severity: 'high', file: 'ca-bundle.crt', line: rootLine,
       matchedValue: spkiSha(ROOT), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'root', trustRule: 3, distrustDate: ROOT_DATE,
-      verify: `awk 'NR>=${rootLine}' ca-bundle.pem | ${SPKI_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
+      verify: `awk 'NR>=${rootLine}' ca-bundle.crt | ${SPKI_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
     },
     {
-      id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[2], severity: 'critical', file: 'cert.pem', line: 1,
+      id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[2], severity: 'critical', file: 'cert.crt', line: 1,
       matchedValue: certSha(LEAF), valueType: 'certSha256', issuerSpkiSha256: spkiSha(OV_G3C), keyUse: 'tls', trustRule: 2, distrustDate: null,
-      verify: `openssl x509 -in cert.pem -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'`,
+      verify: `openssl x509 -in cert.crt -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'`,
       fix: FIX.tls, references: [PAGE['trust/compromised-ca-key']],
     },
     {
-      id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[1], severity: 'critical', file: 'chain.pem', line: 1,
+      id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[1], severity: 'critical', file: 'chain.crt', line: 1,
       matchedValue: spkiSha(OV_G3C), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'tls', trustRule: 1, distrustDate: null,
-      verify: `openssl x509 -in chain.pem -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'`,
+      verify: `openssl x509 -in chain.crt -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | od -An -tx1 | tr -d ' \\n'`,
       fix: FIX.tls, references: [PAGE['trust/compromised-ca-key']],
     },
     {
-      id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[4], severity: 'high', file: 'chain.pem', line: anchoredLine,
+      id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[4], severity: 'high', file: 'chain.crt', line: anchoredLine,
       matchedValue: certSha(ANCHORED), valueType: 'certSha256', issuerSpkiSha256: spkiSha(ROOT), keyUse: 'root', trustRule: 4, distrustDate: ROOT_DATE,
-      verify: `awk 'NR>=${anchoredLine}' chain.pem | ${CERT_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
+      verify: `awk 'NR>=${anchoredLine}' chain.crt | ${CERT_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
     },
   ];
 }
@@ -137,8 +137,8 @@ describe('trust check fixtures', () => {
     assert.equal(dirs.length, 16);
     const keys = new Set();
     for (const d of dirs) {
-      const x = cert(join('listed', d, 'cert.pem'));
-      assert.equal(certSha(x), d, `listed/${d}/cert.pem is not the certificate its directory names`);
+      const x = cert(join('listed', d, 'cert.crt'));
+      assert.equal(certSha(x), d, `listed/${d}/cert.crt is not the certificate its directory names`);
       keys.add(spkiSha(x));
     }
     assert.equal(keys.size, 8);
@@ -184,7 +184,7 @@ describe('scan reports the trust findings', () => {
       table.keys.find((k) => k.use === 'root').distrustDate = date;
       writeFileSync(join(lib, 'trust-keys.json'), JSON.stringify(table));
       const { checkCertificateText } = await import(pathToFileURL(join(lib, 'trust-check.mjs')).href);
-      const findings = ['ca-bundle.pem', 'cert.pem', 'chain.pem'].flatMap((name) =>
+      const findings = ['ca-bundle.crt', 'cert.crt', 'chain.crt'].flatMap((name) =>
         checkCertificateText(readFileSync(join(SCAN_FIXTURE, name), 'utf8'), { file: name, path: name }).findings);
       assert.deepEqual(findings.map((f) => [f.kind, f.trustRule, f.distrustDate]).sort(), [
         ['compromisedCaKey', 1, null], ['compromisedCaKey', 2, null],
@@ -198,7 +198,7 @@ describe('scan reports the trust findings', () => {
   it('leaves `rule` one type beside a misuse finding: the string id a waiver pragma names', () => {
     const dir = mkdtempSync(join(tmpdir(), 'trust-mixed-'));
     writeFileSync(join(dir, 'client.js'), 'const agent = { rejectUnauthorized: false };\n');
-    copyFileSync(join(SCAN_FIXTURE, 'cert.pem'), join(dir, 'cert.pem'));
+    copyFileSync(join(SCAN_FIXTURE, 'cert.crt'), join(dir, 'cert.pem'));
     const results = scanJson(dir);
     assert.equal(results.weakPatterns.length, 1, JSON.stringify(results.weakPatterns));
     assert.equal(results.trustFindings.length, 1);
@@ -263,20 +263,20 @@ describe('scan reports the trust findings', () => {
     const from = lines.findIndex((l) => l.includes('Certificate/Key Files'));
     const to = lines.findIndex((l, i) => i > from && l === 'Summary');
     assert.ok(from >= 0 && to > from, 'no Certificate/Key Files section before Summary');
-    const files = ['ca-bundle.pem', 'cert.pem', 'chain.pem'];
+    const files = ['ca-bundle.crt', 'cert.crt', 'chain.crt'];
     const starts = files.map((f) => lines.indexOf(f, from)).sort((a, b) => a - b);
     const block = (f) => {
       const at = lines.indexOf(f, from);
       const next = starts.find((s) => s > at) ?? to;
       return lines.slice(at, next).join('\n');
     };
-    assert.ok(block('cert.pem').includes(ISSUE[2]));
-    assert.ok(block('cert.pem').includes(`Fix: ${FIX.tls}`));
-    assert.ok(block('chain.pem').includes(ISSUE[1]));
-    assert.ok(block('chain.pem').includes(ISSUE[4]));
-    assert.ok(block('chain.pem').includes(`Fix: ${FIX.root}`));
-    assert.ok(block('ca-bundle.pem').includes(ISSUE[3]));
-    assert.ok(block('ca-bundle.pem').includes(`Fix: ${FIX.root}`));
+    assert.ok(block('cert.crt').includes(ISSUE[2]));
+    assert.ok(block('cert.crt').includes(`Fix: ${FIX.tls}`));
+    assert.ok(block('chain.crt').includes(ISSUE[1]));
+    assert.ok(block('chain.crt').includes(ISSUE[4]));
+    assert.ok(block('chain.crt').includes(`Fix: ${FIX.root}`));
+    assert.ok(block('ca-bundle.crt').includes(ISSUE[3]));
+    assert.ok(block('ca-bundle.crt').includes(`Fix: ${FIX.root}`));
     assert.match(r.stdout, /Trust findings\D+4/);
   });
 
@@ -293,7 +293,7 @@ describe('scan reports the trust findings', () => {
   it('quotes a hostile file name in the Verify command so the shell runs nothing from it', { skip: NO_OPENSSL }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'trust-hostile-'));
     const names = ["it's $(touch PWNED).pem", '-leaf.pem', 'a\u{202e}b.pem', 'line\nbreak.pem'];
-    for (const name of names) copyFileSync(join(SCAN_FIXTURE, 'cert.pem'), join(dir, name));
+    for (const name of names) copyFileSync(join(SCAN_FIXTURE, 'cert.crt'), join(dir, name));
     const findings = scanJson(dir).trustFindings;
     assert.equal(findings.length, names.length);
     for (const f of findings) {
@@ -307,9 +307,9 @@ describe('scan reports the trust findings', () => {
   it('finds a certificate after text and other blocks, at the line of its header', { skip: NO_OPENSSL }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'trust-bundle-'));
     const text = '# CA bundle\n\n'
-      + readFileSync(join(FIXTURES, 'control', 'emsign-root-ca-g1.pem'), 'utf8')
+      + readFileSync(join(FIXTURES, 'control', 'emsign-root-ca-g1.crt'), 'utf8')
       + '\n=== emSign ECC Root CA - G3\nsubject and fingerprint lines\n'
-      + readFileSync(join(FIXTURES, 'root', 'emsign-ecc-root-ca-g3.pem'), 'utf8');
+      + readFileSync(join(FIXTURES, 'root', 'emsign-ecc-root-ca-g3.crt'), 'utf8');
     writeFileSync(join(dir, 'cert.pem'), text);
     const [f] = scanJson(dir).trustFindings;
     assert.equal(f.trustRule, 3);
