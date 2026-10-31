@@ -1,6 +1,6 @@
 # Cryptographic Technical Reference
 
-**Version:** 1.2
+**Version:** 1.3
 **Date:** October 2026
 **Classification:** Public
 **Intended Audience:** Security auditors, cryptographic assessors, compliance teams
@@ -987,7 +987,7 @@ The web dashboard provides administrative access to CryptoServe. This section do
 
 **Primary:** GitHub OAuth 2.0
 - State parameter for CSRF protection
-- Tokens stored in HTTP-only, Secure cookies
+- Tokens stored in HTTP-only cookies, marked Secure when `COOKIE_SECURE=true`; startup validation requires it when `ENVIRONMENT=production`
 
 **Development Mode:**
 - `DEV_MODE=true` enables username/password login
@@ -1164,6 +1164,7 @@ Content-Security-Policy:
 ---
 
 **Document History:**
+- v1.3 (October 2026): Removed the PKCE statements from sections 6.4 and 14.1 and stated when the dashboard cookies are marked Secure, to match the code
 - v1.2 (October 2026): Corrected the session token lifetime and the dashboard cookie SameSite attribute to match the code
 - v1.1 (January 2026): Added SDK Security and Dashboard Security sections
 - v1.0 (January 2026): Initial public release
