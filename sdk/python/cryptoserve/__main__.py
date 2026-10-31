@@ -2586,6 +2586,31 @@ def cmd_cbom():
         os.chdir(original_cwd)
 
 
+def _without_userinfo(remote: str) -> tuple[str, bool]:
+    """Return a remote URL without the userinfo of its authority.
+
+    The second value is True when userinfo was removed. A value without
+    "://", such as an scp-like user@host:path remote, is returned unchanged.
+    Otherwise the authority runs from after the first "://" to the first "/",
+    "?" or "#" after it, or to the end, and everything from after "://"
+    through its last "@" is removed, since a password may itself hold "@".
+    A value whose authority holds no "@" is returned unchanged.
+    """
+    scheme_end = remote.find("://")
+    if scheme_end == -1:
+        return remote, False
+    authority_start = scheme_end + len("://")
+    authority_end = len(remote)
+    for delimiter in ("/", "?", "#"):
+        index = remote.find(delimiter, authority_start)
+        if index != -1 and index < authority_end:
+            authority_end = index
+    last_at = remote.rfind("@", authority_start, authority_end)
+    if last_at == -1:
+        return remote, False
+    return remote[:authority_start] + remote[last_at + 1 :], True
+
+
 def _get_git_info() -> dict:
     """Get git repository information if available."""
     import subprocess
@@ -2623,7 +2648,8 @@ def _get_git_info() -> dict:
         if result.returncode == 0:
             git_info["git_branch"] = result.stdout.strip()
 
-        # Get remote URL
+        # Get remote URL. git_repo carries it without the userinfo of its
+        # authority, and stderr notes the removal without the removed text.
         result = subprocess.run(
             ["git", "config", "--get", "remote.origin.url"],
             capture_output=True,
@@ -2631,7 +2657,10 @@ def _get_git_info() -> dict:
             timeout=5,
         )
         if result.returncode == 0:
-            git_info["git_repo"] = result.stdout.strip()
+            git_repo, userinfo_removed = _without_userinfo(result.stdout.strip())
+            git_info["git_repo"] = git_repo
+            if userinfo_removed:
+                print("Origin remote sent without its userinfo", file=sys.stderr)
 
     except Exception:
         pass
