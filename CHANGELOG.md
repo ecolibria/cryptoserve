@@ -344,6 +344,8 @@ also with exit `2`.
 
 The CBOM `gitRepo` field is written without the userinfo of the origin remote URL.
 
+The Python SDK sends the `git_repo` field without the userinfo of the origin remote URL.
+
 A dependency version, a file path and the CBOM's git branch, remote and
 project name no longer carry characters that steer a terminal
 ([#75](https://github.com/ecolibria/cryptoserve/issues/75)).
