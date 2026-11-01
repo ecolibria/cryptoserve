@@ -159,7 +159,7 @@ Certificate verification (`/api/v1/certificates/verify`, `/verify-chain`, `crypt
 
 ### Changed
 
-The removed root emSign ECC Root CA - G3, found in a file `cryptoserve scan` reads or in one certificate verified alone, gets a Fix with one action per kind of file: remove it from a file that software loads as a trust store or CA bundle, and change nothing in a file that holds it on purpose, such as a list of distrusted certificates or a test fixture; a chain of two or more submitted for verification, and a certificate the root's key signed, keep the Fix that moves the chain. One certificate verified alone is named "The certificate", and verified without its issuer it carries a warning that says what was checked (its signature, against every listed key) before what was not (the chain behind its issuer).
+The removed root emSign ECC Root CA - G3, found in a file `cryptoserve scan` reads or in one certificate verified alone, gets a Fix with one action per kind of file: remove it from a file that software loads as a trust store or CA bundle, and change nothing in a file that holds it on purpose, such as a list of distrusted certificates or a test fixture; a chain of two or more submitted for verification, and a certificate the root's key signed, keep the Fix that moves the chain. Through `/api/v1/certificates/verify`, a certificate verified without an issuer certificate is named "The certificate" and, unless it is self-signed, carries a warning that says what was checked (the certificate, against the listed keys) before what was not (the chain behind its issuer).
 
 Every compose file sets container log rotation: 50 MB per file, 5 files, for each service.
 
