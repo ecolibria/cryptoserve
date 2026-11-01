@@ -8,7 +8,7 @@
 
 [Website](https://cryptoserve.dev) · [Docs](https://cryptoserve.dev/docs/) · [Crypto Census](https://census.cryptoserve.dev)
 
-A self-hosted cryptography server, run by a platform or security team, that encrypts and decrypts data for application teams over a REST API: each request names a context such as `user-pii`, and the server chooses the algorithm, derives the key and writes an audit record.
+A self-hosted cryptography server, run by a platform or security team, that encrypts and decrypts data for application teams over a REST API: each request names a context such as `user-pii`, and the server chooses the algorithm, derives or generates the key and writes an audit record.
 
 ## Quick start
 
@@ -112,8 +112,8 @@ To allow `payment-data`, add it to the application's `allowed_contexts` with `PA
 ### What you can do
 
 - Run it on your own infrastructure with PostgreSQL, TLS and generated secrets: [Deploy](#deploy).
-- Call it from an application over HTTP or from Python: [API](#api), [Python SDK](docs/sdk/python.md).
-- Decide which algorithm each kind of data gets: [context model](docs/concepts/context-model.md), [policy engine](docs/concepts/policy-engine.md).
+- Call it from an application over HTTP or from Python: [API](#api).
+- Decide which algorithm each kind of data gets: [context model](docs/concepts/context-model.md).
 - Rotate a context's keys: [key rotation](docs/guides/key-rotation.md).
 - Know what the server records about each request, and for how long: [Data and retention](#data-and-retention).
 - Harden a deployment and report a vulnerability: [Security](#security).
@@ -126,7 +126,7 @@ To allow `payment-data`, add it to the application's `allowed_contexts` with `PA
 | Production | Your infrastructure | `docker compose -f docker-compose.production.yml up -d` | API on port 8003 and dashboard on port 3003 on every interface, PostgreSQL, strict startup checks, secure cookies |
 | Several API instances | More load than one process serves | `docker compose -f docker-compose.scale.yml up -d --scale backend=3` | nginx on port 8003 in front of the instances, Redis for shared rate limits, PostgreSQL, dashboard; development secrets unless you set them |
 
-The production file runs the `crypto-serve-backend` and `crypto-serve-frontend` images from GHCR at `latest`, which were built from an earlier release than this branch. Build both from this checkout before the first start:
+The production file runs the `crypto-serve-backend` and `crypto-serve-frontend` images from GHCR at `latest`. Build both from your checkout before the first start, so they run the code you cloned:
 
 ```bash
 docker build -t ghcr.io/ecolibria/crypto-serve-backend:latest ./backend
@@ -156,7 +156,7 @@ The server reads these environment variables; [configuration](docs/getting-start
 
 ## API
 
-The server lists every route on its OpenAPI page, `localhost:8003/docs`. Application routes take the token `POST /api/v1/applications` returns, as `Authorization: Bearer`; management routes take the dashboard session.
+The server lists every route in its OpenAPI document, `localhost:8003/openapi.json`. Application routes take the token `POST /api/v1/applications` returns, as `Authorization: Bearer`; management routes take the dashboard session.
 
 | Job | Routes |
 |---|---|
@@ -185,10 +185,10 @@ The server keeps its state in PostgreSQL, except where the table says otherwise.
 | Tenants, users, teams, applications, contexts, policies, policy violations and key versions | PostgreSQL tables | the server deletes only a policy, on request |
 | Keys of classical contexts | Not stored: derived on each use from `CRYPTOSERVE_MASTER_KEY` and the context | nothing to delete |
 | ML-KEM key pairs of hybrid contexts such as `user-pii` | `pqc_keys`, the private key encrypted under a key derived from `CRYPTOSERVE_MASTER_KEY` | the server never deletes them |
-| Keys made with `/api/v1/signatures`, `/api/v1/pqc` and `/api/v1/kex` | The API process's memory | the process stops; instances do not share them |
-| One row per operation: operation, context, algorithm, identity, outcome and reason, sizes, latency, caller IP address and user agent | `audit_log` | you delete it: no server code removes audit rows |
+| Keys made with `/api/v1/signatures`, `/api/v1/pqc` and `/api/v1/kex`; algorithm policy overrides | The API process's memory | their `DELETE` route, or the process stops; instances do not share them |
+| One row per encrypt, decrypt, key rotation and rotation schedule change: operation, context, algorithm, identity, outcome and reason, sizes, latency, caller IP address and user agent | `audit_log` | you delete it: no server code removes audit rows |
 | Revoked session tokens | `revoked_tokens` | the first start after they expire |
-| Request log: method, path, query parameter names (never values), client IP | container output | Docker log rotation, `max-size` and `max-file` in each compose file |
+| Request log: method, path, query parameter names and value lengths (never values), client IP | container output | Docker log rotation, `max-size` and `max-file` in each compose file |
 | Backup archives, password-encrypted | `CRYPTOSERVE_BACKUP_DIR` | `DELETE /api/admin/backups/{backup_id}` |
 
 The audit log holds an IP address and a user agent for each request, which are personal data, so set its retention in the database. A context's `retention` fields record a requirement; the server does not delete data on that schedule.
