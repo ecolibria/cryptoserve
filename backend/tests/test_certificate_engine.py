@@ -512,13 +512,24 @@ ROOT_FIX = (
     "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle "
     "you ship; Chrome's removal date for all devices is 2026-10-27."
 )
+# The removed root outside a submitted chain of two or more: one action for each
+# kind of file that can hold it, each opening with its condition.
+TRUST_STORE_BRANCH = (
+    "For a file that software loads as a trust store or CA bundle: remove emSign ECC Root CA - G3 from it, "
+    "because software that loads this file still accepts chains that end at this root."
+)
+ON_PURPOSE_BRANCH = (
+    "A file that holds the certificate on purpose without trusting it, such as a list of distrusted "
+    "certificates or a test fixture, needs no change."
+)
+ROOT_FIX_BY_FILE_KIND = TRUST_STORE_BRANCH + " " + ON_PURPOSE_BRANCH
 RULE_4 = (
     "Chain anchors on emSign ECC Root CA - G3 (the last certificate's signature verifies under that "
     "root's key), which Mozilla removed from its root store on 2026-10-20. " + ROOT_FIX
 )
-ANCHOR_WARNING = (
-    "Chain anchor not checked: no issuer certificate was supplied. "
-    "Verify again with the issuer certificate or the full chain."
+CHAIN_NOT_CHECKED_WARNING = (
+    "The check compared this certificate's signature with every listed key, and did not check the chain "
+    "behind any certificate's issuer. Verify again with the issuer certificate or the full chain."
 )
 
 
@@ -536,11 +547,8 @@ def rule_2(cert_name, issuer_spki, fix):
     )
 
 
-def rule_3(cert_name):
-    return (
-        f"{cert_name} is emSign ECC Root CA - G3, which Mozilla removed from its root store on 2026-10-20. "
-        f"{ROOT_FIX}"
-    )
+def rule_3(cert_name, fix=ROOT_FIX):
+    return f"{cert_name} is emSign ECC Root CA - G3, which Mozilla removed from its root store on 2026-10-20. {fix}"
 
 
 def trust_pem(rel):
@@ -614,7 +622,7 @@ class TestListedKeys:
         result = fresh_engine.verify_chain([trust_pem(listed)], check_expiry=False)
 
         assert result.valid is False
-        assert result.errors == [rule_1("Leaf certificate", spki_sha256(listed), fix_for(listed))]
+        assert result.errors == [rule_1("The certificate", spki_sha256(listed), fix_for(listed))]
 
     def test_leaf_and_its_listed_intermediate_report_both_certificates(self, fresh_engine):
         result = fresh_engine.verify_chain([trust_pem(LEAF_OV_G3C), trust_pem(OV_G3C)], check_expiry=False)
@@ -630,8 +638,8 @@ class TestListedKeys:
         result = fresh_engine.verify_certificate(trust_pem(leaf), check_expiry=False)
 
         assert result.valid is False
-        assert result.errors == [rule_2("Leaf certificate", spki_sha256(issuer), TLS_FIX)]
-        assert result.warnings == [ANCHOR_WARNING]
+        assert result.errors == [rule_2("The certificate", spki_sha256(issuer), TLS_FIX)]
+        assert result.warnings == [CHAIN_NOT_CHECKED_WARNING]
 
     def test_leaf_verified_with_its_listed_issuer_reports_both(self, fresh_engine):
         result = fresh_engine.verify_certificate(
@@ -643,7 +651,7 @@ class TestListedKeys:
             rule_2("Leaf certificate", spki_sha256(OV_G3C), TLS_FIX),
             rule_1("Certificate 1", spki_sha256(OV_G3C), TLS_FIX),
         ]
-        assert ANCHOR_WARNING not in result.warnings
+        assert CHAIN_NOT_CHECKED_WARNING not in result.warnings
 
     def test_chain_ending_at_the_removed_root_returns_the_rule_3_error(self, fresh_engine):
         chain = [trust_pem(DV_G3C), trust_pem(ANCHORED), trust_pem(REMOVED_ROOT)]
@@ -669,8 +677,47 @@ class TestListedKeys:
         result = fresh_engine.verify_certificate(trust_pem(REMOVED_ROOT), check_expiry=False)
 
         assert result.valid is False
-        assert result.errors == [rule_3("Leaf certificate")]
-        assert ANCHOR_WARNING not in result.warnings
+        assert result.errors == [rule_3("The certificate", ROOT_FIX_BY_FILE_KIND)]
+        assert CHAIN_NOT_CHECKED_WARNING not in result.warnings
+
+    @pytest.mark.parametrize("surface", ["verify_certificate", "verify_chain"])
+    def test_removed_root_alone_is_named_the_certificate_and_takes_the_fix_by_file_kind(self, fresh_engine, surface):
+        """Alone, nothing says whether the root came from a trust store or from a file that holds it on purpose."""
+        if surface == "verify_certificate":
+            result = fresh_engine.verify_certificate(trust_pem(REMOVED_ROOT), check_expiry=False)
+        else:
+            result = fresh_engine.verify_chain([trust_pem(REMOVED_ROOT)], check_expiry=False)
+
+        assert result.errors == [
+            "The certificate is emSign ECC Root CA - G3, which Mozilla removed from its root store on 2026-10-20. "
+            + TRUST_STORE_BRANCH
+            + " "
+            + ON_PURPOSE_BRANCH
+        ]
+        [error] = result.errors
+        assert "Leaf certificate" not in error
+        # Each branch opens with its condition, the trust store first, and no
+        # sentence tells the reader to move a chain or to remove the root
+        # whatever the file is.
+        assert error.index("For a file that software loads as a trust store or CA bundle:") < error.index(
+            "A file that holds the certificate on purpose without trusting it"
+        )
+        assert "Move the chain" not in error
+        assert "from any bundle you ship" not in error
+
+    @pytest.mark.parametrize("surface", ["verify_certificate", "verify_chain"])
+    def test_removed_root_as_the_last_of_a_submitted_chain_keeps_the_removed_root_fix(self, fresh_engine, surface):
+        """In a chain of two or more the root is that chain's anchor, so the Fix is the chain's, as for rule 4."""
+        if surface == "verify_certificate":
+            result = fresh_engine.verify_certificate(
+                trust_pem(ANCHORED), issuer_cert_data=trust_pem(REMOVED_ROOT), check_expiry=False
+            )
+        else:
+            result = fresh_engine.verify_chain([trust_pem(ANCHORED), trust_pem(REMOVED_ROOT)], check_expiry=False)
+
+        assert result.valid is False
+        assert result.errors == [rule_3("Certificate 1", ROOT_FIX)]
+        assert ROOT_FIX_BY_FILE_KIND not in result.errors[0]
 
     def test_issuer_anchored_on_the_removed_root_returns_the_rule_4_error(self, fresh_engine):
         result = fresh_engine.verify_certificate(
@@ -683,17 +730,47 @@ class TestListedKeys:
             RULE_4,
         ]
 
-    def test_leaf_verified_without_its_issuer_returns_the_anchor_warning(self, fresh_engine):
+    def test_leaf_verified_without_its_issuer_returns_the_chain_not_checked_warning(self, fresh_engine):
         leaf_pem, ca_pem = issued_by_test_ca()
 
         alone = fresh_engine.verify_certificate(leaf_pem)
         assert alone.valid is True
         assert alone.errors == []
-        assert alone.warnings == [ANCHOR_WARNING]
+        assert alone.warnings == [CHAIN_NOT_CHECKED_WARNING]
 
         with_issuer = fresh_engine.verify_certificate(leaf_pem, issuer_cert_data=ca_pem)
         assert with_issuer.valid is True
-        assert ANCHOR_WARNING not in with_issuer.warnings
+        assert CHAIN_NOT_CHECKED_WARNING not in with_issuer.warnings
+
+    @pytest.mark.parametrize("leaf", ["a leaf a listed key signed (rule 2)", "a leaf on no list"])
+    def test_lone_leaf_warning_says_what_was_checked_before_what_was_not(self, fresh_engine, leaf):
+        if leaf.endswith("(rule 2)"):
+            leaf_pem, issuer_pem = trust_pem(LEAF_OV_G3C), trust_pem(OV_G3C)
+        else:
+            leaf_pem, issuer_pem = issued_by_test_ca()
+
+        alone = fresh_engine.verify_certificate(leaf_pem, check_expiry=False)
+
+        assert alone.warnings == [CHAIN_NOT_CHECKED_WARNING]
+        [warning] = alone.warnings
+        assert "issuer key was not checked" not in warning
+        assert "anchor" not in warning.lower()
+        checked = warning.index("compared this certificate's signature with every listed key")
+        not_checked = warning.index("did not check the chain behind any certificate's issuer")
+        next_step = warning.index("Verify again with the issuer certificate or the full chain.")
+        assert checked < not_checked < next_step
+
+        with_issuer = fresh_engine.verify_certificate(leaf_pem, issuer_cert_data=issuer_pem, check_expiry=False)
+        assert CHAIN_NOT_CHECKED_WARNING not in with_issuer.warnings
+
+    def test_self_signed_certificate_alone_carries_no_chain_not_checked_warning(self, fresh_engine):
+        _, ca_pem = issued_by_test_ca()
+
+        result = fresh_engine.verify_certificate(ca_pem)
+
+        assert result.valid is True
+        assert CHAIN_NOT_CHECKED_WARNING not in result.warnings
+        assert result.warnings == []
 
     def test_another_root_of_the_same_ca_is_not_flagged(self, fresh_engine):
         result = fresh_engine.verify_certificate(trust_pem(CONTROL_ROOT), check_expiry=False)

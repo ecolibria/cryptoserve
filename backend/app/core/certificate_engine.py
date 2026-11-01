@@ -149,7 +149,9 @@ class ValidationError(CertificateError):
 
 _TRUST_KEYS_PATH = Path(__file__).with_name("trust_keys.json")
 
-# One Fix per key use. The CLI and the finding pages use the same words.
+# One Fix per key use. The CLI and the finding pages use the same words. The
+# "root" Fix is the one a chain gets: rule 4, and the removed root as part of a
+# chain of two or more that was submitted for verification.
 _TRUST_FIX = {
     "tls": (
         "Replace the chain with one issued by a CA none of whose keys is listed, "
@@ -165,9 +167,22 @@ _TRUST_FIX = {
     ),
 }
 
-_ANCHOR_NOT_CHECKED = (
-    "Chain anchor not checked: no issuer certificate was supplied. "
-    "Verify again with the issuer certificate or the full chain."
+# The removed root submitted alone (rule 3). Nothing says whether it came from
+# a trust store or from a file that holds it on purpose, so the Fix gives one
+# action for each kind of file, each opening with its condition. `cryptoserve
+# scan` uses the same words for the root in a file it reads.
+_ROOT_FIX_BY_FILE_KIND = (
+    "For a file that software loads as a trust store or CA bundle: remove emSign ECC Root CA - G3 from it, "
+    "because software that loads this file still accepts chains that end at this root. A file that holds "
+    "the certificate on purpose without trusting it, such as a list of distrusted certificates or a test "
+    "fixture, needs no change."
+)
+
+# A certificate verified without its issuer: what was checked, then what was
+# not, then how to check it.
+_CHAIN_NOT_CHECKED = (
+    "The check compared this certificate's signature with every listed key, and did not check the chain "
+    "behind any certificate's issuer. Verify again with the issuer certificate or the full chain."
 )
 
 
@@ -195,7 +210,14 @@ _LISTED_KEYS = _load_listed_keys()
 _LISTED_BY_SPKI = {k.spki_sha256: k for k in _LISTED_KEYS}
 
 
-def _chain_cert_name(index: int) -> str:
+def _chain_cert_name(index: int, count: int) -> str:
+    """The name a result gives the certificate at `index` of `count` submitted.
+
+    Position names are for a chain of two or more; one certificate submitted
+    alone has no position.
+    """
+    if count == 1:
+        return "The certificate"
     return f"Certificate {index}" if index > 0 else "Leaf certificate"
 
 
@@ -248,9 +270,14 @@ def listed_key_errors(certs: list[x509.Certificate], names: list[str]) -> list[s
     of them, (3) it is the removed root. Rule 4 applies to the last
     certificate, the chain's anchor, when the root itself was not supplied: its
     signature verifies under the removed root's key.
+
+    Rule 3 on a chain of two or more takes the chain's Fix, as rule 4 does: the
+    person submitted the chain, so the root's place in it is known. Rule 3 on
+    one certificate submitted alone takes the Fix by file kind.
     """
     errors = []
     root_supplied = False
+    root_fix = _TRUST_FIX["root"] if len(certs) > 1 else _ROOT_FIX_BY_FILE_KIND
     for cert, name in zip(certs, names):
         spki = _spki_sha256(cert)
         own = _LISTED_BY_SPKI.get(spki) if spki else None
@@ -258,7 +285,7 @@ def listed_key_errors(certs: list[x509.Certificate], names: list[str]) -> list[s
             root_supplied = True
             errors.append(
                 f"{name} is emSign ECC Root CA - G3, which Mozilla removed from its root store on 2026-10-20. "
-                f"{_TRUST_FIX['root']}"
+                f"{root_fix}"
             )
         elif own is not None:
             errors.append(
@@ -626,12 +653,12 @@ class CertificateEngine:
         # reader sees. The certificate and its issuer are checked as the
         # two-certificate chain verify_chain would check, under the same names.
         checked = [cert] if issuer_cert is None else [cert, issuer_cert]
-        errors.extend(listed_key_errors(checked, [_chain_cert_name(i) for i in range(len(checked))]))
+        errors.extend(listed_key_errors(checked, [_chain_cert_name(i, len(checked)) for i in range(len(checked))]))
         # Without its issuer, the key that signed the certificate was compared
         # with the listed keys and nothing else, so the result must not read as
         # a verdict on the chain.
         if issuer_cert is None and not _is_self_signed(cert):
-            warnings.append(_ANCHOR_NOT_CHECKED)
+            warnings.append(_CHAIN_NOT_CHECKED)
 
         # Check expiry
         if check_expiry:
@@ -713,12 +740,12 @@ class CertificateEngine:
 
         # Listed keys first, so a compromised or removed key is the first error a
         # reader sees.
-        errors.extend(listed_key_errors(certs, [_chain_cert_name(i) for i in range(len(certs))]))
+        errors.extend(listed_key_errors(certs, [_chain_cert_name(i, len(certs)) for i in range(len(certs))]))
 
         now = datetime.now(timezone.utc)
 
         for i, cert in enumerate(certs):
-            cert_name = _chain_cert_name(i)
+            cert_name = _chain_cert_name(i, len(certs))
 
             # Check expiry
             if check_expiry:

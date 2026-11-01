@@ -12,8 +12,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { X509Certificate, createHash } from 'node:crypto';
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, copyFileSync, cpSync, rmSync } from 'node:fs';
+import { X509Certificate, createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, copyFileSync, cpSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -49,6 +49,12 @@ const FIX = {
   codeSigning: 'Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; a verifier that checks revocation can reject signatures under this key.',
   root: "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle you ship; Chrome's removal date for all devices is 2026-10-27.",
 };
+// The removed root in a file a scan reads (rule 3): the match cannot tell a
+// trust store from a file that holds the root on purpose, so the Fix gives one
+// action for each, each opening with its condition, the trust store first.
+const TRUST_STORE_BRANCH = 'For a file that software loads as a trust store or CA bundle: remove emSign ECC Root CA - G3 from it, because software that loads this file still accepts chains that end at this root.';
+const ON_PURPOSE_BRANCH = 'A file that holds the certificate on purpose without trusting it, such as a list of distrusted certificates or a test fixture, needs no change.';
+const ROOT_FIX_BY_FILE_KIND = `${TRUST_STORE_BRANCH} ${ON_PURPOSE_BRANCH}`;
 const ISSUE = {
   1: 'Certificate uses a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449)',
   2: 'Certificate is signed by a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449)',
@@ -88,7 +94,7 @@ function expectedScanFindings() {
     {
       id: 'trust/distrusted-root', kind: 'distrustedRoot', issue: ISSUE[3], severity: 'high', file: 'ca-bundle.crt', line: rootLine,
       matchedValue: spkiSha(ROOT), valueType: 'spkiSha256', issuerSpkiSha256: null, keyUse: 'root', trustRule: 3, distrustDate: ROOT_DATE,
-      verify: `awk 'NR>=${rootLine}' ca-bundle.crt | ${SPKI_CMD}`, fix: FIX.root, references: [PAGE['trust/distrusted-root']],
+      verify: `awk 'NR>=${rootLine}' ca-bundle.crt | ${SPKI_CMD}`, fix: ROOT_FIX_BY_FILE_KIND, references: [PAGE['trust/distrusted-root']],
     },
     {
       id: 'trust/compromised-ca-key', kind: 'compromisedCaKey', issue: ISSUE[2], severity: 'critical', file: 'cert.crt', line: 1,
@@ -276,8 +282,30 @@ describe('scan reports the trust findings', () => {
     assert.ok(block('chain.crt').includes(ISSUE[4]));
     assert.ok(block('chain.crt').includes(`Fix: ${FIX.root}`));
     assert.ok(block('ca-bundle.crt').includes(ISSUE[3]));
-    assert.ok(block('ca-bundle.crt').includes(`Fix: ${FIX.root}`));
+    assert.ok(block('ca-bundle.crt').includes(`Fix: ${ROOT_FIX_BY_FILE_KIND}`));
+    assert.ok(!block('ca-bundle.crt').includes(FIX.root), 'the root in a scanned file got the chain\'s Fix');
     assert.match(r.stdout, /Trust findings\D+4/);
+  });
+
+  it('gives the removed root in a file it reads the Fix by file kind, never the chain\'s Fix', () => {
+    const rel = 'root/emsign-ecc-root-ca-g3.crt';
+    const { checked, findings } = checkCertificateText(readFileSync(join(FIXTURES, rel), 'utf8'), { file: rel, path: rel });
+    assert.equal(checked, 1);
+    assert.equal(findings.length, 1);
+    const [f] = findings;
+    assert.deepEqual([f.id, f.severity, f.trustRule, f.issue], ['trust/distrusted-root', 'high', 3, ISSUE[3]]);
+    assert.equal(f.fix, ROOT_FIX_BY_FILE_KIND);
+    // Each branch opens with its condition, the trust store first, and no
+    // sentence tells the reader to move a chain or to remove the root whatever
+    // the file is.
+    assert.ok(f.fix.startsWith('For a file that software loads as a trust store or CA bundle: '));
+    assert.ok(f.fix.indexOf(TRUST_STORE_BRANCH) < f.fix.indexOf(ON_PURPOSE_BRANCH));
+    assert.ok(!f.fix.includes('Move the chain'));
+    assert.ok(!f.fix.includes('from any bundle you ship'));
+
+    const r = run(['scan', join(FIXTURES, 'root')]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.replace(/\x1b\[[0-9;]*m/g, '').includes(`Fix: ${ROOT_FIX_BY_FILE_KIND}`));
   });
 
   it('prints a Verify command that, run as printed, prints the finding\'s value', { skip: NO_OPENSSL }, () => {
@@ -414,6 +442,99 @@ describe('gate fails on the trust findings', () => {
     const properties = trust.map((x) => x.properties ?? null);
     assert.ok(properties.every(Boolean), 'a gate SARIF trust result has no properties');
     assert.deepEqual([...properties].sort(byValue), sarifProperties(expectedScanFindings()).sort(byValue));
+  });
+});
+
+// Just enough DER to issue a test certificate in memory: ECDSA P-256 with
+// SHA-256, a common name, a validity, a public key and no extensions.
+function der(tag, ...parts) {
+  const body = Buffer.concat(parts);
+  const n = body.length;
+  const length = n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff];
+  return Buffer.concat([Buffer.from([tag, ...length]), body]);
+}
+function derOid(dotted) {
+  const [a, b, ...arcs] = dotted.split('.').map(Number);
+  const bytes = [40 * a + b];
+  for (const arc of arcs) {
+    const base128 = [arc % 128];
+    for (let v = Math.floor(arc / 128); v > 0; v = Math.floor(v / 128)) base128.unshift(0x80 | (v % 128));
+    bytes.push(...base128);
+  }
+  return der(0x06, Buffer.from(bytes));
+}
+const ECDSA_WITH_SHA256 = der(0x30, derOid('1.2.840.10045.4.3.2'));
+const derName = (cn) => der(0x30, der(0x31, der(0x30, derOid('2.5.4.3'), der(0x0c, Buffer.from(cn, 'utf8')))));
+const derTime = (ms) => der(0x17, Buffer.from(`${new Date(ms).toISOString().replace(/[-:T]/g, '').slice(2, 14)}Z`));
+
+/** A certificate for `subject`'s public key, signed by `issuer`'s private key, as PEM and DER. */
+function issue(subject, issuer) {
+  const now = Date.now();
+  const tbs = der(0x30,
+    der(0xa0, der(0x02, Buffer.from([2]))),
+    der(0x02, Buffer.from([1])),
+    ECDSA_WITH_SHA256,
+    derName(issuer.name),
+    der(0x30, derTime(now - 86400000), derTime(now + 86400000)),
+    derName(subject.name),
+    subject.publicKey.export({ type: 'spki', format: 'der' }));
+  const raw = der(0x30, tbs, ECDSA_WITH_SHA256, der(0x03, Buffer.from([0]), sign('sha256', tbs, issuer.privateKey)));
+  const pem = `-----BEGIN CERTIFICATE-----\n${raw.toString('base64').match(/.{1,64}/g).join('\n')}\n-----END CERTIFICATE-----\n`;
+  return { pem, raw };
+}
+
+describe('rule 4 with a generated root in a test key table', () => {
+  it('reports a certificate the listed root\'s key signed as trust/distrusted-root, high, rule 4, in scan and gate', () => {
+    const root = { name: 'Generated distrusted root', ...generateKeyPairSync('ec', { namedCurve: 'P-256' }) };
+    const leaf = { name: 'leaf.test', ...generateKeyPairSync('ec', { namedCurve: 'P-256' }) };
+    const rootCert = issue(root, root);
+    const leafCert = issue(leaf, root);
+    const rootSpki = root.publicKey.export({ type: 'spki', format: 'der' });
+    assert.ok(new X509Certificate(leafCert.pem).verify(root.publicKey), 'the generated leaf does not verify under the generated root');
+
+    const base = mkdtempSync(join(tmpdir(), 'trust-rule-4-'));
+    try {
+      // A copy of the CLI whose key table also lists the generated root, with
+      // the use and status the removed root's row carries.
+      const cli = join(base, 'cli');
+      cpSync(join(__dirname, '..', 'bin'), join(cli, 'bin'), { recursive: true });
+      cpSync(LIB, join(cli, 'lib'), { recursive: true });
+      copyFileSync(join(__dirname, '..', 'package.json'), join(cli, 'package.json'));
+      const table = JSON.parse(readFileSync(join(cli, 'lib', 'trust-keys.json'), 'utf8'));
+      table.keys.push({
+        name: root.name, use: 'root', spkiSha256: sha256(rootSpki), certSha256: [sha256(rootCert.raw)],
+        spkiDer: rootSpki.toString('base64'), source: null, reported: null, status: 'distrusted',
+      });
+      writeFileSync(join(cli, 'lib', 'trust-keys.json'), JSON.stringify(table));
+      const tree = join(base, 'tree');
+      mkdirSync(tree);
+      writeFileSync(join(tree, 'leaf.crt'), leafCert.pem);
+      const runCopy = (argv) => {
+        const r = spawnSync(process.execPath, [join(cli, 'bin', 'cryptoserve.mjs'), ...argv], { encoding: 'utf-8', timeout: 60000 });
+        return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+      };
+
+      const scanned = runCopy(['scan', tree, '--format', 'json']);
+      assert.equal(scanned.code, 0, scanned.stderr);
+      const findings = JSON.parse(scanned.stdout).trustFindings;
+      assert.deepEqual(
+        findings.map((f) => [f.id, f.severity, f.trustRule, f.kind, f.keyUse, f.issuerSpkiSha256, f.matchedValue, f.fix]),
+        [['trust/distrusted-root', 'high', 4, 'distrustedRoot', 'root', sha256(rootSpki), sha256(leafCert.raw), FIX.root]],
+      );
+
+      const gated = runCopy(['gate', tree, '--format', 'json']);
+      assert.equal(gated.code, 1, gated.stdout + gated.stderr);
+      assert.deepEqual(
+        JSON.parse(gated.stdout).violations.filter((v) => v.type === 'trust').map((v) => [v.id, v.severity, v.trustRule]),
+        [['trust/distrusted-root', 'high', 4]],
+      );
+
+      // Control: the CLI with the committed key table finds nothing in the same
+      // tree, so the finding came from the generated row.
+      assert.deepEqual(scanJson(tree).trustFindings, []);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 
