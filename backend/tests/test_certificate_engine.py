@@ -528,8 +528,8 @@ RULE_4 = (
     "root's key), which Mozilla removed from its root store on 2026-10-20. " + ROOT_FIX
 )
 CHAIN_NOT_CHECKED_WARNING = (
-    "The check compared this certificate's signature with every listed key, and did not check the chain "
-    "behind any certificate's issuer. Verify again with the issuer certificate or the full chain."
+    "The check compared this certificate with the listed keys, and did not check the chain behind its "
+    "issuer. Verify again with the issuer certificate or the full chain."
 )
 
 
@@ -755,13 +755,28 @@ class TestListedKeys:
         [warning] = alone.warnings
         assert "issuer key was not checked" not in warning
         assert "anchor" not in warning.lower()
-        checked = warning.index("compared this certificate's signature with every listed key")
-        not_checked = warning.index("did not check the chain behind any certificate's issuer")
+        checked = warning.index("compared this certificate with the listed keys")
+        not_checked = warning.index("did not check the chain behind its issuer")
         next_step = warning.index("Verify again with the issuer certificate or the full chain.")
         assert checked < not_checked < next_step
 
         with_issuer = fresh_engine.verify_certificate(leaf_pem, issuer_cert_data=issuer_pem, check_expiry=False)
         assert CHAIN_NOT_CHECKED_WARNING not in with_issuer.warnings
+
+    @pytest.mark.parametrize("listed", LISTED)
+    def test_listed_intermediate_alone_warning_claims_only_the_comparison_the_check_made(self, fresh_engine, listed):
+        """A certificate whose own key is listed (rule 1) is reported by that key; the check compares its
+        signature only with the removed root's key (rule 4) and never with the eight compromised intermediate
+        keys (rule 2). The warning it carries must not say its signature was compared with every listed key."""
+        alone = fresh_engine.verify_certificate(trust_pem(listed), check_expiry=False)
+
+        assert alone.valid is False
+        assert alone.errors == [rule_1("The certificate", spki_sha256(listed), fix_for(listed))]
+        assert alone.warnings == [CHAIN_NOT_CHECKED_WARNING]
+        [warning] = alone.warnings
+        assert "every listed key" not in warning
+        assert "signature" not in warning
+        assert "Verify again with the issuer certificate or the full chain." in warning
 
     def test_self_signed_certificate_alone_carries_no_chain_not_checked_warning(self, fresh_engine):
         _, ca_pem = issued_by_test_ca()

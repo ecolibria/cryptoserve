@@ -179,10 +179,13 @@ _ROOT_FIX_BY_FILE_KIND = (
 )
 
 # A certificate verified without its issuer: what was checked, then what was
-# not, then how to check it.
+# not, then how to check it. The warning claims no signature comparison: the
+# certificate's key is looked up among every listed key, but its signature is
+# compared only with the keys rules 2 and 4 try, and rule 2 is skipped when the
+# certificate's own key is listed (rule 1).
 _CHAIN_NOT_CHECKED = (
-    "The check compared this certificate's signature with every listed key, and did not check the chain "
-    "behind any certificate's issuer. Verify again with the issuer certificate or the full chain."
+    "The check compared this certificate with the listed keys, and did not check the chain behind its "
+    "issuer. Verify again with the issuer certificate or the full chain."
 )
 
 
