@@ -1,0 +1,38 @@
+# Paths exempt from the local build-and-swap docker verification gate.
+#
+# One path prefix or glob per line. `**` is the only recursive form; a single
+# `*` does not cross a `/`.
+#
+# docker-compose.yml builds two images: backend from ./backend and frontend
+# from ./frontend. Each Dockerfile copies only from its own build context, and
+# the compose file bind-mounts only ./backend and ./frontend into the running
+# services. A change confined to the paths below cannot change either image or
+# the running stack, so a build-and-swap run cannot observe it.
+#
+# Never listed: backend/, frontend/, docker-compose.yml and this file. The gate
+# still applies unless EVERY changed file in the diff matches, and a diff that
+# touches this file is never exempt.
+#
+# Dockerfile.allinone and the files it copies are not built by
+# docker-compose.yml, so this gate cannot observe a change to them.
+
+.github/**
+ci/**
+docs/**
+examples/**
+scripts/**
+sdk/**
+.env.example
+.gitignore
+.hmaignore
+CHANGELOG.md
+CONTRIBUTING.md
+Dockerfile.allinone
+LICENSE
+README.md
+SECURITY.md
+docker-compose.production.yml
+docker-compose.scale.yml
+docker-entrypoint.sh
+nginx.scale.conf
+supervisord.conf
