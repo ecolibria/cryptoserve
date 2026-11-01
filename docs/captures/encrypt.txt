@@ -1,0 +1,9 @@
+{
+  "algorithm": {
+    "name": "AES-256-GCM+ML-KEM-768",
+    "mode": "hybrid",
+    "key_bits": 256,
+    "description": "Hybrid classical + post-quantum, NIST PQC Level 3 (FIPS 203)"
+  },
+  "usage": "at_rest"
+}

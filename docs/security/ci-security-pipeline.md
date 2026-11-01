@@ -294,7 +294,7 @@ v* tag pushed
 - **Tag check**: Refuses to publish when the tag does not match the version in `sdk/python/pyproject.toml`
 - **twine check**: Validates package metadata and structure before upload
 - **SHA-256 checksums**: A `SHA256SUMS.txt` file with bare filenames covers the wheels and sdists attached to the release, and the workflow runs `sha256sum -c` on it before creating the release
-- **GitHub Release**: Created with release notes that give the verification commands, and attaches the wheels, the sdists and `SHA256SUMS.txt`. No Python release published so far verifies this way; see [Verifying releases](../../README.md#verifying-releases)
+- **GitHub Release**: Created with release notes that give the verification commands, and attaches the wheels, the sdists and `SHA256SUMS.txt`. No Python release published so far verifies this way; see [Verifying releases](../trust.md#verifying-releases)
 
 ## 5. Branch Protection
 
