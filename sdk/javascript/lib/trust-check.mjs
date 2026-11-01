@@ -34,12 +34,19 @@ const KEYS = TABLE.keys.map((k) => ({
 const BY_SPKI = new Map(KEYS.map((k) => [k.spkiSha256, k]));
 
 // One Fix per key use. The certificate engine and the finding pages use the
-// same words.
+// same words. The `root` Fix is the one a chain gets: rule 4, a certificate the
+// root's key signed.
 export const TRUST_FIX = {
   tls: 'Replace the chain with one issued by a CA none of whose keys is listed, and remove this certificate from any bundle or pin set you ship.',
   codeSigning: 'Re-sign the artifacts with a certificate from a CA none of whose keys is listed and republish; a verifier that checks revocation can reject signatures under this key.',
   root: "Move the chain to a CA whose root stays trusted, and remove emSign ECC Root CA - G3 from any bundle you ship; Chrome's removal date for all devices is 2026-10-27.",
 };
+
+// The removed root itself in a file (rule 3). The match cannot tell a trust
+// store from a file that holds the root on purpose, so the Fix gives one action
+// for each kind of file, each opening with its condition. The certificate
+// engine uses the same words for the root submitted alone.
+export const ROOT_FIX_BY_FILE_KIND = 'For a file that software loads as a trust store or CA bundle: remove emSign ECC Root CA - G3 from it, because software that loads this file still accepts chains that end at this root. A file that holds the certificate on purpose without trusting it, such as a list of distrusted certificates or a test fixture, needs no change.';
 
 const ISSUE = {
   1: 'Certificate uses a publicly compromised CA key (eMudhra intermediate, Mozilla Bug 2083449)',
@@ -179,7 +186,7 @@ export function checkCertificateText(text, { file, path }) {
         trustRule,
         distrustDate,
         verify: verifyCommand(valueType, path, line, firstHeaderLine),
-        fix: TRUST_FIX[keyUse],
+        fix: trustRule === 3 ? ROOT_FIX_BY_FILE_KIND : TRUST_FIX[keyUse],
         references,
       });
     };

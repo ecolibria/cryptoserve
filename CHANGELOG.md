@@ -159,6 +159,8 @@ Certificate verification (`/api/v1/certificates/verify`, `/verify-chain`, `crypt
 
 ### Changed
 
+The removed root emSign ECC Root CA - G3, found in a file `cryptoserve scan` reads or in one certificate verified alone, gets a Fix with one action per kind of file: remove it from a file that software loads as a trust store or CA bundle, and change nothing in a file that holds it on purpose, such as a list of distrusted certificates or a test fixture; a chain of two or more submitted for verification, and a certificate the root's key signed, keep the Fix that moves the chain. One certificate verified alone is named "The certificate", and verified without its issuer it carries a warning that says what was checked (its signature, against every listed key) before what was not (the chain behind its issuer).
+
 Every compose file sets container log rotation: 50 MB per file, 5 files, for each service.
 
 The backend accepts an incoming `X-Request-ID` only as one header of 16 to 128 letters, digits, `_` or `-`, and otherwise assigns its own ID; it accepts `X-Correlation-ID` under the same rule at 1 to 128 characters and no longer uses it as the request ID.
