@@ -219,8 +219,67 @@ DEV_MODE=true STARTUP_VALIDATION_LEVEL=skip pytest -v
 | Static analysis | `bandit` in CI with medium+ severity threshold |
 | Action pinning | All GitHub Actions pinned to SHA commit hashes |
 | Package publishing | PyPI OIDC Trusted Publishers (no stored API tokens) |
-| Release artifacts | `SHA256SUMS.txt` on each CLI GitHub Release from `js-v0.4.0`; no Python release verifies yet ([Verifying releases](../README.md#verifying-releases)) |
+| Release artifacts | `SHA256SUMS.txt` on each CLI GitHub Release from `js-v0.4.0`; no Python release verifies yet ([Verifying releases](#verifying-releases)) |
 | Container security | Multi-stage Docker build, non-root runtime user |
+
+## Verifying releases
+
+Each CLI release from `js-v0.4.0` onward attaches a `SHA256SUMS.txt` to its
+GitHub Release, covering the npm tarball uploaded with it. Entries use bare
+filenames, so verification works in whatever directory you download into.
+
+```bash
+gh release download js-v0.4.0 -R ecolibria/cryptoserve
+sha256sum -c SHA256SUMS.txt
+```
+
+No Python SDK release verifies this way yet. `v1.4.3` has no release assets.
+The checksum files on earlier Python tags record build directory paths rather
+than bare filenames and list sdists that were never attached, and most of their
+entries do not match the file PyPI serves under the same name.
+
+Both publish workflows are triggered by a tag push and refuse to publish when
+the tag disagrees with the package version in the tree. npm publishes through
+npm Trusted Publishing and PyPI through PyPI Trusted Publishing, both over
+OIDC; no registry token exists in either workflow.
+
+Releases from `js-v0.4.0` onward also carry SLSA provenance. That an attestation
+exists and is trusted is not the same as it being ours, so the release fails
+unless the provenance names this repository, this workflow and the tag being
+released. To check that yourself:
+
+```bash
+curl -s "$(npm view cryptoserve@0.6.0 dist.attestations.url)" | node -pe '
+JSON.parse(require("fs").readFileSync(0, "utf8")).attestations
+  .filter((a) => a.predicateType.startsWith("https://slsa.dev/provenance/"))
+  .map((a) => JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload, "base64"))
+    .predicate.buildDefinition.externalParameters.workflow)'
+```
+
+```
+[
+  {
+    ref: 'refs/tags/js-v0.6.0',
+    repository: 'https://github.com/ecolibria/cryptoserve',
+    path: '.github/workflows/publish-npm.yml'
+  }
+]
+```
+
+`npm audit signatures`, in a project that depends on cryptoserve, verifies the
+signature chain over that attestation.
+
+CLI versions before `0.4.0` were published under the previous token-based
+workflow, and no checksum file covers them. No `js-v` tag before `js-v0.4.0`
+has a GitHub Release. CLI `0.2.0` and `0.3.4` were tagged `v0.2.0` and
+`v0.3.4`, and the GitHub Releases on those tags, titled "CryptoServe SDK
+v0.2.0" and "CryptoServe SDK v0.3.4", hold Python wheels and a
+`SHA256SUMS.txt` that does not cover the CLI tarball. Only `0.2.1` carries an
+attestation.
+
+PyPI versions at or before `1.4.3` carry no attestations, and neither does any
+published version of `cryptoserve-core`, `cryptoserve-client` or
+`cryptoserve-auto`.
 
 ---
 

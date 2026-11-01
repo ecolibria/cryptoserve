@@ -2,393 +2,218 @@
 
 # cryptoserve
 
-Cryptographic toolchain for codebases. Scans for weak crypto, generates CBOMs, enforces CI gates, encrypts files, and assesses post-quantum readiness. Works offline. Apache 2.0.
-
 [![Build](https://img.shields.io/github/actions/workflow/status/ecolibria/cryptoserve/ci.yml?branch=main&label=build)](https://github.com/ecolibria/cryptoserve/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/cryptoserve.svg?label=npm)](https://www.npmjs.com/package/cryptoserve)
-[![PyPI](https://img.shields.io/pypi/v/cryptoserve.svg?label=pypi)](https://pypi.org/project/cryptoserve/)
+[![Security](https://github.com/ecolibria/cryptoserve/actions/workflows/security.yml/badge.svg)](https://github.com/ecolibria/cryptoserve/actions/workflows/security.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-[Website](https://cryptoserve.dev) · [Crypto Census](https://census.cryptoserve.dev) · [Docs](https://cryptoserve.dev/docs/) · [SDK](#sdks) · [Self-host](#self-host-optional)
+[Website](https://cryptoserve.dev) · [Docs](https://cryptoserve.dev/docs/) · [Crypto Census](https://census.cryptoserve.dev)
+
+A self-hosted cryptography server, run by a platform or security team, that encrypts and decrypts data for application teams over a REST API: each request names a context such as `user-pii`, and the server chooses the algorithm, derives the key and writes an audit record.
 
 ## Quick start
 
-```bash
-npx cryptoserve scan .
-```
-
-```
-CRYPTOSERVE > scan
-
-  Directory            /work/payments-api
-  Source files         2
-  Files examined       3
-
-Crypto Libraries
-  Library                Version    Risk       Algorithms
-  ---------------------- ---------- ---------- ------------------------------
-  jsonwebtoken           9.0.0      high       RS256, HS256, ES256
-  bcrypt                 5.1.0      none       bcrypt
-  cryptography           builtin    high       rsa
-  node:crypto            builtin    critical   md5, 3des, aes-gcm, csprng
-
-Weak Crypto Patterns
-  x RSA-1024: 1024-bit key is below the 2048-bit minimum (CWE-326)
-    src/keys.py:4
-    *  Fix: Generate keys at 3072 bits or move to ML-KEM / ML-DSA
-  x MD5: Collision attacks (CWE-328)
-    src/tokens.js:4
-    *  Fix: Replace with SHA-256
-  !  3DES: Deprecated, Sweet32 attack (CWE-327)
-    src/tokens.js:8
-    *  Fix: Replace with AES-256-GCM
-
-Source Code Crypto
-  Algorithm          Category      Language    Risk      Location
-  ------------------ ------------- ----------- --------- ------------------------------
-  rsa                encryption    python      high      src/keys.py:4
-  rsa-1024           encryption    python      critical  src/keys.py:4
-  md5                hashing       javascript  critical  src/tokens.js:4
-  3des               encryption    javascript  low       src/tokens.js:8
-  aes-gcm            encryption    javascript  none      src/tokens.js:12
-  csprng             random        javascript  none      src/tokens.js:12
-
-Summary
-  Libraries            4
-  Source algorithms    6
-  Languages            python, javascript
-  Manifests            package.json
-  Secrets found        + 0
-  Weak patterns        !  3
-  Cert/key files       0
-```
-
-Scans 6 languages (JavaScript/TypeScript, Go, Python, Java/Kotlin, Rust, C/C++)
-against a database of 133 algorithms, 22 of them flagged weak with a named
-replacement. Every finding carries `file:line`. Zero npm dependencies. Works
-offline.
-
-## Install
+With Docker, git, curl and jq installed, start the API and its PostgreSQL database from the development compose file and check that it is ready:
 
 ```bash
-npx cryptoserve scan .          # run once, no install
-npm install -g cryptoserve      # install globally (Node 18+)
-pip install cryptoserve         # Python SDK + CLI alias
+git clone https://github.com/ecolibria/cryptoserve.git && cd cryptoserve
+docker compose up -d --wait backend
+curl -s localhost:8003/health/ready | jq
 ```
 
-### From source
+What `curl -s localhost:8003/health/ready | jq` prints, trimmed ([full output](docs/captures/health-ready.txt)):
+
+```json
+{
+  "status": "healthy",
+  ...
+  "checks": {
+    "database": {
+      "status": "healthy",
+      ...
+    "kms": {
+      "status": "healthy",
+      "latency_ms": 0.27,
+      "message": "KMS backend: local",
+      ...
+```
+
+The first run builds the backend image from source. This stack is for evaluation: it listens on localhost only, uses a fixed development master key, and turns on a sign-in that skips OAuth. [Deploy](#deploy) covers production.
+
+Sign in with the development sign-in and register an application allowed one context. Its token authorizes the encrypt call; plaintext travels base64-encoded (`aGVsbG8gd29ybGQ=` is `hello world`):
 
 ```bash
-git clone https://github.com/ecolibria/cryptoserve.git
-cd cryptoserve
-node sdk/javascript/bin/cryptoserve.mjs scan .   # JS CLI, no build step
+curl -s -c cookies.txt localhost:8003/auth/dev-login -o /dev/null
+TOKEN=$(curl -s -b cookies.txt localhost:8003/api/v1/applications -H 'Content-Type: application/json' \
+  -d '{"name": "my-app", "team": "platform", "allowed_contexts": ["user-pii"]}' | jq -r .access_token)
+curl -s localhost:8003/api/v1/crypto/encrypt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"plaintext": "aGVsbG8gd29ybGQ=", "context": "user-pii"}' > enc.json
+jq '{algorithm, usage}' enc.json
 ```
 
-The Python SDK lives under `sdk/python/` (editable install via `pip install -e sdk/python`).
+What `jq '{algorithm, usage}' enc.json` prints ([full output](docs/captures/encrypt.txt)):
 
-## Verifying releases
+```json
+{
+  "algorithm": {
+    "name": "AES-256-GCM+ML-KEM-768",
+    "mode": "hybrid",
+    "key_bits": 256,
+    "description": "Hybrid classical + post-quantum, NIST PQC Level 3 (FIPS 203)"
+  },
+  "usage": "at_rest"
+}
+```
 
-Each CLI release from `js-v0.4.0` onward attaches a `SHA256SUMS.txt` to its
-GitHub Release, covering the npm tarball uploaded with it. Entries use bare
-filenames, so verification works in whatever directory you download into.
+The application never named an algorithm: the `user-pii` context chose a hybrid of AES-256-GCM and ML-KEM-768. The ciphertext in `enc.json` decrypts under the same context:
 
 ```bash
-gh release download js-v0.4.0 -R ecolibria/cryptoserve
-sha256sum -c SHA256SUMS.txt
+jq '{ciphertext, context: "user-pii"}' enc.json | curl -s localhost:8003/api/v1/crypto/decrypt \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d @-
 ```
 
-No Python SDK release verifies this way yet. `v1.4.3` has no release assets.
-The checksum files on earlier Python tags record build directory paths rather
-than bare filenames and list sdists that were never attached, and most of their
-entries do not match the file PyPI serves under the same name.
+What the request prints ([full output](docs/captures/decrypt.txt)):
 
-Both publish workflows are triggered by a tag push and refuse to publish when
-the tag disagrees with the package version in the tree. npm publishes through
-npm Trusted Publishing and PyPI through PyPI Trusted Publishing, both over
-OIDC; no registry token exists in either workflow.
+```json
+{"plaintext":"aGVsbG8gd29ybGQ="}
+```
 
-Releases from `js-v0.4.0` onward also carry SLSA provenance. That an attestation
-exists and is trusted is not the same as it being ours, so the release fails
-unless the provenance names this repository, this workflow and the tag being
-released. To check that yourself:
+Now ask for a context the application was not granted. The server answers HTTP 403 and encrypts nothing:
 
 ```bash
-curl -s "$(npm view cryptoserve@0.6.0 dist.attestations.url)" | node -pe '
-JSON.parse(require("fs").readFileSync(0, "utf8")).attestations
-  .filter((a) => a.predicateType.startsWith("https://slsa.dev/provenance/"))
-  .map((a) => JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload, "base64"))
-    .predicate.buildDefinition.externalParameters.workflow)'
+curl -s localhost:8003/api/v1/crypto/encrypt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"plaintext": "aGVsbG8gd29ybGQ=", "context": "payment-data"}'
 ```
 
-```
-[
-  {
-    ref: 'refs/tags/js-v0.6.0',
-    repository: 'https://github.com/ecolibria/cryptoserve',
-    path: '.github/workflows/publish-npm.yml'
-  }
-]
+What the request prints ([full output](docs/captures/encrypt-refused.txt)):
+
+```json
+{"detail":"Identity not authorized for context: payment-data"}
 ```
 
-`npm audit signatures`, in a project that depends on cryptoserve, verifies the
-signature chain over that attestation.
+Every encrypt and decrypt request is an audit row, a refusal included. Read the newest with the administrator session:
 
-CLI versions before `0.4.0` were published under the previous token-based
-workflow, and no checksum file covers them. No `js-v` tag before `js-v0.4.0`
-has a GitHub Release. CLI `0.2.0` and `0.3.4` were tagged `v0.2.0` and
-`v0.3.4`, and the GitHub Releases on those tags, titled "CryptoServe SDK
-v0.2.0" and "CryptoServe SDK v0.3.4", hold Python wheels and a
-`SHA256SUMS.txt` that does not cover the CLI tarball. Only `0.2.1` carries an
-attestation.
+```bash
+curl -s -b cookies.txt localhost:8003/api/admin/audit/global | jq '.[0] | {operation, context, success, error_message}'
+```
 
-PyPI versions at or before `1.4.3` carry no attestations, and neither does any
-published version of `cryptoserve-core`, `cryptoserve-client` or
-`cryptoserve-auto`.
+What `curl -s -b cookies.txt localhost:8003/api/admin/audit/global | jq '.[0] | {operation, context, success, error_message}'` prints ([full output](docs/captures/audit.txt)):
 
-## Which command do I want
+```json
+{
+  "operation": "encrypt",
+  "context": "payment-data",
+  "success": false,
+  "error_message": "Identity not authorized for context: payment-data"
+}
+```
 
-| You want to... | Command |
+To allow `payment-data`, add it to the application's `allowed_contexts` with `PATCH /api/v1/applications/{app_id}`.
+
+### What you can do
+
+- Run it on your own infrastructure with PostgreSQL, TLS and generated secrets: [Deploy](#deploy).
+- Call it from an application over HTTP or from Python: [API](#api), [Python SDK](docs/sdk/python.md).
+- Decide which algorithm each kind of data gets: [context model](docs/concepts/context-model.md), [policy engine](docs/concepts/policy-engine.md).
+- Rotate a context's keys: [key rotation](docs/guides/key-rotation.md).
+- Know what the server records about each request, and for how long: [Data and retention](#data-and-retention).
+- Harden a deployment and report a vulnerability: [Security](#security).
+
+## Deploy
+
+| Mode | When | Start | Includes |
+|---|---|---|---|
+| Evaluation | One machine | `docker compose up -d --wait backend` | API on `localhost:8003`, PostgreSQL on `localhost:5433`, development secrets and sign-in |
+| Production | Your infrastructure | `docker compose -f docker-compose.production.yml up -d` | API on port 8003 and dashboard on port 3003 on every interface, PostgreSQL, strict startup checks, secure cookies |
+| Several API instances | More load than one process serves | `docker compose -f docker-compose.scale.yml up -d --scale backend=3` | nginx on port 8003 in front of the instances, Redis for shared rate limits, PostgreSQL, dashboard; development secrets unless you set them |
+
+The production file runs the `crypto-serve-backend` and `crypto-serve-frontend` images from GHCR at `latest`, which were built from an earlier release than this branch. Build both from this checkout before the first start:
+
+```bash
+docker build -t ghcr.io/ecolibria/crypto-serve-backend:latest ./backend
+docker build -t ghcr.io/ecolibria/crypto-serve-frontend:latest ./frontend
+```
+
+It reads `POSTGRES_PASSWORD`, `CRYPTOSERVE_MASTER_KEY`, `JWT_SECRET_KEY`, `OAUTH_STATE_SECRET`, `HKDF_SALT`, `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from the environment or a `.env` file beside it. Started that way, it reports the same healthy readiness as the Quick start, with the dashboard on port 3003. TLS, secret generation, backups and monitoring: [production deployment checklist](docs/guides/production-deployment.md). Several instances: [horizontal scaling](docs/horizontal-scaling.md).
+
+### Configuration
+
+The server reads these environment variables; [configuration](docs/getting-started/configuration.md) describes more.
+
+| Variable | Sets |
 |---|---|
-| See what crypto is in this project | `cryptoserve scan .` |
-| Score post-quantum readiness and get a migration plan | `cryptoserve pqc` |
-| Generate a Cryptographic Bill of Materials | `cryptoserve cbom --format cyclonedx` |
-| Block weak crypto in CI | `cryptoserve gate . --fail-on-weak` |
-| Clear a false positive without silencing a directory | `// cryptoserve-ignore <rule-id> -- <why>` |
-| Encrypt a file or string offline | `cryptoserve encrypt --file data.csv --password $SECRET` |
-| Hash a password (scrypt / pbkdf2 / argon2) | `cryptoserve hash-password --algorithm argon2` |
-| Store secrets in an encrypted local vault | `cryptoserve vault set API_KEY <value>` |
-| See what cryptography the open-source ecosystem uses | `cryptoserve census` |
+| `DATABASE_URL` | The PostgreSQL connection, as `postgresql+asyncpg://`. The images ship no SQLite driver. |
+| `CRYPTOSERVE_MASTER_KEY` | The secret every data key is derived from or encrypted under. |
+| `CRYPTOSERVE_HKDF_SALT` | The salt the `local` key backend derives with; unset, it uses a built-in constant. |
+| `JWT_SECRET_KEY`, `OAUTH_STATE_SECRET`, `HKDF_SALT` | Session signing, OAuth state, and the salt the startup checks require. |
+| `ENVIRONMENT`, `DEV_MODE`, `STARTUP_VALIDATION_LEVEL` | `production` trims health responses; `DEV_MODE`: see [Security](#security); checks: `strict`, `warn` or `skip`. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `OAUTH_GOOGLE_*`, `OAUTH_AZURE_AD_*`, `OAUTH_OKTA_*`, `OAUTH_OIDC_*` | Dashboard sign-in. A provider is offered once its client ID and secret are set; Okta also needs its domain, OIDC its discovery URL. |
+| `FRONTEND_URL`, `BACKEND_URL`, `COOKIE_SECURE`, `COOKIE_DOMAIN` | Where the dashboard and API live. CORS admits `FRONTEND_URL` only. |
+| `KMS_BACKEND` | `local`, the default and the only backend the images can load; `aws_kms` also needs boto3. |
+| `KEY_CEREMONY_ENABLED`, `KEY_CEREMONY_THRESHOLD`, `KEY_CEREMONY_SHARES` | Take the master key from a Shamir key ceremony (`/api/admin/ceremony`) instead of the environment. |
+| `FIPS_MODE` | `disabled`, `enabled` or `preferred`. |
+| `REDIS_URL`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_CRYPTO_OPS`, `RATE_LIMIT_BURST` | Rate limits, shared between instances through Redis. |
+| `CRYPTOSERVE_BACKUP_DIR` | Where `POST /api/admin/backups` writes archives. |
 
-Run `cryptoserve help` or `cryptoserve <command> --help` for full flags.
+## API
 
-## Commands
+The server lists every route on its OpenAPI page, `localhost:8003/docs`. Application routes take the token `POST /api/v1/applications` returns, as `Authorization: Bearer`; management routes take the dashboard session.
 
-### Assess
-
-| Command | What it does |
+| Job | Routes |
 |---|---|
-| `cryptoserve scan [path]` | Find every crypto library, algorithm, weak pattern, and hardcoded secret in the tree. JSON or table output. |
-| `cryptoserve pqc` | Quantum-readiness score with SNDL (Store Now, Decrypt Later) analysis and NIST-aligned migration guidance. |
-| `cryptoserve cbom [path] --format <fmt>` | Export a CBOM in CycloneDX or SPDX. |
-| `cryptoserve gate [path]` | CI/CD quality gate. Non-zero exit on weak algorithms or thresholds failing. SARIF for the GitHub Security tab. |
-| `cryptoserve census` | Global crypto adoption across 11 package ecosystems plus NVD. Renders the published snapshot from [census.cryptoserve.dev](https://census.cryptoserve.dev), which is a dated measurement rather than a live feed, and shows the collection date. Cached for a day; `--no-cache` re-fetches. |
+| Check health and readiness | `GET /health`, `/health/live`, `/health/ready`, `/health/deep`, `/health/fips` |
+| Sign in to the dashboard | `/auth/login/{provider}`, `/auth/callback/{provider}`; `/auth/dev-login` in development mode |
+| Register applications, rotate and revoke their tokens | `/api/v1/applications`, `/api/v1/auth` |
+| Encrypt and decrypt by context | `/api/v1/crypto/encrypt`, `/decrypt`, `/batch/encrypt`, `/batch/decrypt` |
+| Manage contexts and rotate their keys | `/api/contexts`, `/api/v1/contexts/{name}/keys` |
+| Hash, MAC and hash passwords | `/api/v1/crypto/hash`, `/mac`, `/password/hash` |
+| Sign and verify; JOSE, HPKE and RSA | `/api/v1/signatures`, `/api/v1/jose`, `/api/v1/crypto/hpke`, `/api/v1/crypto/rsa` |
+| Post-quantum signatures and key exchange | `/api/v1/pqc`, `/api/v1/kex`, `/api/v1/crypto/hybrid` |
+| Split secrets and lease them | `/api/v1/secrets` |
+| Parse, issue and verify certificates; query CT logs | `/api/v1/certificates`, `/api/v1/ct` |
+| Set algorithm policy and migrate contexts | `/api/policies`, `/api/v1/admin/algorithm-policies`, `/api/migration` |
+| Read the audit log and compliance reports | `/api/admin/audit/global`, `/api/audit`, `/api/compliance` |
+| Administer users, tenants, roles, backups and the key ceremony | `/api/admin`, `/api/tenants`, `/api/rbac`, `/api/v1/teams` |
 
-### Encrypt
+Python applications can use the [Python SDK](docs/sdk/python.md). Request and response fields for each route: [REST API reference](docs/api-reference/index.md).
 
-| Command | What it does |
-|---|---|
-| `cryptoserve encrypt "text"` | Context-aware encryption. `--context <name>` picks an algorithm per the policy model; `--password` does pure-password mode. |
-| `cryptoserve encrypt --file F --output O` | Encrypt a file in place or to a new path. |
-| `cryptoserve decrypt ...` | Inverse of `encrypt`. Same flags. |
-| `cryptoserve hash-password` | scrypt by default; `--algorithm argon2` if `cryptoserve[password]` is installed. Non-interactive `--password` for CI. |
-| `cryptoserve context list` | Available encryption contexts and the algorithm each resolves to. |
+## Data and retention
 
-### Vault
+The server keeps its state in PostgreSQL, except where the table says otherwise. An encrypt or decrypt request stores neither the plaintext nor the ciphertext.
 
-| Command | What it does |
-|---|---|
-| `cryptoserve vault init` | Create an encrypted local secret store. |
-| `cryptoserve vault set/get/list/delete` | CRUD against the vault. |
-| `cryptoserve vault run -- <cmd>` | Run a subprocess with vault entries injected as env vars. |
-| `cryptoserve vault import .env` | Import an existing `.env` file. |
+| Data | Where | Kept until |
+|---|---|---|
+| Tenants, users, teams, applications, contexts, policies, policy violations and key versions | PostgreSQL tables | the server deletes only a policy, on request |
+| Keys of classical contexts | Not stored: derived on each use from `CRYPTOSERVE_MASTER_KEY` and the context | nothing to delete |
+| ML-KEM key pairs of hybrid contexts such as `user-pii` | `pqc_keys`, the private key encrypted under a key derived from `CRYPTOSERVE_MASTER_KEY` | the server never deletes them |
+| Keys made with `/api/v1/signatures`, `/api/v1/pqc` and `/api/v1/kex` | The API process's memory | the process stops; instances do not share them |
+| One row per operation: operation, context, algorithm, identity, outcome and reason, sizes, latency, caller IP address and user agent | `audit_log` | you delete it: no server code removes audit rows |
+| Revoked session tokens | `revoked_tokens` | the first start after they expire |
+| Request log: method, path, query parameter names (never values), client IP | container output | Docker log rotation, `max-size` and `max-file` in each compose file |
+| Backup archives, password-encrypted | `CRYPTOSERVE_BACKUP_DIR` | `DELETE /api/admin/backups/{backup_id}` |
 
-### Operate
+The audit log holds an IP address and a user agent for each request, which are personal data, so set its retention in the database. A context's `retention` fields record a requirement; the server does not delete data on that schedule.
 
-| Command | What it does |
-|---|---|
-| `cryptoserve init` | One-shot setup: master key, default vault, AI-tool integration. |
-| `cryptoserve login [--server URL]` | Authenticate against a self-hosted CryptoServe server. |
-| `cryptoserve status` | Configuration, server reachability, vault state. |
-| `cryptoserve version` | Build version. |
+A backup holds no symmetric keys and leaves out audit rows unless asked: restoring needs the archive, its password and the original `CRYPTOSERVE_MASTER_KEY`.
 
-Full reference: [docs/cli.md](docs/cli.md).
-
-## CI/CD
-
-```yaml
-- name: Crypto gate
-  run: npx cryptoserve gate . --max-risk medium --max-severity low --format sarif --output crypto.sarif
-- uses: github/codeql-action/upload-sarif@v3
-  if: always()
-  with:
-    sarif_file: crypto.sarif
-```
-
-Each SARIF result carries the `file:line` that produced it, so findings land on
-the right line in the GitHub Security tab and in pull request annotations.
-
-The gate's SARIF describes the gate's decision: the violations that failed this
-run at these thresholds, each naming the threshold it breached. A passing gate
-uploads no alerts. For every finding in the tree regardless of any threshold,
-upload `cryptoserve scan --format sarif` instead.
-
-`--max-risk` bounds quantum risk; `--max-severity` bounds the security severity
-`scan` reports. They are separate questions: SHA-256 is quantum `low` and good
-practice, unauthenticated CBC has no quantum problem and is a `medium` security
-finding. See [docs/cli.md](docs/cli.md#the-two-thresholds-are-different-questions).
-
-Exit codes: `0` gate passed, `1` violations found, `2` the gate could not run
-(missing path, unreadable tree, a threshold it cannot enforce). A typo in the
-scanned path exits 2 rather than scoring a clean pass.
-
-## Clearing a false positive
-
-A scanner whose false positives cannot be cleared gets excluded from the tree
-entirely. When an API-misuse finding is wrong for your code, waive that one
-finding where it is. `scan` and `gate` print the pragma to write, rule id
-included, so nothing has to be looked up:
-
-```
-Weak Crypto Patterns
-  x TLS certificate verification disabled
-    src/dev-server.js:4
-    *  Fix: Remove the override and trust the system CA store
-    Waive: put cryptoserve-ignore misuse/tls-verify-disabled -- <why> on its own line above
-```
-
-Put it in a comment on the finding's line or the one above, in whatever comment
-syntax the file's language uses:
-
-```js
-// cryptoserve-ignore misuse/tls-verify-disabled -- talks only to the local test server's self-signed cert
-const agent = new https.Agent({ rejectUnauthorized: false });
-```
-
-The gate now exits `0`, and says what it stopped failing on:
-
-```
-  !  1 finding waived by a cryptoserve-ignore pragma:
-    src/dev-server.js:5 misuse/tls-verify-disabled (talks only to the local test server's self-signed cert)
-```
-
-Nothing is silently dropped. `gate --format json` counts waived findings in
-`summary.waived` and lists each under `waived[]` with its reason, and SARIF
-emits them as suppressed results, which code scanning shows as dismissed alerts
-rather than as absent ones.
-
-A waiver is a security control's off switch, so it is deliberately narrow:
-
-- **A reason is required.** It is the only part a reviewer can disagree with.
-- **It must be the first thing in the comment**, the rule `eslint-disable` uses,
-  so prose that merely mentions a pragma is not one.
-- **It waives one rule on one line**, its own or the one below. There is no
-  wildcard. A finding's line is where its match starts, so a match that runs
-  over several lines is covered whole by a pragma above its first line.
-- **It reaches API misuse only**, the `misuse/*` rules. Weak algorithms,
-  secrets and private keys are not waivable this way. Use `skipDirs` in
-  `.cryptoserve.json` for a directory of fixtures, `--allow-secrets` for
-  credential findings.
-
-A pragma that does not do what it looks like it does is reported rather than
-trusted:
-
-```
-Waiver Problems
-  !  [malformed] a waiver needs a reason: cryptoserve-ignore <rule> -- <why>
-    src/stale.js:4
-  !  [unknown-rule] no rule is called misuse/tls-verify-disable
-    src/stale.js:1
-  !  [unused] this waiver covered no finding; delete it or move it onto the line it was written for
-    src/stale.js:7
-```
-
-`unused` is the one to act on: a stale waiver is suppression with nothing under
-it, and the next real finding on that line would land under it silently.
-
-Recognising a comment by its opener is a heuristic, not a parse. Data a project
-merely contains can operate this control, in any of the six languages, so a
-waiver is not a defence against a hostile file. What it guarantees is that this
-can never happen silently: every waived finding is listed by `scan` and `gate`,
-counted in `gate --format json` as `summary.waived`, and emitted to SARIF as
-suppressed. That is a fair trade only because a waiver is written by whoever can
-already edit the file, so anyone able to smuggle one through a string could just
-write the comment instead. The rule ids, the warnings, and the measured shapes
-are in [docs/cli.md](docs/cli.md#clearing-a-false-positive).
-
-## SDKs
-
-### Node.js (offline, zero dependencies)
-
-```javascript
-import { scanProject } from 'cryptoserve/lib/scanner.mjs';
-import { analyzeOffline } from 'cryptoserve/lib/pqc-engine.mjs';
-import { generateCbom, toCycloneDx } from 'cryptoserve/lib/cbom.mjs';
-import { encrypt, decrypt } from 'cryptoserve/lib/local-crypto.mjs';
-```
-
-Full reference: [sdk/javascript/README.md](sdk/javascript/README.md).
-
-### Python (server-connected, local fallback)
-
-```bash
-pip install cryptoserve              # core + client
-pip install cryptoserve[password]    # adds argon2
-```
-
-```python
-from cryptoserve import CryptoServe
-
-crypto = CryptoServe(app_name="my-app", team="platform")
-ciphertext = crypto.encrypt(b"data", context="user-pii")
-plaintext = crypto.decrypt(ciphertext, context="user-pii")
-```
-
-Local mode works without a server. Full reference: [docs/sdk/python.md](docs/sdk/python.md).
-
-## Configuration
-
-State (master key, vault, cached census data) lives in `~/.cryptoserve` by
-default. Two environment variables move it, which is what makes the CLI usable
-in CI and in containers without writing into the invoking user's home:
-
-| Variable | Effect |
-|---|---|
-| `CRYPTOSERVE_HOME` | Absolute path to the state directory. Wins outright. |
-| `XDG_CONFIG_HOME` | Uses `$XDG_CONFIG_HOME/cryptoserve` when `CRYPTOSERVE_HOME` is unset. |
-
-```bash
-CRYPTOSERVE_HOME=/run/cryptoserve cryptoserve vault init --password "$VAULT_PW"
-```
-
-Scanner limits and skip lists come from an optional `.cryptoserve.json` in the
-scanned directory. See [docs/cli.md](docs/cli.md).
-
-## Self-host (optional)
-
-The CLI and SDKs work fully offline. The self-hosted server adds centralized key management, policy enforcement, audit logging, and a dashboard.
-
-```bash
-docker run -d -p 8003:8003 -p 3000:3000 -v cryptoserve-data:/data --log-opt max-size=50m --log-opt max-file=5 ghcr.io/ecolibria/crypto-serve
-```
-
-API on `:8003`, dashboard on `:3000`. For production (Postgres + frontend + backend, generated secrets), see [docs/guides/production-deployment.md](docs/guides/production-deployment.md). Don't pipe `curl | sh`; download `scripts/quickstart.sh`, compare `shasum` against release notes, then execute.
-
-Capabilities: automatic key rotation and versioning, HKDF derivation, Shamir secret sharing, HSM/KMS backends, 5-layer context model, declarative policies, OAuth (GitHub/Google/Azure/Okta), RBAC, FIPS 140-2/3 modes, SIEM forwarding.
-
-## Documentation
-
-| Resource | What's there |
-|---|---|
-| [Getting started](docs/getting-started/index.md) | Install and first scan. |
-| [CLI reference](docs/cli.md) | Every command and flag. |
-| [Architecture](docs/concepts/architecture.md) | Context model, policy engine, key management. |
-| [Post-quantum](docs/concepts/post-quantum.md) | ML-KEM, ML-DSA, SLH-DSA, hybrid key exchange. |
-| [Python SDK](docs/sdk/index.md) | API and examples. |
-| [REST API](docs/api-reference/index.md) | Server endpoints. |
-| [Security](docs/security/index.md) | Threat model, FIPS compliance, transparency. |
+The [Crypto Census](https://census.cryptoserve.dev) is the public data this project publishes: a dated measurement of the cryptography that open-source package ecosystems use. Its snapshot is JSON at `https://census.cryptoserve.dev/api/census`, with one object per ecosystem and measured download counts kept apart from modelled ones.
 
 ## Security
 
-Report vulnerabilities via [GitHub Security Advisories](https://github.com/ecolibria/cryptoserve/security/advisories). See [SECURITY.md](SECURITY.md).
+- `DEV_MODE=true` turns on `/auth/dev-login`, which signs any caller in as an administrator without OAuth, and fills each missing secret with a random value at every start. Keep it off on any host others can reach.
+- Outside development mode the server refuses to start without `CRYPTOSERVE_MASTER_KEY`, `JWT_SECRET_KEY`, `HKDF_SALT` and `OAUTH_STATE_SECRET`. `STARTUP_VALIDATION_LEVEL=skip` turns the other startup checks off, in production too.
+- Whoever holds `CRYPTOSERVE_MASTER_KEY` and a copy of the database can decrypt everything, and losing the key loses every ciphertext. Store it, and `CRYPTOSERVE_HKDF_SALT` if set, apart from the database and its backups.
+- With `ENVIRONMENT=production`, `/health/deep` and `/health/fips` leave error messages, configuration issues and library versions out of their responses.
+- API responses carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and a `default-src 'none'` Content Security Policy.
+
+Threat model and controls: [docs/security](docs/security/index.md). Report a vulnerability as [SECURITY.md](SECURITY.md) describes.
+
+## Scanning repositories
+
+The repository scanner lives in [cryptoscan](https://github.com/csnp/cryptoscan).
 
 ## Contributing
 
-Apache 2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop, test conventions, and pre-push review gates.
-
-```bash
-git clone https://github.com/ecolibria/cryptoserve.git
-cd cryptoserve && npm test
-```
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the backend and dashboard development setup, tests and pull requests. [CHANGELOG.md](CHANGELOG.md) lists changes by release.
 
 ## License
 

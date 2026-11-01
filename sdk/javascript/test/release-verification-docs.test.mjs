@@ -116,7 +116,7 @@ function section(doc, heading) {
   return text.slice(start, end === -1 ? undefined : end);
 }
 
-const verifyingReleasesSection = () => section('README.md', 'Verifying releases');
+const verifyingReleasesSection = () => section('docs/trust.md', 'Verifying releases');
 
 /**
  * Tags whose GitHub Release has been downloaded and checked with the documented
@@ -154,7 +154,7 @@ function checksumProblem(tag) {
   return 'not a release tag of this repository';
 }
 
-describe('README release verification instructions', () => {
+describe('release verification instructions in docs/trust.md', () => {
   it('only tells users to verify releases whose checksum file can verify', () => {
     const tags = [...verifyingReleasesSection().matchAll(/gh release download (\S+)/g)].map(
       (m) => m[1],

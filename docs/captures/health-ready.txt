@@ -1,0 +1,27 @@
+{
+  "status": "healthy",
+  "timestamp": "2026-11-01T19:34:07.801931+00:00",
+  "version": "1.0.0",
+  "total_latency_ms": 2.52,
+  "checks": {
+    "database": {
+      "status": "healthy",
+      "latency_ms": 2.42,
+      "message": "Database is responsive",
+      "details": {
+        "driver": "asyncpg/aiosqlite"
+      }
+    },
+    "kms": {
+      "status": "healthy",
+      "latency_ms": 0.27,
+      "message": "KMS backend: local",
+      "details": {
+        "backend": "local",
+        "hsm_backed": false,
+        "fips_compliant": false,
+        "key_status": "active"
+      }
+    }
+  }
+}

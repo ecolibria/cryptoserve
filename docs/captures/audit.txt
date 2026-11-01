@@ -1,0 +1,6 @@
+{
+  "operation": "encrypt",
+  "context": "payment-data",
+  "success": false,
+  "error_message": "Identity not authorized for context: payment-data"
+}
