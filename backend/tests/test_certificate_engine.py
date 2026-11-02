@@ -824,3 +824,40 @@ class TestListedKeys:
         cli_copy = REPO / "sdk" / "javascript" / "lib" / "trust-keys.json"
 
         assert engine_copy.read_bytes() == cli_copy.read_bytes()
+
+
+class TestMultiBlockRefusal:
+    """An input typed as one certificate takes exactly one certificate."""
+
+    def test_verify_certificate_refuses_a_multi_block_pem_input(self, fresh_engine):
+        from app.core.certificate_engine import MultipleCertificatesError
+
+        leaf_pem, ca_pem = issued_by_test_ca()
+
+        with pytest.raises(MultipleCertificatesError) as as_certificate:
+            fresh_engine.verify_certificate(leaf_pem + ca_pem)
+        assert as_certificate.value.count == 2
+        assert isinstance(as_certificate.value, CertificateError)
+        assert str(as_certificate.value) == "Expected one certificate, found 2 PEM certificate blocks"
+
+        with pytest.raises(MultipleCertificatesError) as as_issuer:
+            fresh_engine.verify_certificate(leaf_pem, issuer_cert_data=ca_pem + leaf_pem)
+        assert as_issuer.value.count == 2
+
+    def test_verify_chain_refuses_a_multi_block_pem_element(self, fresh_engine):
+        from app.core.certificate_engine import MultipleCertificatesError
+
+        leaf_pem, ca_pem = issued_by_test_ca()
+
+        with pytest.raises(MultipleCertificatesError) as refused:
+            fresh_engine.verify_chain([(leaf_pem + ca_pem).decode(), ca_pem.decode()])
+        assert refused.value.count == 2
+
+    def test_one_block_still_verifies_beside_the_multi_block_rule(self, fresh_engine):
+        leaf_pem, _ = issued_by_test_ca()
+
+        result = fresh_engine.verify_certificate(leaf_pem)
+
+        assert result.valid is True
+        assert result.errors == []
+        assert result.chain_length == 1

@@ -15,6 +15,7 @@ from app.core.certificate_engine import (
     CertificateEngine,
     CertificateError,
     CSRError,
+    MultipleCertificatesError,
     SubjectInfo,
     CertificateType,
 )
@@ -130,15 +131,19 @@ class CertificateInfoResponse(BaseModel):
 class VerifyCertificateRequest(BaseModel):
     """Certificate verification request."""
 
-    certificate: str = Field(..., description="Certificate to verify (PEM)")
-    issuer_certificate: str | None = Field(default=None, description="Issuer certificate (PEM)")
+    certificate: str = Field(
+        ..., description="Certificate to verify (one PEM certificate; a chain goes to /verify-chain)"
+    )
+    issuer_certificate: str | None = Field(default=None, description="Issuer certificate (one PEM certificate)")
     check_expiry: bool = Field(default=True, description="Check expiration dates")
 
 
 class VerifyChainRequest(BaseModel):
     """Certificate chain verification request."""
 
-    certificates: list[str] = Field(..., description="Certificates (leaf first, root last)")
+    certificates: list[str] = Field(
+        ..., description="Certificates, one PEM certificate per element (leaf first, root last)"
+    )
     check_expiry: bool = Field(default=True)
 
 
@@ -346,6 +351,14 @@ async def verify_certificate(
             issuer_cert_data=data.issuer_certificate,
             check_expiry=data.check_expiry,
         )
+    except MultipleCertificatesError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{e}. certificate and issuer_certificate each take one certificate; "
+                "send a chain to POST /api/v1/certificates/verify-chain as certificates, leaf first."
+            ),
+        )
     except CertificateError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -381,6 +394,14 @@ async def verify_certificate_chain(
         result = certificate_engine.verify_chain(
             certificates=data.certificates,
             check_expiry=data.check_expiry,
+        )
+    except MultipleCertificatesError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{e}. Each element of certificates takes one certificate; "
+                "split a bundle into its blocks, leaf first."
+            ),
         )
     except CertificateError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
