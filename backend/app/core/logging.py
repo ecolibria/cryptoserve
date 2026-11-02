@@ -6,6 +6,7 @@ Provides production-grade logging with:
 - Automatic context propagation
 - Sensitive data masking
 - Query strings recorded by parameter names, never values
+- Request paths recorded by route template and value lengths, never values
 - Performance timing
 
 Usage:
@@ -100,6 +101,22 @@ def query_log_fields(query_params: QueryParams) -> dict[str, Any]:
         "query_value_lengths": [len(value) for _, value in items],
         "query_count": len(items),
     }
+
+
+def path_log_fields(request: Request) -> dict[str, Any]:
+    """Describe the request path for the request log without any part a client chose.
+
+    Read after routing. A path a route matched is written as that route's template, with the
+    length of each path parameter value in template order. A path no route matched is written
+    as the length of each of its segments. No path value is written, whatever its parameter is called.
+    """
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    if template is not None:
+        values = request.scope.get("path_params", {})
+        names = list(getattr(route, "param_convertors", {}))
+        return {"route": template, "path_param_lengths": [len(str(values[n])) for n in names if n in values]}
+    return {"route": None, "path_segment_lengths": [len(s) for s in request.url.path.split("/")[1:]]}
 
 
 @dataclass
@@ -305,7 +322,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             logger.info(
                 "Request started",
                 method=request.method,
-                path=request.url.path,
                 **query_log_fields(request.query_params),
                 client_ip=request.client.host if request.client else None,
             )
@@ -319,7 +335,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             logger.info(
                 "Request completed",
                 method=request.method,
-                path=request.url.path,
+                **path_log_fields(request),
                 status_code=response.status_code,
                 duration_ms=round(duration_ms, 2),
             )
@@ -335,7 +351,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             logger.error(
                 "Request failed",
                 method=request.method,
-                path=request.url.path,
+                **path_log_fields(request),
                 error=str(e),
                 duration_ms=round(duration_ms, 2),
                 exc_info=True,

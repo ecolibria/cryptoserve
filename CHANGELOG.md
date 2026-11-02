@@ -169,6 +169,8 @@ The backend accepts an incoming `X-Request-ID` only as one header of 16 to 128 l
 
 The request log records the names of query parameters and not their values.
 
+The request log records each request's matched route template and the length of each path value, never the path.
+
 `cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.
 
 The Python CLI login accepts a callback only when it carries the per-login state the CLI issued.
