@@ -1029,8 +1029,8 @@ class CryptoClient:
         Verify a certificate.
 
         Args:
-            certificate_pem: Certificate to verify
-            issuer_certificate_pem: Issuer cert (for signature verification)
+            certificate_pem: one certificate (PEM); a chain goes to verify_certificate_chain
+            issuer_certificate_pem: one issuer certificate (PEM)
             check_expiry: Whether to check expiration
 
         Returns:

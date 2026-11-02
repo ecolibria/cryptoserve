@@ -165,6 +165,8 @@ Every compose file sets container log rotation: 50 MB per file, 5 files, for eac
 
 The backend accepts an incoming `X-Request-ID` only as one header of 16 to 128 letters, digits, `_` or `-`, and otherwise assigns its own ID; it accepts `X-Correlation-ID` under the same rule at 1 to 128 characters and no longer uses it as the request ID.
 
+certificates: an input typed as one certificate refuses a PEM bundle with 400 instead of verifying its first block; a chain goes to /verify-chain.
+
 ### Fixed
 
 The request log records the names of query parameters and not their values.

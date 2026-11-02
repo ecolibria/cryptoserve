@@ -130,6 +130,14 @@ class CSRError(CertificateError):
     pass
 
 
+class MultipleCertificatesError(CertificateError):
+    """An input typed as one certificate held several PEM certificate blocks."""
+
+    def __init__(self, count: int):
+        self.count = count
+        super().__init__(f"Expected one certificate, found {count} PEM certificate blocks")
+
+
 class ValidationError(CertificateError):
     """Validation failed."""
 
@@ -897,15 +905,25 @@ class CertificateEngine:
             raise CSRError(f"Unknown key type: {key_type}")
 
     def _load_certificate(self, cert_data: bytes | str) -> x509.Certificate:
-        """Load a certificate from PEM or DER format."""
+        """Load one certificate from PEM or DER format.
+
+        A PEM input holding more than one certificate block is refused: an
+        input typed as one certificate takes one, and reading the first block
+        would answer a narrower question than the one asked.
+        """
         if isinstance(cert_data, str):
             cert_data = cert_data.encode()
 
         try:
             if b"-----BEGIN" in cert_data:
-                return x509.load_pem_x509_certificate(cert_data)
+                certs = x509.load_pem_x509_certificates(cert_data)
+                if len(certs) > 1:
+                    raise MultipleCertificatesError(len(certs))
+                return certs[0]
             else:
                 return x509.load_der_x509_certificate(cert_data)
+        except CertificateError:
+            raise
         except Exception as e:
             raise CertificateError(f"Failed to load certificate: {e}")
 
