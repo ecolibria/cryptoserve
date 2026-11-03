@@ -169,7 +169,7 @@ The backend accepts an incoming `X-Request-ID` only as one header of 16 to 128 l
 
 The request log records the names of query parameters and not their values.
 
-The request log records each request's matched route template and the length of each path value, never the path.
+The request log records the template of the API route a request matched and the length of each path value in place of the path; a path no API route matched, including those of the documentation routes `/docs`, `/docs/oauth2-redirect`, `/redoc` and `/openapi.json`, is recorded as the length of each of its segments.
 
 `cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.
 

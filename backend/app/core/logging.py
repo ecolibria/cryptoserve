@@ -6,7 +6,7 @@ Provides production-grade logging with:
 - Automatic context propagation
 - Sensitive data masking
 - Query strings recorded by parameter names, never values
-- Request paths recorded by route template and value lengths, never values
+- Request paths recorded by API route template and value lengths, else by segment lengths, never values
 - Performance timing
 
 Usage:
@@ -106,9 +106,12 @@ def query_log_fields(query_params: QueryParams) -> dict[str, Any]:
 def path_log_fields(request: Request) -> dict[str, Any]:
     """Describe the request path for the request log without any part a client chose.
 
-    Read after routing. A path a route matched is written as that route's template, with the
-    length of each path parameter value in template order. A path no route matched is written
-    as the length of each of its segments. No path value is written, whatever its parameter is called.
+    Read after routing. A path an API route matched is written as that route's template, with the
+    length of each path parameter value in template order; FastAPI's API routes set themselves as
+    the scope's "route". Any other path is written as the length of each of its segments: a path no
+    route matched, and a path one of FastAPI's documentation routes (/docs, /docs/oauth2-redirect,
+    /redoc, /openapi.json) matched, since those set no "route". No path value is written, whatever
+    its parameter is called.
     """
     route = request.scope.get("route")
     template = getattr(route, "path", None)

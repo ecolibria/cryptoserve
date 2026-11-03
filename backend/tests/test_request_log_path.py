@@ -1,10 +1,12 @@
-"""The request log describes a request path by the route it matched, never by the path.
+"""The request log describes a request path by lengths and, for an API route, its template, never by the path.
 
 Every request passes the logging middleware. Its "Request started" record carries no
 path field. The "Request completed" and "Request failed" records are written after
-routing: a path a route matched is recorded as that route's template with the length
-of each path parameter value, and a path no route matched as the length of each of
-its segments. No path value is written, whatever its parameter is called.
+routing: a path an API route matched is recorded as that route's template with the
+length of each path parameter value, and any other path as the length of each of its
+segments. Other paths include those of FastAPI's documentation routes, which set no
+route in the request scope. No path field holds a path value, whatever its parameter
+is called.
 
 Every value planted in a path below is built at run time. A planted value counts as
 present in a log when it appears whole, URL-encoded, or as any eight-character run of
@@ -40,8 +42,8 @@ class Probe(NamedTuple):
 
     method: str
     path: str  # "<v>" marks the planted value
-    route: str | None  # the template of the route that matched; None when no route matched
-    lengths: tuple  # path_param_lengths when a route matched, else path_segment_lengths; "v" is the value's length
+    route: str | None  # the template of the API route that matched; None when no API route matched
+    lengths: tuple  # path_param_lengths when an API route matched, else path_segment_lengths; "v" is the value's length
     status: int | None  # the completed record's status code; None when the handler raised
 
 
@@ -229,8 +231,8 @@ async def test_no_record_holds_a_path_value(client, json_output):
     assert present == {}, "path values present in the log"
 
 
-# (c) After routing, the completed or failed record names the matched route's template and the
-# length of each path value; a path no route matched is written as the length of each segment.
+# (c) After routing, the completed or failed record names the matched API route's template and the
+# length of each path value; a path no API route matched is written as the length of each segment.
 @pytest.mark.parametrize("json_output", [True, False], ids=["json", "human"])
 @pytest.mark.parametrize("name", list(PROBES))
 async def test_record_names_the_route_template_and_value_lengths(client, name, json_output):
