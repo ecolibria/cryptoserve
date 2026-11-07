@@ -169,6 +169,8 @@ The backend accepts an incoming `X-Request-ID` only as one header of 16 to 128 l
 
 ### Fixed
 
+The compromised-key finding page, `docs/findings/trust-compromised-key.md`, gives 2026-10-17 to the report alone and says the report included proof of control of all eight private keys; it no longer says the keys were recovered after the report.
+
 The request log records the names of query parameters and not their values.
 
 `cryptoserve login` listens on 127.0.0.1 only and stores a token only from the callback that carries the state value it issued.

@@ -11,12 +11,12 @@ and the Verify tab of the dashboard's Certificates page.
 
 The certificate's public key, or the key that signed it, is one of the eight eMudhra intermediate CA keys
 listed below: six for TLS (EM DV, OV and EV TLS CA - G3B and - G3C) and two for code signing (EM OV CS CA - G3B
-and - G3C). Their private keys were recovered independently by several parties, Mozilla among them, after a
-report to the root programs and to eMudhra on 2026-10-17 (Mozilla Bug 2083449, comments 0 and 18). eMudhra
-revoked its eight certificates on 2026-10-18, the cross-signed copies were revoked on 2026-10-19, and
-Chrome and Firefox block the six TLS keys. The keys are compromised now, without a quantum computer: anyone
-holding a listed private key can issue certificates under it, and a client that still trusts the key accepts
-them.
+and - G3C). A report to the root programs and to eMudhra on 2026-10-17 included proof of control of all eight
+private keys, and several parties, Mozilla among them, have recovered the keys independently (Mozilla Bug
+2083449, comments 0 and 18). eMudhra revoked its eight certificates on 2026-10-18, the cross-signed copies were
+revoked on 2026-10-19, and Chrome and Firefox block the six TLS keys. The keys are compromised now, without a
+quantum computer: anyone holding a listed private key can issue certificates under it, and a client that still
+trusts the key accepts them.
 
 Two rules raise this finding, and both match on the key, never on a name:
 
