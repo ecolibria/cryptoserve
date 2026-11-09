@@ -6,17 +6,283 @@
 [![Security](https://github.com/ecolibria/cryptoserve/actions/workflows/security.yml/badge.svg)](https://github.com/ecolibria/cryptoserve/actions/workflows/security.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-[Website](https://cryptoserve.dev) · [Docs](https://cryptoserve.dev/docs/) · [Crypto Census](https://census.cryptoserve.dev)
+[Website](https://cryptoserve.dev) · [Docs](https://cryptoserve.dev/docs/) · [Examples](https://cryptoserve.dev/docs/examples/) · [Crypto Census](https://census.cryptoserve.dev)
 
-A self-hosted cryptography server, run by a platform or security team, that encrypts and decrypts data for application teams over a REST API: each request names a context such as `user-pii`, and the server chooses the algorithm, derives or generates the key and writes an audit record.
+Encrypt and decrypt your application's data through a cryptography server your platform team runs: your code names a context such as `user-pii`, and the server picks the algorithm, holds the keys and writes an audit record.
 
 ## Quick start
 
-With Docker, git, curl and jq installed, start the API and its PostgreSQL database from the development compose file and check that it is ready:
-
 ```bash
 git clone https://github.com/ecolibria/cryptoserve.git && cd cryptoserve
-docker compose up -d --wait backend
+docker compose up -d --wait backend               # evaluation server on localhost:8003
+python3 -m venv .venv && source .venv/bin/activate && pip install cryptoserve
+cryptoserve login --server http://localhost:8003  # or your platform team's server
+python examples/sdk/quickstart.py
+```
+
+What `python examples/sdk/quickstart.py` prints ([full output](docs/captures/sdk-quickstart.txt)):
+
+```
+[CryptoServe] Registered new app: my-app (development)
+AH17InYiOjEsIm1vZGUiOiJBRVMtMjU2LUdDTStNTC1LRU0t...
+alex.chen@example.com
+```
+
+The script names a context, never an algorithm:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+
+token = crypto.encrypt_string("alex.chen@example.com", context="user-pii")
+print(token[:48] + "...")
+print(crypto.decrypt_string(token, context="user-pii"))
+```
+
+On its first run, `CryptoServe(...)` registers `my-app` with the contexts it lists and stores the application's token in `~/.cryptoserve/apps/`. The server chose AES-256-GCM with ML-KEM-768 for `user-pii`, and the token begins with a header that names it.
+
+The evaluation server listens on localhost only, uses a fixed development master key, and `cryptoserve login` signs you in to it without OAuth; on your team's server, `login` opens its sign-in page in your browser. The SDK is the `cryptoserve` package on PyPI and needs Python 3.9 or later.
+
+## Using the service
+
+Each example is a script in [examples/sdk/](examples/sdk/), run after the Quick start; [cryptoserve.dev/docs/examples](https://cryptoserve.dev/docs/examples/) shows the same examples.
+
+### Handle a context you were not granted
+
+`my-app` holds `user-pii` and `payment-data`, so the server refuses a `health-data` request and encrypts nothing:
+
+```python
+from cryptoserve import CryptoServe
+from cryptoserve.client import AuthorizationError
+
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+
+try:
+    crypto.encrypt_string("blood type: A+", context="health-data")
+except AuthorizationError as e:
+    print(e)
+```
+
+What `python examples/sdk/refused.py` prints ([full output](docs/captures/sdk-refused.txt)):
+
+```
+Not authorized for context 'health-data': Identity not authorized for context: health-data
+```
+
+Listing another context in `contexts=` later does not grant it, because the SDK reuses the registration it stored; your platform team adds it with `PATCH /api/v1/applications/{app_id}` (`allowed_contexts`). Import error classes from `cryptoserve.client`: the same names imported from `cryptoserve` are other classes and do not catch these errors.
+
+### Encrypt the fields of a record
+
+Encrypt each sensitive field under the context that fits it, and store the base64 text the SDK returns:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+
+user = {"id": 42, "email": "alex.chen@example.com", "card": "4242 4242 4242 4242"}
+row = {
+    "id": user["id"],
+    "email": crypto.encrypt_string(user["email"], context="user-pii"),
+    "card": crypto.encrypt_string(user["card"], context="payment-data"),
+}
+print({column: len(value) if isinstance(value, str) else value for column, value in row.items()})
+print(crypto.decrypt_string(row["card"], context="payment-data"))
+```
+
+What `python examples/sdk/record.py` prints ([full output](docs/captures/sdk-record.txt)):
+
+```
+{'id': 42, 'email': 1672, 'card': 284}
+4242 4242 4242 4242
+```
+
+Size columns for the context: `user-pii` adds an ML-KEM ciphertext to every value, so a 21-character address is stored as 1672 characters, against 284 for the card number under `payment-data` (AES-256-GCM).
+
+### Bind a value to its row
+
+Pass the row's identity as associated data. The value then decrypts only with the same associated data, so a ciphertext copied into another row fails:
+
+```python
+from cryptoserve import CryptoServe
+from cryptoserve.client import CryptoServeError
+
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+
+email = crypto.encrypt_string("alex.chen@example.com", context="user-pii", associated_data=b"users:42:email")
+print(crypto.decrypt_string(email, context="user-pii", associated_data=b"users:42:email"))
+
+try:
+    crypto.decrypt_string(email, context="user-pii", associated_data=b"users:43:email")
+except CryptoServeError as e:
+    print("refused:", e)
+```
+
+What `python examples/sdk/bind.py` prints ([full output](docs/captures/sdk-bind.txt)):
+
+```
+alex.chen@example.com
+refused: Hybrid decryption failed: Decryption failed: 
+```
+
+### Encrypt a JSON document
+
+`encrypt_json` serializes the object and returns base64 text; `decrypt_json` returns the object:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+
+token = crypto.encrypt_json({"email": "alex.chen@example.com", "plan": "team"}, context="user-pii")
+print(crypto.decrypt_json(token, context="user-pii"))
+```
+
+What `python examples/sdk/document.py` prints ([full output](docs/captures/sdk-document.txt)):
+
+```
+{'email': 'alex.chen@example.com', 'plan': 'team'}
+```
+
+### Say how the data is used
+
+The context says what the data is; `usage` says how it is used, and the server can choose another algorithm for it. A value encrypted with a usage decrypts with the context alone:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+
+for usage in ["at_rest", "in_use", "streaming"]:
+    token = crypto.encrypt(b"4242 4242 4242 4242", context="payment-data", usage=usage)
+    print(usage, crypto.decrypt(token, context="payment-data"))
+```
+
+What `python examples/sdk/usage.py` prints ([full output](docs/captures/sdk-usage.txt)):
+
+```
+at_rest b'4242 4242 4242 4242'
+in_use b'4242 4242 4242 4242'
+streaming b'4242 4242 4242 4242'
+```
+
+What the evaluation server chose for each usage, read from each ciphertext's header ([capture](docs/captures/sdk-usage-algorithms.txt)):
+
+| `usage` | `user-pii` | `payment-data` |
+|---|---|---|
+| none, `at_rest`, `in_transit` | AES-256-GCM+ML-KEM-768 | AES-256-GCM |
+| `in_use` | AES-256-GCM+ML-KEM-768 | AES-256-GCM-SIV |
+| `streaming` | ChaCha20-Poly1305+ML-KEM-768 | ChaCha20-Poly1305 |
+| `disk` | AES-256-GCM+ML-KEM-768 | fails: `XTS requires 64-byte key (two 256-bit keys)` |
+
+### Encrypt in a web handler
+
+Encrypt in the handler that stores a value and decrypt in the one that returns it. With FastAPI (`pip install fastapi uvicorn`):
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+from cryptoserve import CryptoServe
+
+app = FastAPI()
+crypto = CryptoServe(app_name="my-app", contexts=["user-pii", "payment-data"])
+rows = {}
+
+class User(BaseModel):
+    email: str
+
+@app.put("/users/{user_id}")
+def save_user(user_id: int, user: User):
+    rows[user_id] = crypto.encrypt_string(user.email, context="user-pii")
+    return {"stored_characters": len(rows[user_id])}
+
+@app.get("/users/{user_id}")
+def read_user(user_id: int):
+    return {"email": crypto.decrypt_string(rows[user_id], context="user-pii")}
+```
+
+Start it with `uvicorn --app-dir examples/sdk api:app`, then store and read a user:
+
+```bash
+curl -s -X PUT localhost:8000/users/42 -H 'Content-Type: application/json' -d '{"email": "alex.chen@example.com"}'; echo
+curl -s localhost:8000/users/42
+```
+
+What the two requests print ([full output](docs/captures/sdk-api.txt)):
+
+```
+{"stored_characters":1672}
+{"email":"alex.chen@example.com"}
+```
+
+### Run tests without a server
+
+`CryptoServe.local()` derives keys from a password on your machine. It sends no request and writes no audit record, and a server cannot decrypt what it produces, so keep it to tests and offline tools:
+
+```python
+from cryptoserve import CryptoServe
+
+crypto = CryptoServe.local(password="test-only-password")
+
+token = crypto.encrypt_string("alex.chen@example.com", context="user-pii")
+print(crypto.decrypt_string(token, context="user-pii"))
+```
+
+What `python examples/sdk/local.py` prints ([full output](docs/captures/sdk-local.txt)):
+
+```
+alex.chen@example.com
+```
+
+### Call the server from another language
+
+Python is the only SDK; the `cryptoserve` package on npm is a command-line tool that does not call these routes. Any language can call the REST API with the application's token. Plaintext travels base64-encoded (`YWxleC5jaGVuQGV4YW1wbGUuY29t` is `alex.chen@example.com`):
+
+```bash
+TOKEN=$(jq -r .access_token ~/.cryptoserve/apps/my-app_development.json)
+curl -s localhost:8003/api/v1/crypto/encrypt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"plaintext": "YWxleC5jaGVuQGV4YW1wbGUuY29t", "context": "user-pii"}' > enc.json
+jq '{algorithm: .algorithm.name, usage}' enc.json
+```
+
+What `jq '{algorithm: .algorithm.name, usage}' enc.json` prints ([full output](docs/captures/sdk-rest-encrypt.txt)):
+
+```json
+{
+  "algorithm": "AES-256-GCM+ML-KEM-768",
+  "usage": "at_rest"
+}
+```
+
+```bash
+jq '{ciphertext, context: "user-pii"}' enc.json | curl -s localhost:8003/api/v1/crypto/decrypt \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d @-
+```
+
+What the request prints ([full output](docs/captures/sdk-rest-decrypt.txt)):
+
+```json
+{"plaintext":"YWxleC5jaGVuQGV4YW1wbGUuY29t"}
+```
+
+The token is the one the SDK stored for `my-app`; for a new application, an administrator gets one from `POST /api/v1/applications`.
+
+The server allows each application bursts of 20 requests and 100 a minute, and answers HTTP 429 above that. On a hybrid context such as `user-pii`, every SDK call reaches the server, so a loop is refused after 10 encrypts; on `payment-data` the SDK caches the key after the first call and encrypts locally.
+
+## Run the server
+
+The Quick start's evaluation stack is one of three compose files:
+
+| Mode | Start | Includes |
+|---|---|---|
+| Evaluation | `docker compose up -d --wait backend` | API on `localhost:8003`, PostgreSQL on `localhost:5433`, development secrets and sign-in |
+| Production | `docker compose -f docker-compose.production.yml up -d` | API on port 8003 and dashboard on port 3003 on every interface, PostgreSQL, strict startup checks, secure cookies |
+| Several API instances | `docker compose -f docker-compose.scale.yml up -d --scale backend=3` | nginx on port 8003 in front of the instances, Redis for shared rate limits, PostgreSQL, dashboard; development secrets unless you set them |
+
+The first `up` builds the backend image from source. Check that the server is ready:
+
+```bash
 curl -s localhost:8003/health/ready | jq
 ```
 
@@ -32,170 +298,16 @@ What `curl -s localhost:8003/health/ready | jq` prints, trimmed ([full output](d
       ...
     "kms": {
       "status": "healthy",
-      "latency_ms": 0.27,
+      ...
       "message": "KMS backend: local",
       ...
 ```
 
-The first run builds the backend image from source. This stack is for evaluation: it listens on localhost only, uses a fixed development master key, and turns on a sign-in that skips OAuth. [Deploy](#deploy) covers production.
-
-Sign in with the development sign-in and register an application allowed one context. Its token authorizes the encrypt call; plaintext travels base64-encoded (`aGVsbG8gd29ybGQ=` is `hello world`):
-
-```bash
-curl -s -c cookies.txt localhost:8003/auth/dev-login -o /dev/null
-TOKEN=$(curl -s -b cookies.txt localhost:8003/api/v1/applications -H 'Content-Type: application/json' \
-  -d '{"name": "my-app", "team": "platform", "allowed_contexts": ["user-pii"]}' | jq -r .access_token)
-curl -s localhost:8003/api/v1/crypto/encrypt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"plaintext": "aGVsbG8gd29ybGQ=", "context": "user-pii"}' > enc.json
-jq '{algorithm, usage}' enc.json
-```
-
-What `jq '{algorithm, usage}' enc.json` prints ([full output](docs/captures/encrypt.txt)):
-
-```json
-{
-  "algorithm": {
-    "name": "AES-256-GCM+ML-KEM-768",
-    "mode": "hybrid",
-    "key_bits": 256,
-    "description": "Hybrid classical + post-quantum, NIST PQC Level 3 (FIPS 203)"
-  },
-  "usage": "at_rest"
-}
-```
-
-The application never named an algorithm: the `user-pii` context chose a hybrid of AES-256-GCM and ML-KEM-768. The ciphertext in `enc.json` decrypts under the same context:
-
-```bash
-jq '{ciphertext, context: "user-pii"}' enc.json | curl -s localhost:8003/api/v1/crypto/decrypt \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d @-
-```
-
-What the request prints ([full output](docs/captures/decrypt.txt)):
-
-```json
-{"plaintext":"aGVsbG8gd29ybGQ="}
-```
-
-Now ask for a context the application was not granted. The server answers HTTP 403 and encrypts nothing:
-
-```bash
-curl -s localhost:8003/api/v1/crypto/encrypt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"plaintext": "aGVsbG8gd29ybGQ=", "context": "payment-data"}'
-```
-
-What the request prints ([full output](docs/captures/encrypt-refused.txt)):
-
-```json
-{"detail":"Identity not authorized for context: payment-data"}
-```
-
-Every encrypt and decrypt request is an audit row, a refusal included. Read the newest with the administrator session:
-
-```bash
-curl -s -b cookies.txt localhost:8003/api/admin/audit/global | jq '.[0] | {operation, context, success, error_message}'
-```
-
-What `curl -s -b cookies.txt localhost:8003/api/admin/audit/global | jq '.[0] | {operation, context, success, error_message}'` prints ([full output](docs/captures/audit.txt)):
-
-```json
-{
-  "operation": "encrypt",
-  "context": "payment-data",
-  "success": false,
-  "error_message": "Identity not authorized for context: payment-data"
-}
-```
-
-To allow `payment-data`, add it to the application's `allowed_contexts` with `PATCH /api/v1/applications/{app_id}`.
-
-### What you can do
-
-- Run it on your own infrastructure with PostgreSQL, TLS and generated secrets: [Deploy](#deploy).
-- Call it from an application over HTTP or from Python: [API](#api).
-- Decide which algorithm each kind of data gets: [context model](docs/concepts/context-model.md).
-- Rotate a context's keys: [key rotation](docs/guides/key-rotation.md).
-- Know what the server records about each request, and for how long: [Data and retention](#data-and-retention).
-- Harden a deployment and report a vulnerability: [Security](#security).
-
-## Deploy
-
-| Mode | When | Start | Includes |
-|---|---|---|---|
-| Evaluation | One machine | `docker compose up -d --wait backend` | API on `localhost:8003`, PostgreSQL on `localhost:5433`, development secrets and sign-in |
-| Production | Your infrastructure | `docker compose -f docker-compose.production.yml up -d` | API on port 8003 and dashboard on port 3003 on every interface, PostgreSQL, strict startup checks, secure cookies |
-| Several API instances | More load than one process serves | `docker compose -f docker-compose.scale.yml up -d --scale backend=3` | nginx on port 8003 in front of the instances, Redis for shared rate limits, PostgreSQL, dashboard; development secrets unless you set them |
-
-The production file runs the `crypto-serve-backend` and `crypto-serve-frontend` images from GHCR at `latest`. Build both from your checkout before the first start, so they run the code you cloned:
-
-```bash
-docker build -t ghcr.io/ecolibria/crypto-serve-backend:latest ./backend
-docker build -t ghcr.io/ecolibria/crypto-serve-frontend:latest ./frontend
-```
-
-It reads `POSTGRES_PASSWORD`, `CRYPTOSERVE_MASTER_KEY`, `JWT_SECRET_KEY`, `OAUTH_STATE_SECRET`, `HKDF_SALT`, `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from the environment or a `.env` file beside it. Started that way, it reports the same healthy readiness as the Quick start, with the dashboard on port 3003. TLS, secret generation, backups and monitoring: [production deployment checklist](docs/guides/production-deployment.md). Several instances: [horizontal scaling](docs/horizontal-scaling.md).
-
-### Configuration
-
-The server reads these environment variables; [configuration](docs/getting-started/configuration.md) describes more.
-
-| Variable | Sets |
-|---|---|
-| `DATABASE_URL` | The PostgreSQL connection, as `postgresql+asyncpg://`. The images ship no SQLite driver. |
-| `CRYPTOSERVE_MASTER_KEY` | The secret every data key is derived from or encrypted under. |
-| `CRYPTOSERVE_HKDF_SALT` | The salt the `local` key backend derives with; unset, it uses a built-in constant. |
-| `JWT_SECRET_KEY`, `OAUTH_STATE_SECRET`, `HKDF_SALT` | Session signing, OAuth state, and the salt the startup checks require. |
-| `ENVIRONMENT`, `DEV_MODE`, `STARTUP_VALIDATION_LEVEL` | `production` trims health responses; `DEV_MODE`: see [Security](#security); checks: `strict`, `warn` or `skip`. |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `OAUTH_GOOGLE_*`, `OAUTH_AZURE_AD_*`, `OAUTH_OKTA_*`, `OAUTH_OIDC_*` | Dashboard sign-in. A provider is offered once its client ID and secret are set; Okta also needs its domain, OIDC its discovery URL. |
-| `FRONTEND_URL`, `BACKEND_URL`, `COOKIE_SECURE`, `COOKIE_DOMAIN` | Where the dashboard and API live. CORS admits `FRONTEND_URL` only. |
-| `KMS_BACKEND` | `local`, the default and the only backend the images can load; `aws_kms` also needs boto3. |
-| `KEY_CEREMONY_ENABLED`, `KEY_CEREMONY_THRESHOLD`, `KEY_CEREMONY_SHARES` | Take the master key from a Shamir key ceremony (`/api/admin/ceremony`) instead of the environment. |
-| `FIPS_MODE` | `disabled`, `enabled` or `preferred`. |
-| `REDIS_URL`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_CRYPTO_OPS`, `RATE_LIMIT_BURST` | Rate limits, shared between instances through Redis. |
-| `CRYPTOSERVE_BACKUP_DIR` | Where `POST /api/admin/backups` writes archives. |
+Production images and secrets, configuration, and what the server stores and for how long: [docs/server.md](docs/server.md). Contexts and their algorithms: [context model](docs/concepts/context-model.md); rotating a context's keys: [key rotation](docs/guides/key-rotation.md).
 
 ## API
 
-The server lists every route in its OpenAPI document, `localhost:8003/openapi.json`. Application routes take the token `POST /api/v1/applications` returns, as `Authorization: Bearer`; management routes take the dashboard session.
-
-| Job | Routes |
-|---|---|
-| Check health and readiness | `GET /health`, `/health/live`, `/health/ready`, `/health/deep`, `/health/fips` |
-| Sign in to the dashboard | `/auth/login/{provider}`, `/auth/callback/{provider}`; `/auth/dev-login` in development mode |
-| Register applications, rotate and revoke their tokens | `/api/v1/applications`, `/api/v1/auth` |
-| Encrypt and decrypt by context | `/api/v1/crypto/encrypt`, `/decrypt`, `/batch/encrypt`, `/batch/decrypt` |
-| Manage contexts and rotate their keys | `/api/contexts`, `/api/v1/contexts/{name}/keys` |
-| Hash, MAC and hash passwords | `/api/v1/crypto/hash`, `/mac`, `/password/hash` |
-| Sign and verify; JOSE, HPKE and RSA | `/api/v1/signatures`, `/api/v1/jose`, `/api/v1/crypto/hpke`, `/api/v1/crypto/rsa` |
-| Post-quantum signatures and key exchange | `/api/v1/pqc`, `/api/v1/kex`, `/api/v1/crypto/hybrid` |
-| Split secrets and lease them | `/api/v1/secrets` |
-| Parse, issue and verify certificates; query CT logs | `/api/v1/certificates`, `/api/v1/ct` |
-| Set algorithm policy and migrate contexts | `/api/policies`, `/api/v1/admin/algorithm-policies`, `/api/migration` |
-| Read the audit log and compliance reports | `/api/admin/audit/global`, `/api/audit`, `/api/compliance` |
-| Administer users, tenants, roles, backups and the key ceremony | `/api/admin`, `/api/tenants`, `/api/rbac`, `/api/v1/teams` |
-
-Python applications can use the [Python SDK](docs/sdk/python.md). Request and response fields for each route: [REST API reference](docs/api-reference/index.md).
-
-## Data and retention
-
-The server keeps its state in PostgreSQL, except where the table says otherwise. An encrypt or decrypt request stores neither the plaintext nor the ciphertext.
-
-| Data | Where | Kept until |
-|---|---|---|
-| Tenants, users, teams, applications, contexts, policies, policy violations and key versions | PostgreSQL tables | the server deletes only a policy, on request |
-| Keys of classical contexts | Not stored: derived on each use from `CRYPTOSERVE_MASTER_KEY` and the context | nothing to delete |
-| ML-KEM key pairs of hybrid contexts such as `user-pii` | `pqc_keys`, the private key encrypted under a key derived from `CRYPTOSERVE_MASTER_KEY` | the server never deletes them |
-| Keys made with `/api/v1/signatures`, `/api/v1/pqc` and `/api/v1/kex`; algorithm policy overrides | The API process's memory | their `DELETE` route, or the process stops; instances do not share them |
-| One row per encrypt, decrypt, key rotation and rotation schedule change: operation, context, algorithm, identity, outcome and reason, sizes, latency, caller IP address and user agent | `audit_log` | you delete it: no server code removes audit rows |
-| Revoked session tokens | `revoked_tokens` | the first start after they expire |
-| Request log: method, path, query parameter names and value lengths (never values), client IP | container output | Docker log rotation, `max-size` and `max-file` in each compose file |
-| Backup archives, password-encrypted | `CRYPTOSERVE_BACKUP_DIR` | `DELETE /api/admin/backups/{backup_id}` |
-
-The audit log holds an IP address and a user agent for each request, which are personal data, so set its retention in the database. A context's `retention` fields record a requirement; the server does not delete data on that schedule.
-
-A backup holds no symmetric keys and leaves out audit rows unless asked: restoring needs the archive, its password and the original `CRYPTOSERVE_MASTER_KEY`.
-
-The [Crypto Census](https://census.cryptoserve.dev) is the public data this project publishes: a dated measurement of the cryptography that open-source package ecosystems use. Its snapshot is JSON at `https://census.cryptoserve.dev/api/census`, with one object per ecosystem and measured download counts kept apart from modelled ones.
+The server lists every route in its OpenAPI document, `localhost:8003/openapi.json`. Application routes take the application's token as `Authorization: Bearer`; management routes take the dashboard session. Routes by job: [docs/server.md](docs/server.md#api-routes). Request and response fields: [REST API reference](docs/api-reference/index.md).
 
 ## Security
 
@@ -209,7 +321,7 @@ Threat model and controls: [docs/security](docs/security/index.md). Report a vul
 
 ## Scanning repositories
 
-The repository scanner lives in [cryptoscan](https://github.com/csnp/cryptoscan).
+Repository scanning lives in [cryptoscan](https://github.com/csnp/cryptoscan).
 
 ## Contributing
 
