@@ -2,6 +2,8 @@
 
 This directory contains comprehensive examples for using CryptoServe in various scenarios.
 
+The scripts in [sdk/](sdk/) are the ones the [README](../README.md#using-the-service) and [cryptoserve.dev/docs/examples](https://cryptoserve.dev/docs/examples/) show; each was run against the evaluation server, and its output is in [docs/captures](../docs/captures/).
+
 ## Quick Start
 
 Before running these examples, ensure:
