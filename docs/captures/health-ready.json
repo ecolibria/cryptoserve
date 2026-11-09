@@ -2,16 +2,14 @@
   "command": "curl -s localhost:8003/health/ready | jq",
   "workingDirectory": "cryptoserve (the clone)",
   "repository": "https://github.com/ecolibria/cryptoserve",
-  "commit": "3826f53cc7d2ec3472190337c7aed02aed6ed651",
+  "commit": "3e5e1017fc503b06e0fb69261734734e8256ad35",
   "serverVersion": "1.0.0",
-  "fixture": "fresh git clone of https://github.com/ecolibria/cryptoserve.git (main) into an empty directory; docker-compose.yml development stack; COMPOSE_PROJECT_NAME=csreadmecap2 (a new, empty database volume); no .env file; no inherited GITHUB_*, CRYPTOSERVE_MASTER_KEY, JWT_SECRET_KEY, HKDF_SALT or OAUTH_STATE_SECRET",
-  "capturedAt": "2026-11-01T19:34:07Z",
+  "sdk": "cryptoserve 1.4.3, cryptoserve-client 0.3.0, cryptoserve-core 0.4.2 from PyPI; Python 3.14.3; fastapi 0.162.2, uvicorn 0.54.0, pydantic 2.14.3 for sdk-api",
+  "fixture": "git clone of branch docs/readme-sdk-first-2026-11-09 (the README's first command with the clone source swapped for the branch under review; main lacks examples/sdk/ until it merges) into an empty directory; `docker compose up -d --wait backend` from docker-compose.yml (compose project cryptoserve, a new, empty database volume); `python3 -m venv .venv && source .venv/bin/activate && pip install cryptoserve` from PyPI; HOME set to an empty directory, so no stored credentials; `cryptoserve login --server http://localhost:8003` (development sign-in; BROWSER set to a curl script that follows the sign-in redirect, standing in for the browser); examples run in README order, 4 seconds apart",
+  "capturedAt": "2026-11-09T02:42:01Z",
   "exitCode": 0,
   "outputLines": 27,
-  "excerptLines": "1-27",
-  "elidedLines": [
-    3,
-    4
-  ],
-  "elisionRule": "lines matching /\"(timestamp|version)\"/ are elided in place in the README because they print a date or a version"
+  "excerptLines": "1-27, shown trimmed in the README",
+  "elidedLines": [],
+  "elisionRule": "README keeps status, the database and kms status lines and the kms message; other lines are elided with ..."
 }

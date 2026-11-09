@@ -1,0 +1,2 @@
+{"stored_characters":1672}
+{"email":"alex.chen@example.com"}

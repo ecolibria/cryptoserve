@@ -8,7 +8,7 @@
 
 [Website](https://cryptoserve.dev) · [Docs](https://cryptoserve.dev/docs/) · [Examples](https://cryptoserve.dev/docs/examples/) · [Crypto Census](https://census.cryptoserve.dev)
 
-Encrypt and decrypt your application's data through a cryptography server your platform team runs: your code names a context such as `user-pii`, and the server picks the algorithm, holds the keys and writes an audit record.
+Encrypt and decrypt your application's data through a cryptography server your platform team runs: your code names a context such as `user-pii`, and the server chooses the algorithm and the key and writes an audit record for each request.
 
 ## Quick start
 
@@ -268,7 +268,7 @@ What the request prints ([full output](docs/captures/sdk-rest-decrypt.txt)):
 
 The token is the one the SDK stored for `my-app`; for a new application, an administrator gets one from `POST /api/v1/applications`.
 
-The server allows each application bursts of 20 requests and 100 a minute, and answers HTTP 429 above that. On a hybrid context such as `user-pii`, every SDK call reaches the server, so a loop is refused after 10 encrypts; on `payment-data` the SDK caches the key after the first call and encrypts locally.
+The server allows each application bursts of 20 requests and 100 a minute, and answers HTTP 429 above that. On a hybrid context such as `user-pii`, every SDK call reaches the server, so a loop is refused after 10 encrypts. On a classical context such as `payment-data`, the SDK fetches the key after the first call and encrypts locally for 300 seconds, sending no request and leaving no audit record; `CryptoServe(..., enable_cache=False)` sends every call to the server.
 
 ## Run the server
 
@@ -315,6 +315,7 @@ The server lists every route in its OpenAPI document, `localhost:8003/openapi.js
 - Outside development mode the server refuses to start without `CRYPTOSERVE_MASTER_KEY`, `JWT_SECRET_KEY`, `HKDF_SALT` and `OAUTH_STATE_SECRET`. `STARTUP_VALIDATION_LEVEL=skip` turns the other startup checks off, in production too.
 - Whoever holds `CRYPTOSERVE_MASTER_KEY` and a copy of the database can decrypt everything, and losing the key loses every ciphertext. Store it, and `CRYPTOSERVE_HKDF_SALT` if set, apart from the database and its backups.
 - With `ENVIRONMENT=production`, `/health/deep` and `/health/fips` leave error messages, configuration issues and library versions out of their responses.
+- An application token can fetch the key of a classical context from `/api/v1/crypto/key-bundle`, which the SDK does by default; what it encrypts with that cached key leaves no audit record.
 - API responses carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and a `default-src 'none'` Content Security Policy.
 
 Threat model and controls: [docs/security](docs/security/index.md). Report a vulnerability as [SECURITY.md](SECURITY.md) describes.

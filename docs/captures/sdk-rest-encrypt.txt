@@ -1,0 +1,4 @@
+{
+  "algorithm": "AES-256-GCM+ML-KEM-768",
+  "usage": "at_rest"
+}
