@@ -46,7 +46,7 @@ The evaluation server listens on localhost only, uses a fixed development master
 
 ## Using the service
 
-Each example is a script in [examples/sdk/](examples/sdk/), run after the Quick start; [cryptoserve.dev/docs/examples](https://cryptoserve.dev/docs/examples/) shows the same examples.
+Each example is a script in [examples/sdk/](examples/sdk/), run after the Quick start.
 
 ### Handle a context you were not granted
 
