@@ -268,6 +268,8 @@ What the request prints ([full output](docs/captures/sdk-rest-decrypt.txt)):
 
 The token is the one the SDK stored for `my-app`; for a new application, an administrator gets one from `POST /api/v1/applications`.
 
+### Rate limits and the key cache
+
 The server allows each application bursts of 20 requests and 100 a minute, and answers HTTP 429 above that. On a hybrid context such as `user-pii`, every SDK call reaches the server, so a loop is refused after 10 encrypts.
 
 On a classical context such as `payment-data`, the SDK fetches the key after the first call and encrypts locally for 300 seconds, sending no request and leaving no audit record. `CryptoServe(..., enable_cache=False)` sends every call to the server.
