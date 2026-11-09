@@ -1,0 +1,12 @@
+user-pii None AES-256-GCM+ML-KEM-768
+user-pii at_rest AES-256-GCM+ML-KEM-768
+user-pii in_transit AES-256-GCM+ML-KEM-768
+user-pii in_use AES-256-GCM+ML-KEM-768
+user-pii streaming ChaCha20-Poly1305+ML-KEM-768
+user-pii disk AES-256-GCM+ML-KEM-768
+payment-data None AES-256-GCM
+payment-data at_rest AES-256-GCM
+payment-data in_transit AES-256-GCM
+payment-data in_use AES-256-GCM-SIV
+payment-data streaming ChaCha20-Poly1305
+payment-data disk error: XTS requires 64-byte key (two 256-bit keys)

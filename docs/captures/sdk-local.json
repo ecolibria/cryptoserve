@@ -1,0 +1,19 @@
+{
+  "command": "python examples/sdk/local.py",
+  "workingDirectory": "cryptoserve (the clone)",
+  "repository": "https://github.com/ecolibria/cryptoserve",
+  "commit": "3e5e1017fc503b06e0fb69261734734e8256ad35",
+  "serverVersion": "1.0.0",
+  "sdk": "cryptoserve 1.4.3, cryptoserve-client 0.3.0, cryptoserve-core 0.4.2 from PyPI; Python 3.14.3; fastapi 0.162.2, uvicorn 0.54.0, pydantic 2.14.3 for sdk-api",
+  "fixture": "git clone of branch docs/readme-sdk-first-2026-11-09 (the README's first command with the clone source swapped for the branch under review; main lacks examples/sdk/ until it merges) into an empty directory; `docker compose up -d --wait backend` from docker-compose.yml (compose project cryptoserve, a new, empty database volume); `python3 -m venv .venv && source .venv/bin/activate && pip install cryptoserve` from PyPI; HOME set to an empty directory, so no stored credentials; `cryptoserve login --server http://localhost:8003` (development sign-in; BROWSER set to a curl script that follows the sign-in redirect, standing in for the browser); examples run in README order, 4 seconds apart",
+  "capturedAt": "2026-11-09T02:41:34Z",
+  "exitCode": 0,
+  "outputLines": 1,
+  "excerptLines": "1-1",
+  "elidedLines": [],
+  "elisionRule": null,
+  "code": {
+    "file": "examples/sdk/local.py",
+    "text": "from cryptoserve import CryptoServe\n\ncrypto = CryptoServe.local(password=\"test-only-password\")\n\ntoken = crypto.encrypt_string(\"alex.chen@example.com\", context=\"user-pii\")\nprint(crypto.decrypt_string(token, context=\"user-pii\"))\n"
+  }
+}

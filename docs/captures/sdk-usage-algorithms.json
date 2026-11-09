@@ -1,0 +1,19 @@
+{
+  "command": "python usage_algorithms.py (the code below; it reads each ciphertext's header and is not SDK API)",
+  "workingDirectory": "cryptoserve (the clone)",
+  "repository": "https://github.com/ecolibria/cryptoserve",
+  "commit": "3e5e1017fc503b06e0fb69261734734e8256ad35",
+  "serverVersion": "1.0.0",
+  "sdk": "cryptoserve 1.4.3, cryptoserve-client 0.3.0, cryptoserve-core 0.4.2 from PyPI; Python 3.14.3; fastapi 0.162.2, uvicorn 0.54.0, pydantic 2.14.3 for sdk-api",
+  "fixture": "git clone of branch docs/readme-sdk-first-2026-11-09 (the README's first command with the clone source swapped for the branch under review; main lacks examples/sdk/ until it merges) into an empty directory; `docker compose up -d --wait backend` from docker-compose.yml (compose project cryptoserve, a new, empty database volume); `python3 -m venv .venv && source .venv/bin/activate && pip install cryptoserve` from PyPI; HOME set to an empty directory, so no stored credentials; `cryptoserve login --server http://localhost:8003` (development sign-in; BROWSER set to a curl script that follows the sign-in redirect, standing in for the browser); examples run in README order, 4 seconds apart",
+  "capturedAt": "2026-11-09T02:41:30Z",
+  "exitCode": 0,
+  "outputLines": 12,
+  "excerptLines": "1-12",
+  "elidedLines": [],
+  "elisionRule": null,
+  "code": {
+    "file": "usage_algorithms.py (not in the repository)",
+    "text": "# Reads the algorithm name from each ciphertext's header; not part of the SDK API.\nimport json, time\nfrom cryptoserve import CryptoServe\n\ncrypto = CryptoServe(app_name=\"my-app\", contexts=[\"user-pii\", \"payment-data\"])\n\ndef algorithm(ciphertext):\n    size = int.from_bytes(ciphertext[:2], \"big\")\n    header = json.loads(ciphertext[2:2 + size])\n    return header.get(\"alg\") or header.get(\"mode\")\n\nfor context in [\"user-pii\", \"payment-data\"]:\n    for usage in [None, \"at_rest\", \"in_transit\", \"in_use\", \"streaming\", \"disk\"]:\n        try:\n            print(context, usage, algorithm(crypto.encrypt(b\"x\", context=context, usage=usage)))\n        except Exception as e:\n            print(context, usage, \"error:\", e)\n        time.sleep(1.5)\n"
+  }
+}

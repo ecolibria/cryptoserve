@@ -1,0 +1,20 @@
+{
+  "command": "curl -s -X PUT localhost:8000/users/42 -H 'Content-Type: application/json' -d '{\"email\": \"alex.chen@example.com\"}'; echo\ncurl -s localhost:8000/users/42",
+  "workingDirectory": "cryptoserve (the clone)",
+  "repository": "https://github.com/ecolibria/cryptoserve",
+  "commit": "3e5e1017fc503b06e0fb69261734734e8256ad35",
+  "serverVersion": "1.0.0",
+  "sdk": "cryptoserve 1.4.3, cryptoserve-client 0.3.0, cryptoserve-core 0.4.2 from PyPI; Python 3.14.3; fastapi 0.162.2, uvicorn 0.54.0, pydantic 2.14.3 for sdk-api",
+  "fixture": "git clone of branch docs/readme-sdk-first-2026-11-09 (the README's first command with the clone source swapped for the branch under review; main lacks examples/sdk/ until it merges) into an empty directory; `docker compose up -d --wait backend` from docker-compose.yml (compose project cryptoserve, a new, empty database volume); `python3 -m venv .venv && source .venv/bin/activate && pip install cryptoserve` from PyPI; HOME set to an empty directory, so no stored credentials; `cryptoserve login --server http://localhost:8003` (development sign-in; BROWSER set to a curl script that follows the sign-in redirect, standing in for the browser); examples run in README order, 4 seconds apart",
+  "capturedAt": "2026-11-09T02:41:48Z",
+  "exitCode": 0,
+  "outputLines": 2,
+  "excerptLines": "1-2",
+  "elidedLines": [],
+  "elisionRule": null,
+  "code": {
+    "file": "examples/sdk/api.py (served by `uvicorn --app-dir examples/sdk api:app` on localhost:8000)",
+    "text": "from fastapi import FastAPI\nfrom pydantic import BaseModel\nfrom cryptoserve import CryptoServe\n\napp = FastAPI()\ncrypto = CryptoServe(app_name=\"my-app\", contexts=[\"user-pii\", \"payment-data\"])\nrows = {}\n\nclass User(BaseModel):\n    email: str\n\n@app.put(\"/users/{user_id}\")\ndef save_user(user_id: int, user: User):\n    rows[user_id] = crypto.encrypt_string(user.email, context=\"user-pii\")\n    return {\"stored_characters\": len(rows[user_id])}\n\n@app.get(\"/users/{user_id}\")\ndef read_user(user_id: int):\n    return {\"email\": crypto.decrypt_string(rows[user_id], context=\"user-pii\")}\n"
+  },
+  "note": "the GET response ends without a newline, as curl prints it"
+}

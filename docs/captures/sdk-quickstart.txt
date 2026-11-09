@@ -1,0 +1,3 @@
+[CryptoServe] Registered new app: my-app (development)
+AH17InYiOjEsIm1vZGUiOiJBRVMtMjU2LUdDTStNTC1LRU0t...
+alex.chen@example.com
